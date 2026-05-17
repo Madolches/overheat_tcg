@@ -2282,6 +2282,70 @@ function testWhiteTigerBattleExileNeedsCurrentBattleThreat(): ScenarioResult {
   );
 }
 
+function testFutureReadBottomAttackerOnlyAnswersOpponentGodmark(): ScenarioResult {
+  const profile = getDeckAiProfile('white-temple');
+  const bottomEffect = effect({
+    id: '101140152_bottom_attacker',
+    description: 'put attacking godmark unit on deck bottom',
+    content: 'BOTTOM ATTACKING GODMARK UNIT',
+    cost: { type: 'EROSION', amount: 2 },
+  });
+  const liwei = unit({
+    id: '101140152',
+    fullName: 'Future Read Liwei',
+    color: 'WHITE',
+    power: 2500,
+    damage: 2,
+    godMark: true,
+    effects: [bottomEffect],
+  });
+  const ownGodAttacker = unit({ id: '101000501', fullName: 'Own White Tiger', color: 'WHITE', power: 3500, damage: 3, godMark: true, playedTurn: 1 });
+  const oppGodAttacker = unit({ id: 'OPP_GOD_ATTACKER', fullName: 'Opponent God Attacker', color: 'RED', power: 4000, damage: 3, godMark: true, playedTurn: 1 });
+  const ownAttackState = game(
+    { unitZone: [liwei, ownGodAttacker, null, null, null, null], erosionBack: erosionCards(10, 'BOT_LIWEI_OWN') },
+    {},
+    { phase: 'BATTLE_FREE', currentTurnPlayer: 0, battleState: { attackers: [ownGodAttacker.gamecardId] } }
+  );
+  const oppAttackState = game(
+    { unitZone: [liwei, null, null, null, null, null], erosionBack: erosionCards(10, 'BOT_LIWEI_OPP'), isTurn: false },
+    { unitZone: [oppGodAttacker, null, null, null, null, null], isTurn: true },
+    { phase: 'BATTLE_FREE', currentTurnPlayer: 1, battleState: { attackers: [oppGodAttacker.gamecardId] } }
+  );
+  const ownScore = scoreActivatableEffect(
+    ownAttackState,
+    ownAttackState.players.BOT,
+    liwei as any,
+    bottomEffect as any,
+    profile,
+    { opponent: ownAttackState.players.P1, targetCount: 1, hasTargetSpec: true }
+  ).score;
+  const oppScore = scoreActivatableEffect(
+    oppAttackState,
+    oppAttackState.players.BOT,
+    liwei as any,
+    bottomEffect as any,
+    profile,
+    { opponent: oppAttackState.players.P1, targetCount: 1, hasTargetSpec: true }
+  ).score;
+  const query = {
+    type: 'SELECT_CARD',
+    options: [
+      { card: ownGodAttacker, source: 'UNIT', isMine: true },
+      { card: oppGodAttacker, source: 'UNIT', isMine: false },
+    ],
+    minSelections: 1,
+    maxSelections: 1,
+    context: { effectId: '101140152_bottom_attacker' },
+  };
+  const selected = chooseQuerySelections(oppAttackState, 'BOT', query as any, profile, 'hard');
+
+  return assertScenario(
+    'future read bottom attacker only answers opponent godmark',
+    ownScore < 18 && oppScore >= 18 && selected[0] === oppGodAttacker.gamecardId,
+    `own=${ownScore.toFixed(1)}, opp=${oppScore.toFixed(1)}, selected=${selected[0]}`
+  );
+}
+
 function testPaymentPreservesClosingAttacker(): ScenarioResult {
   const profile = getDeckAiProfile('red-dikai');
   const attacker = unit({ id: 'RED_CLOSING_ATTACKER', color: 'RED', damage: 2, power: 2500, playedTurn: 1 });
@@ -2720,6 +2784,80 @@ function testBlueSwapChoosesErosionPayoff(): ScenarioResult {
   );
 }
 
+function testAketiBounceTargetsOpponentThreats(): ScenarioResult {
+  const profile = getDeckAiProfile('blue-adventurer');
+  const ownCore = unit({ id: '104020068', color: 'BLUE', fullName: 'Aketi Core', power: 3500, damage: 2, cardlocation: 'EROSION_FRONT', godMark: true });
+  const ownLow = unit({ id: 'BLUE_LOW_FRONT', color: 'BLUE', fullName: 'Blue Low Front', power: 500, damage: 0, cardlocation: 'EROSION_FRONT' });
+  const ownField = unit({ id: 'BLUE_OWN_FIELD', color: 'BLUE', fullName: 'Own Field Engine', power: 2500, damage: 2 });
+  const opponentThreat = unit({ id: 'OPP_AKETI_THREAT', color: 'RED', fullName: 'Opponent Threat', power: 4000, damage: 3, godMark: true });
+  const state = game(
+    {
+      erosionFront: [ownCore, ownLow],
+      unitZone: [ownField, null, null, null, null, null],
+      botDeckProfileId: 'blue-adventurer',
+    },
+    { unitZone: [opponentThreat, null, null, null, null, null] }
+  );
+  const costQuery = {
+    type: 'SELECT_CARD',
+    options: [
+      { card: ownCore, source: 'EROSION_FRONT', isMine: true },
+      { card: ownLow, source: 'EROSION_FRONT', isMine: true },
+    ],
+    minSelections: 1,
+    maxSelections: 1,
+    context: { effectId: 'aketi_goddess_bounce', step: 'COST' },
+  };
+  const bounceQuery = {
+    type: 'SELECT_CARD',
+    options: [
+      { card: ownField, source: 'UNIT', isMine: true },
+      { card: opponentThreat, source: 'UNIT', isMine: false },
+    ],
+    minSelections: 1,
+    maxSelections: 2,
+    context: { effectId: 'aketi_goddess_bounce', step: 'BOUNCE' },
+  };
+
+  const costSelected = chooseQuerySelections(state, 'BOT', costQuery as any, profile, 'hard');
+  const bounceSelected = chooseQuerySelections(state, 'BOT', bounceQuery as any, profile, 'hard');
+
+  return assertScenario(
+    'aketi bounce pays low erosion and targets opponent threat',
+    costSelected[0] === ownLow.gamecardId &&
+      bounceSelected.includes(opponentThreat.gamecardId) &&
+      !bounceSelected.includes(ownField.gamecardId),
+    `cost=${costSelected.join(',')}, bounce=${bounceSelected.join(',')}`
+  );
+}
+
+function testTotemHawkDestroyTargetsOpponentThreat(): ScenarioResult {
+  const profile = getDeckAiProfile('overlord-totem');
+  const ownCore = unit({ id: '103080183', color: 'GREEN', fullName: 'Totem Hawk', power: 2000, damage: 1 });
+  const ownLow = unit({ id: 'GREEN_LOW_FIELD', color: 'GREEN', fullName: 'Own Low Field', power: 500, damage: 0 });
+  const opponentThreat = unit({ id: 'OPP_TOTEM_TARGET', color: 'RED', fullName: 'Opponent Non-God Threat', power: 3000, damage: 2 });
+  const state = game(
+    { unitZone: [ownCore, ownLow, null, null, null, null], botDeckProfileId: 'overlord-totem' },
+    { unitZone: [opponentThreat, null, null, null, null, null] }
+  );
+  const query = {
+    type: 'SELECT_CARD',
+    options: [
+      { card: ownLow, source: 'UNIT', isMine: true },
+      { card: opponentThreat, source: 'UNIT', isMine: false },
+    ],
+    minSelections: 1,
+    maxSelections: 1,
+    context: { effectId: '103080183_destroy' },
+  };
+  const selected = chooseQuerySelections(state, 'BOT', query as any, profile, 'hard');
+  return assertScenario(
+    'totem hawk destroy targets opponent threat',
+    selected[0] === opponentThreat.gamecardId,
+    `selected=${selected[0]}`
+  );
+}
+
 function testTotemRitualChoosesOverlord(): ScenarioResult {
   const profile = getDeckAiProfile('overlord-totem');
   const lowTotem = unit({ id: '103080312', color: 'GREEN', fullName: 'Winged Totem', power: 1000, damage: 1, cardlocation: 'DECK' });
@@ -2806,6 +2944,7 @@ const scenarios: ScenarioRun[] = [
   testClosingPlanHelperRecognizesErosionLethal,
   testComboAllianceDoesNotOverrideDirectLethal,
   testWhiteTigerBattleExileNeedsCurrentBattleThreat,
+  testFutureReadBottomAttackerOnlyAnswersOpponentGodmark,
   testPaymentPreservesClosingAttacker,
   testLowAttackHeldIntoStrongerReadyDefender,
   testExpendableBaitAttackAllowedForClosingPressure,
@@ -2819,6 +2958,8 @@ const scenarios: ScenarioRun[] = [
   testYellowAlchemyCostPreservesCore,
   testRedDuelKeepsCommander,
   testBlueSwapChoosesErosionPayoff,
+  testAketiBounceTargetsOpponentThreats,
+  testTotemHawkDestroyTargetsOpponentThreat,
   testTotemRitualChoosesOverlord,
 ];
 

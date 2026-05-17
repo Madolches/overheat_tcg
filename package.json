@@ -11,6 +11,8 @@
     "refillcards": "tsx server/refill_user_cards.ts",
     "generate:card-scripts": "tsx script/generate-card-scripts.ts",
     "ai:evaluate": "tsx script/evaluate-ai.ts",
+    "ai:audit-effects": "tsx script/audit-hard-ai-effects.ts",
+    "ai:behavior-audit": "tsx script/report-ai-behavior-audit.ts",
     "ai:learn-effect-timing": "tsx script/learn-effect-timing.ts",
     "ai:test-scenarios": "tsx script/test-hard-ai-scenarios.ts",
     "ai:report-live": "tsx script/report-live-ai.ts",

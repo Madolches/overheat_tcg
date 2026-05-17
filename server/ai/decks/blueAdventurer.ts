@@ -1,5 +1,5 @@
 import { DeckAiProfile } from '../types';
-import { cardCost, cardText, effectHasTag, hasAny, hasRole, openUnitSlots, opponentErosion, opponentHasTrait, opponentIs, queryEffectId, queryOptionCard, queryOptionIsMine, readyAttackers } from './strategyUtils';
+import { cardCost, cardText, effectHasTag, hasAny, hasRole, openUnitSlots, opponentErosion, opponentHasTrait, opponentIs, queryEffectId, queryOptionCard, queryOptionIsMine, queryStep, readyAttackers } from './strategyUtils';
 
 const BLUE_CORE_IDS = new Set([
   '104000073',
@@ -243,6 +243,7 @@ export const blueAdventurerProfile: DeckAiProfile = {
       const card = queryOptionCard(context);
       if (!card) return 0;
       const effectId = queryEffectId(context);
+      const step = queryStep(context);
       const source = String(context.option?.source || card.cardlocation || '');
 
       if (BLUE_SWAP_EFFECT_IDS.has(effectId)) {
@@ -257,6 +258,19 @@ export const blueAdventurerProfile: DeckAiProfile = {
         return queryOptionIsMine(context)
           ? -90
           : 42 + (card.godMark ? 8 : 0) + (card.damage || 0) * 7 + (card.power || 0) / 900;
+      }
+
+      if (effectId === 'aketi_goddess_bounce') {
+        if (step === 'COST') {
+          if (!queryOptionIsMine(context)) return -120;
+          if (BLUE_CORE_IDS.has(card.id)) return -70;
+          return (card.feijingMark ? 18 : 0) - (BLUE_EROSION_PAYOFF_PRIORITY[card.id] || 0);
+        }
+        if (step === 'BOUNCE') {
+          return queryOptionIsMine(context)
+            ? -120
+            : 58 + (card.godMark ? 10 : 0) + (card.damage || 0) * 8 + (card.power || 0) / 850;
+        }
       }
 
       return 0;
