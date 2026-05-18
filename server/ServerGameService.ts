@@ -7590,6 +7590,9 @@ export const ServerGameService = {
       }
 
       if (difficulty === 'hard' && await ServerGameService.tryActivateBotEffect(gameState, playerUid, 'MAIN', turnPlan?.minMainEffectScore ?? 8.5, onUpdate)) {
+        if (turnPlan && isClosingTurnPlan(turnPlan) && !turnPlan.attackBeforeDeveloping && gameState.turnCount > 1) {
+          ServerGameService.markBotClosingAttackCommitment(gameState, playerUid, turnPlan);
+        }
         return;
       }
 
@@ -7764,6 +7767,9 @@ export const ServerGameService = {
         });
         try {
           await ServerGameService.playCard(gameState, playerUid, cardToPlay.gamecardId, initialPaymentSelection);
+          if (turnPlan && isClosingTurnPlan(turnPlan) && !turnPlan.attackBeforeDeveloping && gameState.turnCount > 1) {
+            ServerGameService.markBotClosingAttackCommitment(gameState, playerUid, turnPlan);
+          }
           // We return and let the next botMove tick handle the next card to ensure stack resolution
           return;
         } catch (e) {

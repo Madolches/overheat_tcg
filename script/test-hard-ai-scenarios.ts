@@ -12,11 +12,13 @@ import {
   scorePaymentSacrificeValue,
   scorePaymentExhaustValue,
 } from '../server/ai/hardStrategy';
-import { getDeckAiProfile } from '../server/ai/deckProfiles';
+import { AI_DECK_PROFILES, getDeckAiProfile } from '../server/ai/deckProfiles';
 import { scoreEffectTimingWindow } from '../server/ai/effectTimingKnowledge';
 import { getComboAllianceAttack, KNOWN_COMBO_CARD_IDS } from '../server/ai/comboKnowledge';
 import { ServerGameService } from '../server/ServerGameService';
 import dikaiCardScript from '../src/scripts/102050432';
+import { initServerCardLibrary, loadServerCards, SERVER_CARD_LIBRARY } from '../server/card_loader';
+import { decodeDeckShareCode } from '../src/lib/deckShareCode';
 
 type ScenarioResult = {
   name: string;
@@ -1375,6 +1377,72 @@ function testRedDikaiFixedOpeningHand(): ScenarioResult {
   );
 }
 
+function testBlueAdventurerFixedOpeningHand(): ScenarioResult {
+  const profile = getDeckAiProfile('blue-adventurer');
+  const junkA = story({ id: 'BLUE_JUNK_A', fullName: 'Blue Junk A', color: 'BLUE', cardlocation: 'HAND' });
+  const junkB = story({ id: 'BLUE_JUNK_B', fullName: 'Blue Junk B', color: 'BLUE', cardlocation: 'HAND' });
+  const junkC = story({ id: 'BLUE_JUNK_C', fullName: 'Blue Junk C', color: 'BLUE', cardlocation: 'HAND' });
+  const junkD = story({ id: 'BLUE_JUNK_D', fullName: 'Blue Junk D', color: 'BLUE', cardlocation: 'HAND' });
+  const byakuya = unit({ id: '104030455', fullName: 'Byakuya', color: 'BLUE', cardlocation: 'DECK' });
+  const ting = unit({ id: '104030451', fullName: 'Xiaoting', color: 'BLUE', cardlocation: 'DECK' });
+  const guild = story({ id: '304030075', fullName: 'Dragon Wing Adventurer Guild', color: 'BLUE', type: 'ITEM', cardlocation: 'DECK' });
+  const aketi = unit({ id: '104020068', fullName: 'Nine-Tailed Fox Aketi', color: 'BLUE', cardlocation: 'DECK', godMark: true });
+  const state = game({
+    hand: [junkA, junkB, junkC, junkD],
+    deck: [byakuya, ting, guild, aketi, ...deckCards(6, 'BLUE_FIXED_FILLER')],
+    botDeckProfileId: 'blue-adventurer',
+  });
+
+  const result = applyOpeningHandSoftCompensation(state.players.BOT, profile);
+  const openingIds = state.players.BOT.hand.map((card: any) => card.id);
+  const expected = ['104030455', '104030451', '304030075', '104020068'];
+  const returnedJunk = [junkA, junkB, junkC, junkD].every(card =>
+    state.players.BOT.deck.some((deckCard: any) => deckCard.gamecardId === card.gamecardId)
+  );
+
+  return assertScenario(
+    'blue adventurer uses fixed opening hand',
+    result.applied &&
+      result.fixedOpening === true &&
+      openingIds.join(',') === expected.join(',') &&
+      returnedJunk,
+    `opening=${openingIds.join(',')}, fixed=${!!result.fixedOpening}, returnedJunk=${returnedJunk}`
+  );
+}
+
+function testBigSalalaFixedOpeningHand(): ScenarioResult {
+  const profile = getDeckAiProfile('big-salala');
+  const junkA = story({ id: 'BIG_SALALA_JUNK_A', fullName: 'Big Salala Junk A', color: 'GREEN', cardlocation: 'HAND' });
+  const junkB = story({ id: 'BIG_SALALA_JUNK_B', fullName: 'Big Salala Junk B', color: 'GREEN', cardlocation: 'HAND' });
+  const junkC = story({ id: 'BIG_SALALA_JUNK_C', fullName: 'Big Salala Junk C', color: 'GREEN', cardlocation: 'HAND' });
+  const junkD = story({ id: 'BIG_SALALA_JUNK_D', fullName: 'Big Salala Junk D', color: 'GREEN', cardlocation: 'HAND' });
+  const cradle = unit({ id: '105000481', fullName: 'Cradle Girl', color: 'YELLOW', cardlocation: 'DECK' });
+  const repairer = unit({ id: '103090253', fullName: 'Windmill Repairer', color: 'GREEN', cardlocation: 'DECK' });
+  const angel = unit({ id: '101140435', fullName: 'Battle Angel', color: 'WHITE', cardlocation: 'DECK' });
+  const salala = unit({ id: '103000426', fullName: 'Big Salala', color: 'GREEN', cardlocation: 'DECK', godMark: true });
+  const state = game({
+    hand: [junkA, junkB, junkC, junkD],
+    deck: [cradle, repairer, angel, salala, ...deckCards(6, 'BIG_SALALA_FIXED_FILLER')],
+    botDeckProfileId: 'big-salala',
+  });
+
+  const result = applyOpeningHandSoftCompensation(state.players.BOT, profile);
+  const openingIds = state.players.BOT.hand.map((card: any) => card.id);
+  const expected = ['105000481', '103090253', '101140435', '103000426'];
+  const returnedJunk = [junkA, junkB, junkC, junkD].every(card =>
+    state.players.BOT.deck.some((deckCard: any) => deckCard.gamecardId === card.gamecardId)
+  );
+
+  return assertScenario(
+    'big salala uses fixed opening hand',
+    result.applied &&
+      result.fixedOpening === true &&
+      openingIds.join(',') === expected.join(',') &&
+      returnedJunk,
+    `opening=${openingIds.join(',')}, fixed=${!!result.fixedOpening}, returnedJunk=${returnedJunk}`
+  );
+}
+
 function testMagicSpearResetEffectScoresWhenAttackWouldLose(): ScenarioResult {
   const profile = getDeckAiProfile('white-temple');
   const spear = unit({
@@ -2160,8 +2228,8 @@ function testDefenseTakesProfitableWinAgainstHighValueAttacker(): ScenarioResult
   );
 }
 
-function testFiveDeckProfilesProduceTurnPlans(): ScenarioResult {
-  const ids = ['white-temple', 'blue-adventurer', 'red-dikai', 'yellow-alchemy', 'overlord-totem'];
+function testActiveDeckProfilesProduceTurnPlans(): ScenarioResult {
+  const ids = ['white-temple', 'blue-adventurer', 'red-dikai', 'big-salala'];
   const failures: string[] = [];
   for (const id of ids) {
     const profile = getDeckAiProfile(id);
@@ -2171,9 +2239,46 @@ function testFiveDeckProfilesProduceTurnPlans(): ScenarioResult {
     if (!plan.tacticalLine || !plan.mode) failures.push(id);
   }
   return assertScenario(
-    'all five hard AI deck profiles produce tactical turn plans',
+    'all active hard AI deck profiles produce tactical turn plans',
     failures.length === 0,
     failures.length ? `failed=${failures.join(',')}` : `profiles=${ids.length}`
+  );
+}
+
+function testActiveHardAiDeckProfileList(): ScenarioResult {
+  const activeIds = AI_DECK_PROFILES.map(profile => profile.id);
+  const legacyYellow = getDeckAiProfile('yellow-alchemy');
+  const legacyTotem = getDeckAiProfile('overlord-totem');
+  const activeMatches =
+    activeIds.join(',') === 'white-temple,blue-adventurer,red-dikai,big-salala' &&
+    !activeIds.includes('yellow-alchemy') &&
+    !activeIds.includes('overlord-totem') &&
+    legacyYellow.id === 'yellow-alchemy' &&
+    legacyTotem.id === 'overlord-totem';
+
+  return assertScenario(
+    'active hard AI deck list replaces yellow and totem with big salala',
+    activeMatches,
+    `active=${activeIds.join(',')}, legacyYellow=${legacyYellow.id}, legacyTotem=${legacyTotem.id}`
+  );
+}
+
+async function testBigSalalaShareCodeDeckIsValid(): Promise<ScenarioResult> {
+  const profile = getDeckAiProfile('big-salala');
+  await initServerCardLibrary();
+  const catalogRefs = (await loadServerCards())
+    .map(card => card.uniqueId)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+  const refs = decodeDeckShareCode(profile.shareCode || '', catalogRefs);
+  const cards = refs.map(ref => SERVER_CARD_LIBRARY[ref]).filter(Boolean);
+  const validation = ServerGameService.validateDeck(cards as any);
+  const hasSalala = cards.some(card => card?.id === '103000426');
+
+  return assertScenario(
+    'big salala share code resolves to a valid hard AI deck',
+    refs.length === 50 && cards.length === refs.length && validation.valid && hasSalala,
+    `refs=${refs.length}, cards=${cards.length}, valid=${validation.valid}, hasSalala=${hasSalala}`
   );
 }
 
@@ -2207,6 +2312,83 @@ function testBlueAdventurerConvertsTempoPressure(): ScenarioResult {
     'blue adventurer route converts tempo unit into erosion pressure',
     plan.attackBeforeDeveloping && hasRouteNote,
     `attackBefore=${plan.attackBeforeDeveloping}, notes=${plan.notes.join('|')}`
+  );
+}
+
+function testBlockedErosionLineStabilizesUnderIncomingLethal(): ScenarioResult {
+  const profile = getDeckAiProfile('blue-adventurer');
+  const tempoAttacker = unit({ id: 'BLUE_BLOCKED_PRESSURE', color: 'BLUE', damage: 1, power: 2000, playedTurn: 1 });
+  const whiteThreatA = unit({ id: 'WHITE_THREAT_A', color: 'WHITE', damage: 4, power: 3500, playedTurn: 1 });
+  const whiteThreatB = unit({ id: 'WHITE_THREAT_B', color: 'WHITE', damage: 4, power: 3500, playedTurn: 1 });
+  const state = game(
+    {
+      unitZone: [tempoAttacker, null, null, null, null, null],
+      erosionBack: erosionCards(2, 'BOT_BLOCKED_PRESSURE'),
+      botDeckProfileId: profile.id,
+    },
+    {
+      unitZone: [whiteThreatA, whiteThreatB, null, null, null, null],
+      erosionBack: erosionCards(9, 'P1_BLOCKED_PRESSURE'),
+    },
+    { botDeckProfiles: { BOT: profile.id } }
+  );
+  const plan = buildTurnPlan(state, state.players.BOT, profile);
+  return assertScenario(
+    'blocked erosion line stabilizes under incoming lethal',
+    plan.mode === 'defense' &&
+      !plan.attackBeforeDeveloping &&
+      plan.tacticalLine === 'stabilize' &&
+      plan.reserveDefenders >= 1 &&
+      plan.notes.some(note => note.includes('incoming lethal overrides')),
+    `mode=${plan.mode}, attackBefore=${plan.attackBeforeDeveloping}, reserve=${plan.reserveDefenders}, tactical=${plan.tacticalLine}, notes=${plan.notes.join('|')}`
+  );
+}
+
+async function testClosingPlanCommitsAfterOnePrecombatPlay(): Promise<ScenarioResult> {
+  const profile = getDeckAiProfile('blue-adventurer');
+  const attackerA = unit({ id: 'BLUE_PRECOMBAT_A', color: 'BLUE', damage: 2, power: 2500, playedTurn: 1 });
+  const attackerB = unit({ id: 'BLUE_PRECOMBAT_B', color: 'BLUE', damage: 1, power: 1500, playedTurn: 1 });
+  const rushUnit = unit({
+    id: 'BLUE_PRECOMBAT_RUSH',
+    color: 'BLUE',
+    fullName: 'Precombat Rush Unit',
+    damage: 1,
+    power: 2000,
+    acValue: 0,
+    baseAcValue: 0,
+    colorReq: {},
+    isrush: true,
+    cardlocation: 'HAND',
+  });
+  const blocker = unit({ id: 'P1_PRECOMBAT_BLOCKER', color: 'WHITE', damage: 1, power: 1000, playedTurn: 1 });
+  const state = game(
+    {
+      hand: [rushUnit],
+      unitZone: [attackerA, attackerB, null, null, null, null],
+      botDifficulty: 'hard',
+      botDeckProfileId: profile.id,
+    },
+    {
+      unitZone: [blocker, null, null, null, null, null],
+      erosionBack: erosionCards(9, 'P1_PRECOMBAT_CLOSE'),
+    },
+    {
+      turnCount: 3,
+      botDifficulty: 'hard',
+      botDeckProfiles: { BOT: profile.id },
+    }
+  );
+  const plan = buildTurnPlan(state, state.players.BOT, profile);
+  await ServerGameService.botMoveForPlayer(state, 'BOT');
+  const playedCards = state.aiDecisionLogs?.filter((log: any) => log.action === 'PLAY_CARD') || [];
+
+  return assertScenario(
+    'closing plan commits after one precombat play',
+    isClosingTurnPlan(plan) &&
+      !plan.attackBeforeDeveloping &&
+      playedCards.length === 1 &&
+      (state.players.BOT as any).botClosingAttackTurn === state.turnCount,
+    `closing=${isClosingTurnPlan(plan)}, attackBefore=${plan.attackBeforeDeveloping}, plays=${playedCards.length}, committed=${(state.players.BOT as any).botClosingAttackTurn}, phase=${state.phase}`
   );
 }
 
@@ -3060,6 +3242,8 @@ const scenarios: ScenarioRun[] = [
   testWhiteTempleMultiResetTakesBothKeyTargets,
   testWhiteTempleFixedOpeningHand,
   testRedDikaiFixedOpeningHand,
+  testBlueAdventurerFixedOpeningHand,
+  testBigSalalaFixedOpeningHand,
   testMagicSpearResetEffectScoresWhenAttackWouldLose,
   testHolyPrinceResetHeldInLooseCountering,
   testHolyPrinceResetSupportsMagicSpearCountering,
@@ -3081,9 +3265,13 @@ const scenarios: ScenarioRun[] = [
   testDefenseSacrificesLowValueUnitToPreventLethalHit,
   testDefenseHighValueUnitBlocksLethalWhenOnlyOption,
   testDefenseTakesProfitableWinAgainstHighValueAttacker,
-  testFiveDeckProfilesProduceTurnPlans,
+  testActiveDeckProfilesProduceTurnPlans,
+  testActiveHardAiDeckProfileList,
+  testBigSalalaShareCodeDeckIsValid,
   testWhiteTempleConvertsHallPressure,
   testBlueAdventurerConvertsTempoPressure,
+  testBlockedErosionLineStabilizesUnderIncomingLethal,
+  testClosingPlanCommitsAfterOnePrecombatPlay,
   testRedDikaiCommitsNearKillPressure,
   testPrecombatCannotDefendDelaysAttack,
   testBlueErosionSummonSequencedBeforeAttack,

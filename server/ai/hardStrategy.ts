@@ -79,11 +79,13 @@ export interface HardAiTurnPlan {
 
 export function isClosingTurnPlan(plan: Pick<HardAiTurnPlan, 'mode' | 'lethalWindow' | 'tacticalLine' | 'totalAvailableDamage' | 'damageToCritical'> | undefined) {
   if (!plan) return false;
+  if (plan.mode === 'defense' || plan.mode === 'stabilize' || plan.tacticalLine === 'stabilize') return false;
+  const likelyDefenders = Number((plan as any).likelyDefenders || 0);
   return plan.lethalWindow ||
     plan.mode === 'lethal' ||
     plan.tacticalLine === 'lethal' ||
     plan.tacticalLine === 'erosion-lethal' ||
-    plan.totalAvailableDamage >= Math.max(1, plan.damageToCritical);
+    (likelyDefenders === 0 && plan.totalAvailableDamage >= Math.max(1, plan.damageToCritical));
 }
 
 function isDamageFatal(damage: number, deckCount: number, erosionCount: number) {
@@ -292,8 +294,14 @@ export function analyzeOneTurnTactics(
   const combo = getBestComboOpportunity(gameState, player, profile);
   const notes: string[] = [];
 
-  if (opponent && totalDamage > opponent.deck.length) {
+  const forcesDeckLethal = opponent && damageThroughLikelyDefenders > opponent.deck.length;
+  const threatensDeckLethal = opponent && totalDamage > opponent.deck.length;
+  const forcesErosionLethal = damageThroughLikelyDefenders >= damageToCritical;
+  const threatensErosionLethal = totalDamage >= damageToCritical;
+
+  if (forcesDeckLethal) {
     notes.push(`deck lethal damage=${totalDamage}/${opponent.deck.length}`);
+    if (likelyDefenders > 0) notes.push(`through defenders=${damageThroughLikelyDefenders}`);
     return {
       line: 'lethal',
       score: 130 + totalDamage * 5,
@@ -305,7 +313,7 @@ export function analyzeOneTurnTactics(
     };
   }
 
-  if (totalDamage >= damageToCritical || damageThroughLikelyDefenders >= damageToCritical) {
+  if (forcesErosionLethal) {
     notes.push(`erosion lethal damage=${totalDamage}/${damageToCritical}`);
     if (likelyDefenders > 0) notes.push(`through defenders=${damageThroughLikelyDefenders}`);
     return {
@@ -315,6 +323,23 @@ export function analyzeOneTurnTactics(
       reserveDefenders: 0,
       minMainEffectScoreDelta: -1.5,
       minBattleEffectScoreDelta: -2.5,
+      notes,
+    };
+  }
+
+  if ((threatensDeckLethal || threatensErosionLethal) && incomingThreat.lethalWithoutBlocks) {
+    notes.push(threatensDeckLethal
+      ? `blocked deck pressure=${totalDamage}/${opponent?.deck.length || 0}`
+      : `blocked erosion pressure=${totalDamage}/${damageToCritical}`);
+    if (likelyDefenders > 0) notes.push(`through defenders=${damageThroughLikelyDefenders}`);
+    notes.push(`incoming lethal=${incomingThreat.lethalWithoutBlocks}`);
+    notes.push(`need blockers=${incomingThreat.defendersNeeded}`);
+    return {
+      line: 'stabilize',
+      score: 92 + incomingThreat.defendersNeeded * 14,
+      forceAttackBeforeDeveloping: false,
+      reserveDefenders: Math.min(3, Math.max(incomingThreat.defendersNeeded, 1)),
+      minMainEffectScoreDelta: -1,
       notes,
     };
   }
@@ -722,6 +747,17 @@ export function buildTurnPlan(gameState: GameState, player: PlayerState, profile
       minBattleEffectScore = Math.min(minBattleEffectScore, 4.5);
       notes.push('combo payoff playable');
     }
+  }
+
+  const hasForcingTacticalClose = tactical.line === 'lethal' || tactical.line === 'erosion-lethal';
+  if (!hasForcingTacticalClose && (incomingThreat.lethalWithoutBlocks || incomingThreat.defendersNeeded >= 2)) {
+    mode = incomingThreat.lethalWithoutBlocks ? 'defense' : 'stabilize';
+    attackBeforeDeveloping = false;
+    reserveDefenders = Math.max(
+      reserveDefenders,
+      Math.min(3, attackers.length, Math.max(incomingThreat.defendersNeeded, 1))
+    );
+    notes.push('incoming lethal overrides non-forcing pressure');
   }
 
   return {

@@ -116,6 +116,7 @@ export const blueAdventurerProfile: DeckAiProfile = {
   },
   softCompensation: {
     openingSmoothing: true,
+    fixedOpeningHandIds: ['104030455', '104030451', '304030075', '104020068'],
     openingLookahead: 9,
     maxOpeningReplacements: 1,
     extremeBrickRescueChance: 0.3,
