@@ -55,6 +55,7 @@ export function ownErosion(context: DeckAiCardScoreContext | DeckAiEffectScoreCo
 }
 
 export function opponentErosion(context: DeckAiCardScoreContext | DeckAiEffectScoreContext) {
+  if (context.opponent?.isGoddessMode) return 0;
   return erosionCount(context.opponent);
 }
 

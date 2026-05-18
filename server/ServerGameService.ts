@@ -10,6 +10,7 @@ import { GameService } from '../src/services/gameService';
 import { grantedTotemReviveFromGrave, standardizeChoiceOptions } from '../src/scripts/BaseUtil';
 import { BotDifficulty, DeckAiProfile } from './ai/types';
 import { getDeckAiProfile } from './ai/deckProfiles';
+import { inferPlayerDeckProfile } from './ai/playerDeckProfile';
 import {
   chooseAttacker,
   chooseDefender,
@@ -17,8 +18,11 @@ import {
   chooseMulliganCards,
   chooseQuerySelections,
   buildTurnPlan,
+  battleDamageWouldBeFatal,
+  battleDamageWouldDeckOut,
   canUnitAttack,
   countErosion,
+  damageToErosionCritical,
   estimateIncomingThreat,
   isClosingTurnPlan,
   scoreCardValue,
@@ -48,6 +52,27 @@ export const ServerGameService = {
   async waitForVisualDelay(gameState: GameState, ms: number) {
     if (ServerGameService.shouldSkipVisualDelay(gameState)) return;
     await new Promise(resolve => setTimeout(resolve, ms));
+  },
+
+  clearAllianceAttackMarkers(gameState: GameState, attackerIds?: string[]) {
+    const targetIds = attackerIds?.length ? new Set(attackerIds) : undefined;
+    Object.values(gameState.players || {}).forEach(player => {
+      const zones = [
+        player.hand,
+        player.deck,
+        player.grave,
+        player.exile,
+        player.unitZone,
+        player.itemZone,
+        player.erosionFront,
+        player.erosionBack,
+        player.playZone,
+      ];
+      zones.forEach(zone => zone.forEach(card => {
+        if (!card) return;
+        if (!targetIds || targetIds.has(card.gamecardId)) card.inAllianceGroup = false;
+      }));
+    });
   },
 
   isFullEffectSilencedThisTurn(gameState: GameState, card: Card) {
@@ -1991,7 +2016,8 @@ export const ServerGameService = {
       const opened = ServerGameService.createDeclareTargetQuery(gameState, playerId, card, playEffect, playEffectIndex, {
         pendingAction: 'PLAY_CARD',
         cardId,
-        paymentSelection
+        paymentSelection,
+        paymentSelectionResolved: options?.paymentSelectionResolved
       });
       if (!opened) throw new Error('没有可指定的合法对象');
       return gameState;
@@ -2543,6 +2569,7 @@ export const ServerGameService = {
       !gameState.isResolvingStack &&
       gameState.isCountering === 0
     ) {
+      ServerGameService.clearAllianceAttackMarkers(gameState);
       gameState.phase = 'MAIN';
       gameState.previousPhase = undefined;
       gameState.battleState = undefined;
@@ -2801,7 +2828,7 @@ export const ServerGameService = {
             query.context.cardId,
             query.context.paymentSelection || {},
             declaredTargets,
-            { resumeFromQuery: true }
+            { resumeFromQuery: true, paymentSelectionResolved: !!query.context?.paymentSelectionResolved }
           );
           return gameState;
         }
@@ -2889,7 +2916,13 @@ export const ServerGameService = {
         minSelections: 1,
         maxSelections: 1,
         callbackKey: 'DIKAI_ATTACK_TARGET_SELECT',
-        context: { attackerIds, isAlliance }
+        context: {
+          attackerIds,
+          isAlliance,
+          targetMode,
+          sourceCardId: query.context?.sourceCardId || attackerIds?.[0],
+          effectId: 'DIKAI_ATTACK_TARGET_SELECT'
+        }
       };
       return gameState;
     }
@@ -3410,6 +3443,7 @@ export const ServerGameService = {
       ServerGameService.applyAllianceAnnihilationDamage(gameState, defenderId, survivors);
 
       // Cleanup battle state
+      ServerGameService.clearAllianceAttackMarkers(gameState, gameState.battleState?.attackers);
       if (gameState.phase === 'SHENYI_CHOICE') {
         gameState.previousPhase = 'MAIN';
       } else {
@@ -3977,6 +4011,7 @@ export const ServerGameService = {
     // Safety check: Ensure attackers still on field
     if (attackingUnits.length === 0) {
       gameState.logs.push(`[系统] 由于所有攻击单位均已离开战场，战斗被中断。`);
+      ServerGameService.clearAllianceAttackMarkers(gameState, gameState.battleState.attackers);
       gameState.battleState = undefined;
       gameState.phase = 'MAIN';
       await ServerGameService.checkTriggeredEffects(gameState);
@@ -3986,6 +4021,7 @@ export const ServerGameService = {
     // Safety check: Ensure alliance attack still has both units
     if (gameState.battleState.isAlliance && attackingUnits.length < 2) {
       gameState.logs.push(`[系统] 由于联军攻击单位数量不足，战斗被中断。`);
+      ServerGameService.clearAllianceAttackMarkers(gameState, gameState.battleState.attackers);
       gameState.battleState = undefined;
       gameState.phase = 'MAIN';
       await ServerGameService.checkTriggeredEffects(gameState);
@@ -4033,6 +4069,7 @@ export const ServerGameService = {
 
       if (!defendingUnit) {
         gameState.logs.push(`[系统] 由于指定防御单位离开战场，战斗宣言无效。`);
+        ServerGameService.clearAllianceAttackMarkers(gameState, gameState.battleState.attackers);
         gameState.battleState = undefined;
         gameState.phase = 'MAIN';
         await ServerGameService.checkTriggeredEffects(gameState);
@@ -4293,6 +4330,7 @@ export const ServerGameService = {
       gameState.phase = 'MAIN';
     }
 
+    ServerGameService.clearAllianceAttackMarkers(gameState, gameState.battleState?.attackers);
     gameState.battleState = undefined;
     gameState.phaseTimerStart = Date.now();
     await ServerGameService.checkTriggeredEffects(gameState);
@@ -5442,6 +5480,7 @@ export const ServerGameService = {
           }
         } else if (action === 'RETURN_MAIN') {
           gameState.phase = 'MAIN';
+          ServerGameService.clearAllianceAttackMarkers(gameState, gameState.battleState?.attackers);
           gameState.battleState = undefined;
           EventEngine.dispatchEvent(gameState, { type: 'PHASE_CHANGED', data: { phase: 'MAIN', reason: 'RETURN_MAIN' } });
           gameState.logs.push(`[阶段切换] 战斗中止，返回主要阶段`);
@@ -5450,6 +5489,7 @@ export const ServerGameService = {
       case 'BATTLE_END':
         gameState.phase = 'MAIN';
         EventEngine.dispatchEvent(gameState, { type: 'PHASE_CHANGED', data: { phase: 'MAIN' } });
+        ServerGameService.clearAllianceAttackMarkers(gameState, gameState.battleState?.attackers);
         gameState.battleState = undefined;
         gameState.logs.push(`[阶段切换] 战斗结束，返回主要阶段`);
         break;
@@ -6316,6 +6356,28 @@ export const ServerGameService = {
     );
   },
 
+  shouldBoldlyExhaustOpeningPayment(gameState: GameState, playerUid: string) {
+    const player = gameState.players[playerUid];
+    if (!player || ServerGameService.getBotDifficulty(gameState, playerUid) !== 'hard') return false;
+    if (!player.isTurn || !player.isFirst || gameState.turnCount !== 1 || gameState.phase !== 'MAIN') return false;
+
+    const opponentUid = gameState.playerIds.find(uid => uid !== playerUid);
+    if (!opponentUid) return false;
+
+    const explicitProfileId = (gameState as any).botDeckProfiles?.[opponentUid] ||
+      (gameState.players[opponentUid] as any)?.botDeckProfileId;
+    const explicitProfile = explicitProfileId ? getDeckAiProfile(explicitProfileId) : undefined;
+    const inferredProfile = inferPlayerDeckProfile(gameState, opponentUid);
+    const opponentIsAggro =
+      explicitProfile?.gamePlan?.mode === 'aggro' ||
+      explicitProfile?.gamePlan?.primaryGoal === 'damage' ||
+      inferredProfile?.archetype === 'aggro' ||
+      !!inferredProfile?.traits.includes('burst-damage') ||
+      !!inferredProfile?.traits.includes('low-curve-swarm');
+
+    return !opponentIsAggro;
+  },
+
   scoreBotPaymentSelectionRisk(
     gameState: GameState,
     playerUid: string,
@@ -6339,11 +6401,15 @@ export const ServerGameService = {
     const ownErosion = countErosion(player);
     const lowDeck = profile.riskThresholds?.lowDeck ?? 10;
     const reserveDeck = profile.riskThresholds?.reserveDefendersAtDeck ?? lowDeck;
+    const boldOpeningPayment = ServerGameService.shouldBoldlyExhaustOpeningPayment(gameState, playerUid);
     const defensePressure =
-      player.deck.length <= reserveDeck ||
-      incomingThreat.defendersNeeded > 0 ||
-      incomingThreat.lethalWithoutBlocks ||
-      incomingThreat.totalDamage >= Math.max(4, 10 - ownErosion);
+      !boldOpeningPayment &&
+      (
+        player.deck.length <= reserveDeck ||
+        incomingThreat.defendersNeeded > 0 ||
+        incomingThreat.lethalWithoutBlocks ||
+        incomingThreat.totalDamage >= Math.max(4, 10 - ownErosion)
+      );
     const preserveBoardForPlan =
       profile.gamePlan?.mode === 'engine' ||
       profile.gamePlan?.mode === 'combo' ||
@@ -6875,7 +6941,14 @@ export const ServerGameService = {
     });
 
     try {
-      await ServerGameService.playCard(gameState, playerUid, chosen.card.gamecardId, chosen.initialPaymentSelection);
+      await ServerGameService.playCard(
+        gameState,
+        playerUid,
+        chosen.card.gamecardId,
+        chosen.initialPaymentSelection,
+        undefined,
+        { paymentSelectionResolved: true }
+      );
       return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -7076,11 +7149,15 @@ export const ServerGameService = {
     const lowDeck = profile.riskThresholds?.lowDeck ?? 10;
     const reserveDeck = profile.riskThresholds?.reserveDefendersAtDeck ?? lowDeck;
     const stopSelfDrawAtDeck = profile.riskThresholds?.stopSelfDrawAtDeck ?? lowDeck;
+    const boldOpeningPayment = ServerGameService.shouldBoldlyExhaustOpeningPayment(gameState, playerUid);
     const defensePressure = difficulty === 'hard' && (
-      player.deck.length <= reserveDeck ||
-      incomingThreat.defendersNeeded > 0 ||
-      incomingThreat.lethalWithoutBlocks ||
-      opponentPotentialDamage >= Math.max(4, 10 - ownErosion)
+      !boldOpeningPayment &&
+      (
+        player.deck.length <= reserveDeck ||
+        incomingThreat.defendersNeeded > 0 ||
+        incomingThreat.lethalWithoutBlocks ||
+        opponentPotentialDamage >= Math.max(4, 10 - ownErosion)
+      )
     );
     const preserveBoardForPlan = difficulty === 'hard' && (
       profile.gamePlan?.mode === 'engine' ||
@@ -7094,9 +7171,8 @@ export const ServerGameService = {
       ownAttackers.length > 0 &&
       !!opponent &&
       (
-        totalAttackDamage > opponent.deck.length ||
-        totalAttackDamage >= Math.max(1, 10 - opponentErosion) ||
-        opponentErosion >= 7 ||
+        battleDamageWouldBeFatal(totalAttackDamage, opponent) ||
+        (!opponent.isGoddessMode && opponentErosion >= 7) ||
         opponent.deck.length <= lowDeck
       );
     const canDefendSoon = (unit: Card | null | undefined) => !!unit &&
@@ -7106,7 +7182,9 @@ export const ServerGameService = {
       !((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount);
     const readyDefendersBefore = player.unitZone.filter(canDefendSoon).length;
     const deckPaymentWeight = difficulty === 'hard'
-      ? incomingThreat.deckOutRisk
+      ? boldOpeningPayment
+        ? 14
+        : incomingThreat.deckOutRisk
         ? 34
         : player.deck.length <= stopSelfDrawAtDeck
         ? 24
@@ -7152,7 +7230,7 @@ export const ServerGameService = {
             const newlyPlayed = unit.playedTurn === gameState.turnCount;
             const highValueUnit = explicitPreserve || cardValue >= 34;
             const readyAttacker = canUnitAttack(gameState, unit);
-            selectedUnitValue += defensePressure
+            let unitPaymentValue = defensePressure
               ? baseUnitValue * 1.4 +
                 (unit.damage || 0) * 8 +
                 (unit.power || 0) / 600 +
@@ -7162,6 +7240,12 @@ export const ServerGameService = {
                 (preserveBoardForPlan && highValueUnit ? 18 : 0) +
                 (preserveBoardForPlan ? (unit.damage || 0) * 6 : 0)
               : baseUnitValue;
+            if (boldOpeningPayment) {
+              unitPaymentValue = highValueUnit || unit.godMark
+                ? unitPaymentValue * 0.35
+                : Math.min(unitPaymentValue * 0.08, 1.5 + Math.max(0, unit.damage || 0) * 0.4 + Math.max(0, unit.power || 0) / 5000);
+            }
+            selectedUnitValue += unitPaymentValue;
             if (canDefendSoon(unit)) selectedReadyDefenders += 1;
             if (readyAttacker) {
               selectedAttackers += 1;
@@ -7186,10 +7270,10 @@ export const ServerGameService = {
         }
         if (closingAttackPressure && selectedAttackers > 0 && opponent) {
           const remainingAttackDamage = Math.max(0, totalAttackDamage - selectedAttackDamage);
-          const damageNeeded = Math.max(1, 10 - opponentErosion);
-          if (totalAttackDamage > opponent.deck.length && remainingAttackDamage <= opponent.deck.length) {
+          const damageNeeded = damageToErosionCritical(opponent);
+          if (battleDamageWouldDeckOut(totalAttackDamage, opponent) && !battleDamageWouldDeckOut(remainingAttackDamage, opponent)) {
             selectedUnitValue += 70;
-          } else if (totalAttackDamage >= damageNeeded && remainingAttackDamage < damageNeeded) {
+          } else if (!opponent.isGoddessMode && totalAttackDamage >= damageNeeded && remainingAttackDamage < damageNeeded) {
             selectedUnitValue += 50;
           }
         }
@@ -7990,7 +8074,14 @@ export const ServerGameService = {
             if (!declaredTargets) throw new Error('没有可指定的合法对象');
           }
 
-          await ServerGameService.playCard(gameState, playerUid, cardToPlay.gamecardId, initialPaymentSelection, declaredTargets);
+          await ServerGameService.playCard(
+            gameState,
+            playerUid,
+            cardToPlay.gamecardId,
+            initialPaymentSelection,
+            declaredTargets,
+            { paymentSelectionResolved: true }
+          );
           if (turnPlan && isClosingTurnPlan(turnPlan) && !turnPlan.attackBeforeDeveloping && gameState.turnCount > 1) {
             ServerGameService.markBotClosingAttackCommitment(gameState, playerUid, turnPlan);
           }
@@ -8100,9 +8191,9 @@ export const ServerGameService = {
           !((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount)
         ).length
         : 0;
-      const damageToCritical = Math.max(1, 10 - opponentErosion);
-      const erosionPressureWindow = totalAvailableDamage >= damageToCritical;
-      const lethalWindow = opponent ? totalAvailableDamage > opponent.deck.length : false;
+      const damageToCritical = damageToErosionCritical(opponent);
+      const erosionPressureWindow = !!opponent && !opponent.isGoddessMode && totalAvailableDamage >= damageToCritical;
+      const lethalWindow = opponent ? battleDamageWouldDeckOut(totalAvailableDamage, opponent) : false;
       const ownErosion = turnPlan?.ownErosion ?? countErosion(bot);
       const opponentPotentialDamage = turnPlan?.opponentPotentialDamage ?? (opponent
         ? opponent.unitZone.filter(Boolean).reduce((sum, unit) => sum + (unit?.damage || 0), 0)

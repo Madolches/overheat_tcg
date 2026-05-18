@@ -38,6 +38,7 @@ export interface ComboAllianceAttackPlan {
 const SMILE_KORIEL_ID = '101100096';
 const ECLIPSE_ID = '201100037';
 const ECLIPSE_EFFECT_ID = '201100037_eclipse';
+const RED_PURSUIT_TROOP_ID = '102050085';
 
 function countBackErosion(player: PlayerState) {
   return player.erosionBack.filter(Boolean).length;
@@ -214,9 +215,90 @@ function findSmileAllianceEclipseOpportunity(
   };
 }
 
+function isRedPursuitTroop(card: Card | null | undefined) {
+  return cardMatches(card, RED_PURSUIT_TROOP_ID);
+}
+
+function findBestRedPursuitPartner(gameState: GameState, units: Card[], pursuit: Card) {
+  return [...units]
+    .filter(unit =>
+      unit.gamecardId !== pursuit.gamecardId &&
+      (!unit.specialName || !pursuit.specialName || unit.specialName !== pursuit.specialName) &&
+      canAttackForCombo(gameState, unit)
+    )
+    .sort((a, b) => {
+      const score = (unit: Card) =>
+        (unit.damage || 0) * 14 +
+        (unit.power || 0) / 850 +
+        (unit.godMark ? 10 : 0) +
+        (unit.id === '102050432' ? 18 : 0);
+      return score(b) - score(a);
+    })[0];
+}
+
+function findRedPursuitAllianceOpportunity(
+  gameState: GameState,
+  player: PlayerState,
+  profile: DeckAiProfile
+): ComboOpportunity | undefined {
+  const units = player.unitZone.filter((unit): unit is Card => !!unit);
+  const pursuit = units.find(unit => isRedPursuitTroop(unit) && canAttackForCombo(gameState, unit));
+  if (!pursuit && profile.id !== 'red-dikai') return undefined;
+
+  const fieldPursuit = units.find(isRedPursuitTroop);
+  const partner = pursuit ? findBestRedPursuitPartner(gameState, units, pursuit) : undefined;
+  const opponentUid = gameState.playerIds.find(uid => uid !== player.uid);
+  const opponent = opponentUid ? gameState.players[opponentUid] : undefined;
+  const likelyDefenders = countLikelyDefenders(gameState, opponent);
+  const pursuitAllianceDamage = (pursuit?.damage || 0) + (partner?.damage || 0) + 2;
+  const damageToCritical = !opponent || opponent.isGoddessMode ? 99 : Math.max(1, 10 - countTotalErosion(opponent));
+  const pressure =
+    !!opponent &&
+    (
+      pursuitAllianceDamage > opponent.deck.length ||
+      (!opponent.isGoddessMode && pursuitAllianceDamage >= Math.max(1, damageToCritical - 1)) ||
+      likelyDefenders > 0
+    );
+  const ready = !!pursuit && !!partner;
+  const partial = !!fieldPursuit;
+  const wantsAllianceAttack = ready && gameState.phase === 'BATTLE_DECLARATION';
+  const reasons: string[] = [];
+
+  if (fieldPursuit) reasons.push('pursuit-on-field');
+  if (pursuit) reasons.push('pursuit-can-attack');
+  if (partner) reasons.push('alliance-partner-ready');
+  if (likelyDefenders > 0) reasons.push(`defenders=${likelyDefenders}`);
+  if (pressure) reasons.push('pursuit-alliance-pressure');
+
+  return {
+    id: 'red-pursuit-alliance-damage',
+    name: 'Pursuit Troop Alliance Damage',
+    score:
+      (wantsAllianceAttack ? 82 : 0) +
+      (ready ? 34 : 0) +
+      (partial ? 10 : 0) +
+      (pressure ? 28 : 0) +
+      (pursuitAllianceDamage * 4),
+    ready,
+    partial,
+    phase: gameState.phase,
+    reasons,
+    preserveIds: [fieldPursuit, partner]
+      .filter((card): card is Card => !!card)
+      .map(card => card.gamecardId),
+    preferredAttackers: [pursuit, partner]
+      .filter((card): card is Card => !!card)
+      .map(card => card.gamecardId),
+    wantsAllianceAttack,
+    payoffPlayableNow: wantsAllianceAttack,
+    payoffInHand: false,
+  };
+}
+
 export function getComboOpportunities(gameState: GameState, player: PlayerState, profile: DeckAiProfile) {
   return [
     findSmileAllianceEclipseOpportunity(gameState, player, profile),
+    findRedPursuitAllianceOpportunity(gameState, player, profile),
   ]
     .filter((combo): combo is ComboOpportunity => !!combo)
     .sort((a, b) => b.score - a.score);
@@ -240,7 +322,13 @@ export function getComboAllianceAttack(
     .map(id => availableAttackers.find(card => card.gamecardId === id))
     .filter((card): card is Card => !!card && availableIds.has(card.gamecardId));
 
-  if (attackers.length !== 2 || !attackers.some(isSmileKoriel)) return undefined;
+  const hasRequiredAnchor =
+    combo.id === 'smile-alliance-eclipse'
+      ? attackers.some(isSmileKoriel)
+      : combo.id === 'red-pursuit-alliance-damage'
+        ? attackers.some(isRedPursuitTroop)
+        : true;
+  if (attackers.length !== 2 || !hasRequiredAnchor) return undefined;
 
   const opponentUid = gameState.playerIds.find(uid => uid !== player.uid);
   const opponent = opponentUid ? gameState.players[opponentUid] : undefined;

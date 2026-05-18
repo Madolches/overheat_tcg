@@ -81,6 +81,8 @@ export type PlayerDeckArchetype = 'aggro' | 'tempo' | 'midrange' | 'control' | '
 
 export interface PlayerDeckProfile {
   uid?: string;
+  knownProfileId?: string;
+  knownProfileName?: string;
   archetype: PlayerDeckArchetype;
   confidence: number;
   size: number;
