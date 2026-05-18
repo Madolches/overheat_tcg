@@ -1,11 +1,15 @@
 import { DeckAiProfile } from '../types';
 import { cardCost, cardText, effectHasTag, hasAny, hasRole, opponentErosion, opponentHasTrait, opponentIs, queryEffectId, queryOptionCard, queryOptionIsMine, readyAttackers } from './strategyUtils';
 
+const RED_DIKAI_ID = '102050432';
+const RED_PURSUIT_TROOP_ID = '102050085';
+const RED_SCADI_ID = '302050013';
+
 const RED_CORE_IDS = new Set([
   '102050091',
-  '102050432',
+  RED_DIKAI_ID,
   '102050427',
-  '302050013',
+  RED_SCADI_ID,
 ]);
 
 const RED_REMOVAL_EFFECT_IDS = new Set([
@@ -25,6 +29,7 @@ export const redDikaiProfile: DeckAiProfile = {
     '102050085': 8,
     '102050088': 7,
     '102050091': 14,
+    '102050141': 7,
     '102050427': 10,
     '102050432': 16,
     '302050013': 9,
@@ -89,7 +94,7 @@ export const redDikaiProfile: DeckAiProfile = {
   },
   softCompensation: {
     openingSmoothing: true,
-    fixedOpeningHandIds: ['102050432', '102050086', '102050427', '302050013'],
+    fixedOpeningHandIds: ['102050086', '102050141', '102050432', '302050013'],
     openingLookahead: 8,
     maxOpeningReplacements: 1,
     extremeBrickRescueChance: 0.32,
@@ -137,13 +142,14 @@ export const redDikaiProfile: DeckAiProfile = {
       let reserveDefendersDelta = 0;
       let minBattleEffectScoreDelta = 0;
       let attackBeforeDeveloping: boolean | undefined;
-      const damageToCritical = Math.max(1, 10 - context.plan.opponentErosion);
+      const liveOpponentErosion = context.opponent?.isGoddessMode ? 0 : context.plan.opponentErosion;
+      const damageToCritical = Math.max(1, 10 - liveOpponentErosion);
       const nearKill =
         context.plan.lethalWindow ||
         context.plan.totalAvailableDamage >= Math.max(1, damageToCritical - 1) ||
-        context.plan.opponentErosion >= 7;
+        liveOpponentErosion >= 7;
 
-      if (context.plan.attackers > 0 && context.plan.opponentErosion >= 5) {
+      if (context.plan.attackers > 0 && liveOpponentErosion >= 5) {
         attackBeforeDeveloping = true;
         reserveDefendersDelta -= 1;
         minBattleEffectScoreDelta -= 0.8;
@@ -172,6 +178,28 @@ export const redDikaiProfile: DeckAiProfile = {
       const card = context.card;
       const text = cardText(card);
       let score = 0;
+      if (
+        context.reason === 'playable' &&
+        card.type === 'UNIT' &&
+        card.isrush &&
+        context.player?.isTurn &&
+        context.player?.isFirst &&
+        context.gameState?.phase === 'MAIN' &&
+        context.gameState?.turnCount === 1
+      ) {
+        score -= 260;
+      }
+      if (card.id === RED_SCADI_ID) {
+        const ownUnits = context.player?.unitZone.filter(Boolean) || [];
+        const dikaiOnField = ownUnits.some(unit => unit?.id === RED_DIKAI_ID);
+        const dikaiInHand = context.player?.hand.some(handCard => handCard.id === RED_DIKAI_ID);
+        if (dikaiOnField) {
+          score += 42 + (opponentErosion(context) >= 5 && opponentErosion(context) <= 7 ? 18 : 0);
+        } else {
+          score -= dikaiInHand ? 95 : 72;
+          if (context.player?.isFirst && context.gameState?.turnCount === 1) score -= 35;
+        }
+      }
       if (card.id === '202000131') {
         const ownUnits = context.player?.unitZone.filter(Boolean) || [];
         const opponentUnits = context.opponent?.unitZone.filter(Boolean) || [];
@@ -217,13 +245,32 @@ export const redDikaiProfile: DeckAiProfile = {
     },
     adjustPaymentScore: context => {
       if (RED_CORE_IDS.has(context.card.id)) return 26;
-      if (context.card.id === '102050085' && readyAttackers(context) > 0) return 10;
+      if (context.card.id === RED_PURSUIT_TROOP_ID && readyAttackers(context) > 0) return 10;
       return 0;
     },
     adjustQueryScore: context => {
       const card = queryOptionCard(context);
       if (!card) return 0;
       const effectId = queryEffectId(context);
+      const queryContext = (context.query as any).context || {};
+      const sourceCard = [
+        ...(context.player?.hand || []),
+        ...(context.player?.itemZone || []),
+        ...(context.player?.playZone || []),
+        ...(context.player?.grave || []),
+      ].find(candidate => candidate?.gamecardId === queryContext.sourceCardId);
+
+      if (effectId === 'equip_universal' && sourceCard?.id === RED_SCADI_ID) {
+        const dikai = context.player?.unitZone.find(unit => unit?.id === RED_DIKAI_ID);
+        const equippedTarget = context.player?.unitZone.find(unit => unit?.gamecardId === sourceCard.equipTargetId);
+        if (card.gamecardId === sourceCard.gamecardId) {
+          if (equippedTarget?.id === RED_DIKAI_ID) return -180;
+          return dikai ? 38 : -60;
+        }
+        if (card.id === RED_DIKAI_ID) return 180;
+        if (dikai) return -150;
+        return -85 + (card.damage || 0) * 3 + (card.power || 0) / 1200;
+      }
 
       if (effectId === '102050432_reset_attack_unit') {
         const location = card.cardlocation || context.option?.source;
@@ -249,6 +296,15 @@ export const redDikaiProfile: DeckAiProfile = {
     },
     adjustEffectScore: context => {
       let score = 0;
+      if (context.card.id === RED_SCADI_ID && context.effect.id === 'equip_universal') {
+        const dikai = context.player?.unitZone.find(unit => unit?.id === RED_DIKAI_ID);
+        const equippedTarget = context.player?.unitZone.find(unit => unit?.gamecardId === context.card.equipTargetId);
+        if (context.card.equipTargetId) {
+          score += equippedTarget?.id === RED_DIKAI_ID ? -140 : dikai ? 32 : -45;
+        } else {
+          score += dikai ? 58 : -95;
+        }
+      }
       if (context.effect.id === '102050432_reset_attack_unit') {
         const battle = context.gameState?.battleState;
         const currentTurnUid = context.gameState?.playerIds?.[context.gameState.currentTurnPlayer];

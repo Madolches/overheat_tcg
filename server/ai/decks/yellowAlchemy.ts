@@ -157,10 +157,11 @@ export const yellowAlchemyProfile: DeckAiProfile = {
       let minMainEffectScoreDelta = 0;
       let attackBeforeDeveloping: boolean | undefined;
       const engineOnline = context.plan.attackers >= 2 || context.plan.totalAvailableDamage >= 3;
+      const liveOpponentErosion = context.opponent?.isGoddessMode ? 0 : context.plan.opponentErosion;
       const convertToPressure =
         engineOnline &&
         (
-          context.plan.opponentErosion >= 5 ||
+          liveOpponentErosion >= 5 ||
           context.plan.ownDeck <= 14 ||
           context.opponentDeckProfile?.archetype === 'control' ||
           context.opponentDeckProfile?.archetype === 'engine'

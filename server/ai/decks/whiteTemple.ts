@@ -226,11 +226,12 @@ export const whiteTempleProfile: DeckAiProfile = {
       let minMainEffectScoreDelta = 0;
       let minBattleEffectScoreDelta = 0;
       let attackBeforeDeveloping: boolean | undefined;
+      const liveOpponentErosion = context.opponent?.isGoddessMode ? 0 : context.plan.opponentErosion;
       const pressureReady =
         context.plan.attackers >= 2 &&
         (
-          context.plan.opponentErosion >= 6 ||
-          context.plan.totalAvailableDamage >= Math.max(1, 10 - context.plan.opponentErosion - 1) ||
+          liveOpponentErosion >= 6 ||
+          context.plan.totalAvailableDamage >= Math.max(1, 10 - liveOpponentErosion - 1) ||
           context.plan.lethalWindow
         );
 

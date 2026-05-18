@@ -1,8 +1,13 @@
+import { Card } from '../../../src/types/game';
 import { DeckAiProfile } from '../types';
 import { cardCost, cardText, effectHasTag, hasAny, hasRole, openUnitSlots, opponentErosion, opponentHasTrait, opponentIs, queryEffectId, queryOptionCard, queryOptionIsMine, readyAttackers, readyDefenders } from './strategyUtils';
 
+const BIG_SALALA_ID = '103000426';
+const BIG_WAR_ANGEL_ID = '101140435';
+const BIG_WAR_SONG_ID = '301000016';
+
 const BIG_SALALA_CORE_IDS = new Set([
-  '103000426',
+  BIG_SALALA_ID,
   '301000072',
   '303000022',
   '103090257',
@@ -16,6 +21,27 @@ const BIG_SALALA_PAYOFF_IDS = new Set([
   '301000016',
   '303000022',
 ]);
+
+function ownCardByGameId(player: any, gamecardId?: string) {
+  if (!player || !gamecardId) return undefined;
+  return [
+    ...(player.hand || []),
+    ...(player.itemZone || []),
+    ...(player.playZone || []),
+    ...(player.grave || []),
+  ].find((card: Card | null) => card?.gamecardId === gamecardId);
+}
+
+function bigSalalaEquipTargetScore(card: Card | null | undefined) {
+  if (!card || card.type !== 'UNIT') return -90;
+  return (card.id === BIG_SALALA_ID ? 110 : 0) +
+    (card.id === BIG_WAR_ANGEL_ID ? 72 : 0) +
+    (BIG_SALALA_CORE_IDS.has(card.id) ? 20 : 0) +
+    (card.godMark ? 28 : 0) +
+    (card.damage || 0) * 18 +
+    (card.power || 0) / 650 +
+    (card.isHeroic ? -8 : 0);
+}
 
 export const bigSalalaProfile: DeckAiProfile = {
   id: 'big-salala',
@@ -46,7 +72,7 @@ export const bigSalalaProfile: DeckAiProfile = {
   },
   effectPreferences: {
     preferredEffectIds: {
-      '103000426_mill_three': 7,
+      '103000426_mill_three': 2,
       '303000022_bind_enter': 7,
       '203090028_forced_battle': 6,
       '203000073_must_defend': 5,
@@ -147,13 +173,14 @@ export const bigSalalaProfile: DeckAiProfile = {
       let attackBeforeDeveloping: boolean | undefined;
       const hasSalala = !!context.player?.unitZone.some(unit => unit?.id === '103000426');
       const hasControlItem = !!context.player?.itemZone.some(item => item && BIG_SALALA_PAYOFF_IDS.has(item.id));
+      const liveOpponentErosion = context.opponent?.isGoddessMode ? 0 : context.plan.opponentErosion;
       const pressureReady =
         context.plan.attackers >= 2 &&
         (
           hasSalala ||
           hasControlItem ||
-          context.plan.opponentErosion >= 6 ||
-          context.plan.totalAvailableDamage >= Math.max(1, 10 - context.plan.opponentErosion - 1)
+          liveOpponentErosion >= 6 ||
+          context.plan.totalAvailableDamage >= Math.max(1, 10 - liveOpponentErosion - 1)
         );
 
       if (context.opponentDeckProfile?.archetype === 'aggro' || context.opponentDeckProfile?.traits.includes('burst-damage')) {
@@ -179,7 +206,7 @@ export const bigSalalaProfile: DeckAiProfile = {
       const text = cardText(card);
       let score = 0;
       if (BIG_SALALA_CORE_IDS.has(card.id)) score += 5;
-      if (card.id === '103000426') score += openUnitSlots(context) > 0 ? 10 : -8;
+      if (card.id === BIG_SALALA_ID) score += openUnitSlots(context) > 0 ? 10 : -8;
       if (card.id === '301000072' && context.player?.unitZone.some(unit => unit?.godMark)) score += 8;
       if (card.id === '303000022' && context.opponent?.unitZone.some(unit => !!unit)) score += 7;
       if (card.type === 'UNIT' && cardCost(card) <= 3) score += 3.5;
@@ -192,8 +219,8 @@ export const bigSalalaProfile: DeckAiProfile = {
     },
     adjustAttackScore: context => {
       let score = 0;
-      if (context.card.id === '103000426') score += 8 + (context.card.damage || 0) * 1.5;
-      if (context.card.id === '101140435' && context.card.godMark) score += 4;
+      if (context.card.id === BIG_SALALA_ID) score += 8 + (context.card.damage || 0) * 1.5;
+      if (context.card.id === BIG_WAR_ANGEL_ID && context.card.godMark) score += 4;
       if (opponentIs(context, 'engine', 'combo', 'control')) score += (context.card.damage || 0) * 1.1;
       if (opponentIs(context, 'aggro') && readyDefenders(context) <= 1) score -= (context.card.damage || 0) * 1.2;
       return score;
@@ -201,7 +228,7 @@ export const bigSalalaProfile: DeckAiProfile = {
     adjustDefenseScore: context => {
       let score = 0;
       if (BIG_SALALA_CORE_IDS.has(context.card.id)) score -= 5;
-      if (context.card.id === '103000426') score -= 8;
+      if (context.card.id === BIG_SALALA_ID) score -= 8;
       if ((context.card.power || 0) >= 3000) score += 4;
       if (opponentIs(context, 'aggro') || opponentHasTrait(context, 'burst-damage')) score += 7;
       return score;
@@ -210,7 +237,7 @@ export const bigSalalaProfile: DeckAiProfile = {
       const card = context.card;
       let score = 0;
       if (card.type === 'UNIT' && cardCost(card) <= 3) score += 7;
-      if (card.id === '103000426') score += 5;
+      if (card.id === BIG_SALALA_ID) score += 5;
       if (card.id === '105000481') score += 6;
       if (BIG_SALALA_CORE_IDS.has(card.id)) score += 4;
       if (card.type !== 'UNIT' && (context.earlyUnitsInHand || 0) === 0) score -= 6;
@@ -225,9 +252,57 @@ export const bigSalalaProfile: DeckAiProfile = {
     adjustEffectScore: context => {
       let score = 0;
       if (context.effect.id === '103000426_mill_three') {
-        const spareSalala = (context.player?.hand || []).filter(card => card.id === '103000426').length +
-          (context.player?.grave || []).filter(card => card.id === '103000426').length;
-        score += spareSalala >= 2 ? 14 : -12;
+        const handSalala = (context.player?.hand || []).filter(card => card.id === '103000426').length;
+        const graveSalala = (context.player?.grave || []).filter(card => card.id === '103000426').length;
+        const deckSalala = (context.player?.deck || []).filter(card => card.id === '103000426').length;
+        const nonDeckSpare = handSalala + graveSalala;
+        const totalSpare = nonDeckSpare + deckSalala;
+        const opponentDeck = context.opponent?.deck.length ?? 99;
+        const ownDeck = context.player?.deck.length ?? 99;
+        const ownErosion = (context.player?.erosionFront || []).filter(Boolean).length +
+          (context.player?.erosionBack || []).filter(Boolean).length;
+        const millsOut = opponentDeck <= 3;
+        const strongDeckPressure = opponentDeck <= 6;
+
+        if (totalSpare < 2) {
+          score -= 80;
+          context.notes.push('salala mill lacks two spare godmark salalas');
+        } else if (millsOut) {
+          score += 44;
+          context.notes.push('salala mill can threaten deck-out');
+        } else if (strongDeckPressure) {
+          score += 24;
+          context.notes.push('salala mill pushes low opposing deck');
+        } else if (opponentDeck <= 10 && nonDeckSpare >= 2) {
+          score += 8;
+          context.notes.push('salala mill uses non-deck spares under deck pressure');
+        } else {
+          score -= 32;
+          context.notes.push('salala mill held until opposing deck is low');
+        }
+
+        if (!millsOut && nonDeckSpare < 2) {
+          score -= opponentDeck > 6 ? 24 : 10;
+          context.notes.push('salala mill avoids exiling deck copies early');
+        }
+        if (!millsOut && ownDeck <= 12) {
+          score -= 6;
+        }
+        if (!millsOut && ownErosion >= 8) {
+          score -= 8;
+        }
+      }
+      if (context.card.id === BIG_WAR_SONG_ID && context.effect.id === 'equip_universal') {
+        const equippedTarget = context.player?.unitZone.find(unit => unit?.gamecardId === context.card.equipTargetId);
+        const bestTarget = context.player?.unitZone
+          .filter((unit): unit is Card => !!unit)
+          .sort((a, b) => bigSalalaEquipTargetScore(b) - bigSalalaEquipTargetScore(a))[0];
+        if (context.card.equipTargetId) {
+          score += equippedTarget ? -120 : 24;
+        } else {
+          const bestScore = bigSalalaEquipTargetScore(bestTarget);
+          score += bestScore >= 90 ? 54 : bestScore >= 55 ? 22 : -42;
+        }
       }
       if (context.effect.id === '303000022_bind_enter' && context.opponent?.unitZone.some(unit => !!unit)) score += 12;
       if (context.effect.id === '203090028_forced_battle') score += context.opponent?.unitZone.some(unit => unit && !unit.godMark) ? 8 : -12;
@@ -267,6 +342,21 @@ export const bigSalalaProfile: DeckAiProfile = {
         if (card.cardlocation === 'DECK') return 24;
         if (card.cardlocation === 'GRAVE') return 18;
         if (card.cardlocation === 'HAND') return -20;
+      }
+      const sourceCard = ownCardByGameId(context.player, (context.query as any).context?.sourceCardId);
+      if (effectId === 'equip_universal' && sourceCard?.id === BIG_WAR_SONG_ID) {
+        if (!queryOptionIsMine(context)) return -140;
+        const equippedTarget = context.player?.unitZone.find(unit => unit?.gamecardId === sourceCard.equipTargetId);
+        const bestTarget = context.player?.unitZone
+          .filter((unit): unit is Card => !!unit)
+          .sort((a, b) => bigSalalaEquipTargetScore(b) - bigSalalaEquipTargetScore(a))[0];
+        if (card.gamecardId === sourceCard.gamecardId) {
+          if (!equippedTarget) return -80;
+          return bestTarget && bestTarget.gamecardId !== equippedTarget.gamecardId
+            ? 24
+            : -170;
+        }
+        return bigSalalaEquipTargetScore(card);
       }
       return 0;
     },
