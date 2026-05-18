@@ -1097,11 +1097,11 @@ export const DeckBuilder: React.FC = () => {
             </div>
             <button
               onClick={() => setShowManageModal(true)}
-              className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-red-600 px-4 text-sm font-black italic text-white shadow-[0_0_20px_rgba(220,38,38,0.3)] transition-all hover:bg-red-700"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-600 text-sm font-black italic text-white shadow-[0_0_20px_rgba(220,38,38,0.3)] transition-all hover:bg-red-700 sm:w-auto sm:gap-2 sm:px-4"
               title="管理"
             >
               <Menu className="h-5 w-5" />
-              管理
+              <span className="hidden sm:inline">管理</span>
             </button>
             <span className="hidden shrink-0 items-center gap-2 rounded-full bg-zinc-900 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-zinc-500 sm:flex">
               <span>{deck.length}/50</span>
