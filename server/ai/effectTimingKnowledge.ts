@@ -199,8 +199,8 @@ const MANUAL_EFFECT_TIMING_OVERRIDES: Record<string, {
   },
   '102050432_reset_attack_unit': {
     tags: ['reset', 'combat', 'finisher'],
-    phaseBias: { BATTLE_DECLARATION: 7, BATTLE_FREE: 8, DAMAGE_CALCULATION: 5, MAIN: 1 },
-    reasons: ['reset attack unit should extend an active red pressure turn'],
+    phaseBias: { BATTLE_DECLARATION: -8, BATTLE_FREE: 9, COUNTERING: 8, DAMAGE_CALCULATION: 4, MAIN: 5 },
+    reasons: ['reset attack unit should be used after Dikai is exhausted by an attack or a real combat commitment'],
   },
   '102050087_destroy': {
     tags: ['removal', 'tempo'],

@@ -177,6 +177,7 @@ export interface DeckAiStrategyHooks {
 
 export interface DeckAiSoftCompensation {
   openingSmoothing?: boolean;
+  fixedOpeningHandIds?: string[];
   openingLookahead?: number;
   maxOpeningReplacements?: number;
   extremeBrickRescueChance?: number;

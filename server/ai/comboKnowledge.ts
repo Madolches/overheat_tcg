@@ -167,13 +167,15 @@ function findSmileAllianceEclipseOpportunity(
   const inProtectedAllianceWindow = hasSmileAllianceBattle(gameState, player);
   const payoffInHand = !!eclipseInHand;
   const payoffPlayableNow = !!eclipseInHand && hasBackErosion && eclipseUnused && inProtectedAllianceWindow;
-  const ready = !!attackableSmile && !!partner && payoffInHand && hasBackErosion && eclipseUnused;
+  const protectedAllianceReady = !!attackableSmile && !!partner;
+  const ready = protectedAllianceReady && payoffInHand && hasBackErosion && eclipseUnused;
   const partial = !!fieldSmile || !!eclipseInHand || !!partner;
   const reasons: string[] = [];
 
   if (fieldSmile) reasons.push('smile-on-field');
   if (attackableSmile) reasons.push('smile-can-attack');
   if (partner) reasons.push('white-partner-ready');
+  if (protectedAllianceReady) reasons.push('smile-protected-alliance-ready');
   if (eclipseInHand) reasons.push('eclipse-in-hand');
   if (hasBackErosion) reasons.push('erosion-back-3');
   if (inProtectedAllianceWindow) reasons.push('protected-alliance-window');
@@ -185,12 +187,13 @@ function findSmileAllianceEclipseOpportunity(
   const preferredAttackers = [attackableSmile, partner]
     .filter((card): card is Card => !!card)
     .map(card => card.gamecardId);
-  const wantsAllianceAttack = ready && gameState.phase === 'BATTLE_DECLARATION';
+  const wantsAllianceAttack = protectedAllianceReady && gameState.phase === 'BATTLE_DECLARATION';
   const boardSwing = Math.max(0, opponentBoardSize(gameState, player) - ownBoardSize(player));
   const score =
     (payoffPlayableNow ? 130 : 0) +
     (wantsAllianceAttack ? 90 : 0) +
     (ready ? 50 : 0) +
+    (protectedAllianceReady ? 28 : 0) +
     (partial ? 14 : 0) +
     boardSwing * 5 +
     (countTotalErosion(player) >= 8 ? 8 : 0);

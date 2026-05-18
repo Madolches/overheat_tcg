@@ -175,6 +175,7 @@ export const whiteTempleProfile: DeckAiProfile = {
   },
   softCompensation: {
     openingSmoothing: true,
+    fixedOpeningHandIds: ['101130202', '101130440', '101130441', '101000501'],
     openingLookahead: 8,
     maxOpeningReplacements: 1,
     extremeBrickRescueChance: 0.28,

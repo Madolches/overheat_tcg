@@ -6127,10 +6127,14 @@ export const ServerGameService = {
     }
 
     ServerGameService.recordAiDecision(gameState, playerUid, {
-      action: 'SOFT_COMPENSATION',
-      subject: `${result.returned.length} opening card(s)`,
+      action: result.fixedOpening ? 'FIXED_OPENING_HAND' : 'SOFT_COMPENSATION',
+      subject: result.fixedOpening
+        ? result.gained.map(card => ServerGameService.getAiCardName(card)).join(', ') || 'configured opening'
+        : `${result.returned.length} opening card(s)`,
       reason: result.reason,
       details: {
+        fixedOpening: !!result.fixedOpening,
+        missingFixedCardIds: result.missingFixedCardIds?.join(', ') || undefined,
         returned: result.returned.length,
         gained: result.gained.length,
         qualityBefore: result.before.quality,
@@ -6147,11 +6151,11 @@ export const ServerGameService = {
       candidates: [
         ...result.returned.map(card => ({
           name: `返回:${ServerGameService.getAiCardName(card)}`,
-          note: 'soft smoothing',
+          note: result.fixedOpening ? 'fixed opening' : 'soft smoothing',
         })),
         ...result.gained.map(card => ({
           name: `获得:${ServerGameService.getAiCardName(card)}`,
-          note: 'soft smoothing',
+          note: result.fixedOpening ? 'fixed opening' : 'soft smoothing',
         })),
       ],
     });
@@ -8427,6 +8431,10 @@ export const ServerGameService = {
       pendingResolutions: [],
       effectUsage: {}
     };
+
+    if (botDifficulty === 'hard' && botProfile?.softCompensation?.fixedOpeningHandIds?.length) {
+      ServerGameService.applyHardAiSoftOpeningCompensation(gameState, 'BOT_PLAYER');
+    }
 
     return gameState;
   },

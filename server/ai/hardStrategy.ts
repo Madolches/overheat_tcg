@@ -364,6 +364,142 @@ export function analyzeOneTurnTactics(
   };
 }
 
+export interface MainPhaseSequencingPlan {
+  shouldDevelopBeforeAttack: boolean;
+  bestScore: number;
+  bestSubject?: string;
+  notes: string[];
+}
+
+export function scoreMainPhaseCardSequencingValue(gameState: GameState, player: PlayerState, card: Card, profile: DeckAiProfile) {
+  if (gameState.phase !== 'MAIN' || !player.isTurn) return 0;
+  const opponent = getOpponent(gameState, player);
+  const attackers = player.unitZone.filter(unit => canUnitAttack(gameState, unit)) as Card[];
+  if (!opponent || attackers.length === 0) return 0;
+
+  const text = cardSearchText(card).toUpperCase();
+  const knowledge = getCardKnowledge(card);
+  const roles = new Set(knowledge?.roles || []);
+  const likelyDefenders = countLikelyDefenders(gameState, opponent);
+  const opponentErosion = countErosion(opponent);
+  const totalAvailableDamage = attackers.reduce((sum, unit) => sum + Math.max(0, unit.damage || 0), 0);
+  const damageToCritical = Math.max(1, 10 - opponentErosion);
+  const pressureReady =
+    totalAvailableDamage >= Math.max(1, damageToCritical - 1) ||
+    opponentErosion >= riskValue(profile, 'highErosion', 7) ||
+    opponent.deck.length <= riskValue(profile, 'lowDeck', 10);
+  const openUnitSlots = player.unitZone.filter(slot => slot === null).length;
+  const cardDamage = Math.max(0, card.damage || 0);
+  const immediateAttacker =
+    card.type === 'UNIT' &&
+    openUnitSlots > 0 &&
+    cardDamage > 0 &&
+    (card.isrush || textHasAny(text, [/RUSH|速攻|闁插秶鐤唡缁旀牜鐤?/]));
+  const preCombatTempo =
+    (roles.has('removal') || roles.has('tempo') || textHasAny(text, [
+      /DESTROY|EXILE|BANISH|SILENCE|CANNOT.*DEFEND|CANNOT_DEFEND|EXHAUST|TAP|BOUNCE|RETURN.*HAND/i,
+      /鐮村潖|闄ゅ|妯疆|涓嶈兘闃插尽|涓嶈兘鏀诲嚮/,
+    ])) &&
+    likelyDefenders > 0;
+  const summonFromResource =
+    openUnitSlots > 0 &&
+    (roles.has('summon' as any) || roles.has('revive' as any) || textHasAny(text, [
+      /SUMMON|REVIVE|REANIMATE|PLAY_FROM|PUT.*FIELD|EROSION|GRAVE|DECK.*FIELD/i,
+      /渚佃殌|澧撳湴|閹存ê婧€|鐐煎 金|降灵|闄电伒/,
+    ]));
+  const whiteArcherLine =
+    card.id === '101130202' &&
+    openUnitSlots >= 2 &&
+    player.hand.some(other =>
+      other.gamecardId !== card.gamecardId &&
+      other.type === 'UNIT' &&
+      !other.godMark &&
+      (other.acValue || 0) <= 3
+    );
+
+  let score = 0;
+  if (preCombatTempo) {
+    score += 42 + likelyDefenders * 12;
+    if (pressureReady) score += 28;
+    if (totalAvailableDamage >= damageToCritical && likelyDefenders > 0) score += 36;
+  }
+  if (immediateAttacker) {
+    score += 24 + cardDamage * 10 + Math.max(0, card.power || 0) / 900;
+    if (totalAvailableDamage + cardDamage >= damageToCritical) score += 30;
+    if (opponent.deck.length <= totalAvailableDamage + cardDamage) score += 24;
+  }
+  if (summonFromResource) {
+    score += profile.gamePlan?.mode === 'engine' || profile.gamePlan?.mode === 'combo' ? 24 : 22;
+    if (textHasAny(text, [/EROSION|PLAY\s*FROM|PLAY_FROM|渚佃殌/])) score += 18;
+    if (profile.gamePlan?.mode === 'tempo' || profile.gamePlan?.primaryGoal === 'deckPressure') score += 8;
+    if (pressureReady) score += 18;
+  }
+  if (whiteArcherLine) score += 44;
+
+  return score;
+}
+
+export function analyzeMainPhaseSequencing(gameState: GameState, player: PlayerState, profile: DeckAiProfile): MainPhaseSequencingPlan {
+  if (gameState.phase !== 'MAIN' || !player.isTurn) {
+    return { shouldDevelopBeforeAttack: false, bestScore: 0, notes: [] };
+  }
+  const opponent = getOpponent(gameState, player);
+  const attackers = player.unitZone.filter(unit => canUnitAttack(gameState, unit)) as Card[];
+  if (!opponent || attackers.length === 0) {
+    return { shouldDevelopBeforeAttack: false, bestScore: 0, notes: [] };
+  }
+
+  const likelyDefenders = countLikelyDefenders(gameState, opponent);
+  const totalAvailableDamage = attackers.reduce((sum, unit) => sum + Math.max(0, unit.damage || 0), 0);
+  const opponentErosion = countErosion(opponent);
+  const directNoBlockLethal =
+    likelyDefenders === 0 &&
+    (
+      totalAvailableDamage > opponent.deck.length ||
+      totalAvailableDamage >= Math.max(1, 10 - opponentErosion)
+    );
+  if (directNoBlockLethal) {
+    return { shouldDevelopBeforeAttack: false, bestScore: 0, notes: ['direct lethal does not wait for setup'] };
+  }
+
+  const handCandidates = player.hand.map(card => ({
+    subject: card.fullName || card.id,
+    score: scoreMainPhaseCardSequencingValue(gameState, player, card, profile),
+  }));
+  const boardEffectCandidates = [
+    ...player.unitZone,
+    ...player.itemZone,
+    ...player.erosionFront,
+    ...player.grave,
+  ]
+    .filter((card): card is Card => !!card)
+    .flatMap(card => (card.effects || []).map(effect => {
+      if (!(effect.type === 'ACTIVATE' || effect.type === 'ACTIVATED')) return undefined;
+      if (effect.id === '102050432_reset_attack_unit' && !card.isExhausted) return undefined;
+      const text = effectSearchText(card, effect).toUpperCase();
+      const isPreCombatEffect = textHasAny(text, [
+        /DESTROY|EXILE|BANISH|SILENCE|CANNOT.*DEFEND|CANNOT_DEFEND|EXHAUST|TAP|BOUNCE|RETURN.*HAND|SUMMON|REVIVE|PLAY_FROM|EROSION/i,
+        /鐮村潖|闄ゅ|妯疆|涓嶈兘闃插尽|渚佃殌|澧撳湴|降灵/,
+      ]);
+      if (!isPreCombatEffect) return undefined;
+      let score = 18;
+      if (likelyDefenders > 0) score += 24 + likelyDefenders * 8;
+      if (totalAvailableDamage >= Math.max(1, 10 - opponentErosion - 1)) score += 18;
+      return { subject: `${card.fullName || card.id} #${effect.id || '?'}`, score };
+    }).filter(Boolean) as Array<{ subject: string; score: number }>);
+
+  const best = [...handCandidates, ...boardEffectCandidates]
+    .filter(candidate => candidate.score > 0)
+    .sort((a, b) => b.score - a.score)[0];
+  const shouldDevelopBeforeAttack = !!best && best.score >= 36;
+  return {
+    shouldDevelopBeforeAttack,
+    bestScore: best?.score || 0,
+    bestSubject: best?.subject,
+    notes: best ? [`pre-combat action ${best.subject} score=${best.score.toFixed(1)}`] : [],
+  };
+}
+
 export function buildTurnPlan(gameState: GameState, player: PlayerState, profile: DeckAiProfile): HardAiTurnPlan {
   const opponentUid = gameState.playerIds.find(uid => uid !== player.uid);
   const opponent = opponentUid ? gameState.players[opponentUid] : undefined;
@@ -515,6 +651,13 @@ export function buildTurnPlan(gameState: GameState, player: PlayerState, profile
     minBattleEffectScore = Math.max(4.5, minBattleEffectScore + tactical.minBattleEffectScoreDelta);
   }
 
+  const sequencing = analyzeMainPhaseSequencing(gameState, player, profile);
+  if (sequencing.shouldDevelopBeforeAttack && attackBeforeDeveloping) {
+    attackBeforeDeveloping = false;
+    minMainEffectScore = Math.min(minMainEffectScore, 5.5);
+    notes.push(...sequencing.notes.map(note => `sequence ${note}`));
+  }
+
   const turnPlanSnapshot: DeckAiTurnPlanSnapshot = {
     mode,
     ownDeck: player.deck.length,
@@ -555,6 +698,14 @@ export function buildTurnPlan(gameState: GameState, player: PlayerState, profile
     if (typeof turnAdjustment.avoidSelfDraw === 'boolean') avoidSelfDraw = turnAdjustment.avoidSelfDraw;
     if (typeof turnAdjustment.avoidSearch === 'boolean') avoidSearch = turnAdjustment.avoidSearch;
     if (turnAdjustment.notes?.length) notes.push(...turnAdjustment.notes);
+  }
+  if (sequencing.shouldDevelopBeforeAttack && attackBeforeDeveloping) {
+    attackBeforeDeveloping = false;
+    minMainEffectScore = Math.min(minMainEffectScore, 5.5);
+    const sequencingNotes = sequencing.notes.map(note => `sequence ${note}`);
+    for (const note of sequencingNotes) {
+      if (!notes.includes(note)) notes.push(note);
+    }
   }
 
   const combo = getBestComboOpportunity(gameState, player, profile);
@@ -1137,6 +1288,7 @@ export function scorePlayableCard(gameState: GameState, player: PlayerState, car
   const closeGameBias = (gamePlan?.closeGameBias ?? 0) + (matchup?.closeGameBias ?? 0);
   score += (knowledge?.playPriority || 0) * 0.7;
   score += developmentPriority * 0.8;
+  score += scoreMainPhaseCardSequencingValue(gameState, player, card, profile) * 0.65;
 
   if (card.type === 'UNIT') {
     const openSlots = player.unitZone.filter(slot => slot === null).length;
@@ -1311,6 +1463,8 @@ export interface OpeningHandSoftCompensationResult {
   after: OpeningHandAssessment;
   inspectedDeckCards: number;
   extremeRescue: boolean;
+  fixedOpening?: boolean;
+  missingFixedCardIds?: string[];
 }
 
 function scoreOpeningCard(card: Card, profile: DeckAiProfile) {
@@ -1411,6 +1565,87 @@ export function assessOpeningHand(hand: Card[], profile: DeckAiProfile): Opening
   };
 }
 
+function applyFixedOpeningHand(
+  player: PlayerState,
+  profile: DeckAiProfile,
+  before: OpeningHandAssessment
+): OpeningHandSoftCompensationResult | undefined {
+  const fixedIds = profile.softCompensation?.fixedOpeningHandIds?.filter(Boolean) || [];
+  if (fixedIds.length === 0 || player.hand.length === 0) return undefined;
+
+  const openingSize = player.hand.length;
+  const targetIds = fixedIds.slice(0, openingSize);
+  const originalHand = [...player.hand];
+  const selected: Card[] = [];
+  const selectedIds = new Set<string>();
+  const gained: Card[] = [];
+  const missingFixedCardIds: string[] = [];
+
+  for (const cardId of targetIds) {
+    const handCard = originalHand.find(card =>
+      card.id === cardId &&
+      !selectedIds.has(card.gamecardId)
+    );
+    if (handCard) {
+      selected.push(handCard);
+      selectedIds.add(handCard.gamecardId);
+      continue;
+    }
+
+    const deckIndex = player.deck.findIndex(card =>
+      card.id === cardId &&
+      !selectedIds.has(card.gamecardId)
+    );
+    if (deckIndex >= 0) {
+      const [deckCard] = player.deck.splice(deckIndex, 1);
+      selected.push(deckCard);
+      selectedIds.add(deckCard.gamecardId);
+      gained.push(deckCard);
+      continue;
+    }
+
+    missingFixedCardIds.push(cardId);
+  }
+
+  if (selected.length < openingSize) {
+    for (const card of originalHand) {
+      if (selected.length >= openingSize) break;
+      if (selectedIds.has(card.gamecardId)) continue;
+      selected.push(card);
+      selectedIds.add(card.gamecardId);
+    }
+  }
+
+  const returned = originalHand.filter(card => !selectedIds.has(card.gamecardId));
+  for (const card of returned) {
+    card.cardlocation = 'DECK';
+    card.displayState = 'FRONT_FACEDOWN';
+    player.deck.unshift(card);
+  }
+
+  player.hand = selected.slice(0, openingSize);
+  for (const card of player.hand) {
+    card.cardlocation = 'HAND';
+    card.displayState = 'FRONT_FACEDOWN';
+  }
+
+  const after = assessOpeningHand(player.hand, profile);
+  return {
+    applied: true,
+    reason: missingFixedCardIds.length > 0
+      ? 'Fixed opening hand was partially applied; some configured cards were not found in hand or deck.'
+      : 'Fixed opening hand applied for this deck profile.',
+    returned,
+    gained,
+    before,
+    after,
+    inspectedDeckCards: player.deck.length + gained.length,
+    extremeRescue: false,
+    fixedOpening: true,
+    missingFixedCardIds,
+  };
+}
+
 export function applyOpeningHandSoftCompensation(
   player: PlayerState,
   profile: DeckAiProfile
@@ -1427,6 +1662,9 @@ export function applyOpeningHandSoftCompensation(
     inspectedDeckCards: 0,
     extremeRescue: false,
   });
+
+  const fixedOpening = applyFixedOpeningHand(player, profile, before);
+  if (fixedOpening) return fixedOpening;
 
   if (!config?.openingSmoothing || !profile.shareCode) return disabledResult('soft compensation disabled');
   if (!before.mildBrick) return disabledResult('opening hand quality acceptable');
@@ -1658,6 +1896,112 @@ function countLikelyDefenders(gameState: GameState, defender: PlayerState | unde
   return Array.isArray(defenders) ? defenders.length : 0;
 }
 
+const TEMPLE_MAGIC_SPEAR_ID = '101130440';
+const TEMPLE_MAGIC_SPEAR_RESET_ENABLER_EFFECT_IDS = new Set([
+  '101130439_reset_hall',
+  '101130441_reset_boost',
+  '101130155_enter_reset',
+  '101000063_ten_reset_units',
+  '202000053_reset_after_destroy',
+]);
+
+function isTempleMagicSpear(card: Card | null | undefined) {
+  return card?.id === TEMPLE_MAGIC_SPEAR_ID;
+}
+
+function isTempleMagicSpearResetEnabler(effect: CardEffect | null | undefined) {
+  return !!effect?.id && TEMPLE_MAGIC_SPEAR_RESET_ENABLER_EFFECT_IDS.has(effect.id);
+}
+
+function templeMagicSpearResetBoost(effect?: CardEffect) {
+  return effect?.id === '101130441_reset_boost' ? 1500 : 1000;
+}
+
+function getTempleMagicSpearPostAttackResetSupport(player: PlayerState, spear: Card | null | undefined) {
+  if (!isTempleMagicSpear(spear)) return undefined;
+  let bestBoost = 0;
+  const effectIds: string[] = [];
+
+  const fieldCards = [...player.unitZone, ...player.itemZone].filter((card): card is Card => !!card);
+  for (const source of fieldCards) {
+    for (const effect of source.effects || []) {
+      if (!isTempleMagicSpearResetEnabler(effect)) continue;
+      if (effect.id === '101130439_reset_hall') {
+        if (source.gamecardId === spear.gamecardId || source.isExhausted) continue;
+      }
+      if (effect.id === '101130441_reset_boost' && player.grave.length < 3) continue;
+      const boost = templeMagicSpearResetBoost(effect);
+      if (boost > bestBoost) bestBoost = boost;
+      effectIds.push(effect.id);
+    }
+  }
+
+  return bestBoost > 0 ? { bestBoost, effectIds } : undefined;
+}
+
+function getTempleMagicSpearBattleResetOpportunity(
+  gameState: GameState,
+  player: PlayerState,
+  effect: CardEffect,
+  profile: DeckAiProfile
+) {
+  if (!isTempleMagicSpearResetEnabler(effect)) return undefined;
+  if (gameState.phase !== 'COUNTERING' && gameState.phase !== 'BATTLE_FREE') return undefined;
+  const battle = gameState.battleState;
+  if (!battle?.attackers?.length) return undefined;
+  if (gameState.playerIds[gameState.currentTurnPlayer] !== player.uid) return undefined;
+
+  const spear = battle.attackers
+    .map(id => findCardInState(gameState, id))
+    .find(card => isTempleMagicSpear(card) && findCardOwnerUid(gameState, card) === player.uid);
+  if (!spear) return undefined;
+
+  const opponent = getOpponent(gameState, player);
+  if (!opponent) return undefined;
+  const boost = templeMagicSpearResetBoost(effect);
+  const power = Math.max(0, spear.power || 0);
+  const powerAfterReset = power + boost;
+  const currentDamage = Math.max(0, spear.damage || 0);
+  const defenderCards = battle.defender
+    ? [findCardInState(gameState, battle.defender)].filter((card): card is Card => !!card)
+    : getLikelyDefenderCards(gameState, opponent);
+  const bestDefender = defenderCards
+    .sort((a, b) =>
+      ((b.power || 0) + scoreCardValue(b, profile) * 0.25) -
+      ((a.power || 0) + scoreCardValue(a, profile) * 0.25)
+    )[0];
+  const defenderPower = Math.max(0, bestDefender?.power || 0);
+  const savesSpearFromLikelyBlock = !!bestDefender && defenderPower >= power && powerAfterReset > defenderPower;
+  const improvesHopelessFight = !!bestDefender && defenderPower > powerAfterReset;
+  const resetDamageCloses =
+    !battle.defender &&
+    (
+      currentDamage + 1 > opponent.deck.length ||
+      countErosion(opponent) + currentDamage + 1 >= 10
+    );
+
+  let score = 0;
+  const notes: string[] = [];
+  if (savesSpearFromLikelyBlock) {
+    const defenderValue = bestDefender
+      ? scoreCardValue(bestDefender, profile) + Math.max(0, bestDefender.damage || 0) * 7
+      : 0;
+    score += 64 + Math.min(22, defenderValue * 0.22);
+    if (battle.defender) score += 16;
+    notes.push(`magic spear reset beats ${bestDefender?.fullName || 'likely blocker'} ${power}->${powerAfterReset}`);
+  } else if (resetDamageCloses) {
+    score += 46;
+    notes.push('magic spear reset damage creates lethal pressure');
+  } else if (improvesHopelessFight) {
+    score += 10;
+    notes.push(`magic spear reset still trails blocker ${powerAfterReset}<${defenderPower}`);
+  }
+
+  return score > 0
+    ? { score, spear, bestDefender, powerAfterReset, notes }
+    : undefined;
+}
+
 export function scoreAttackCandidate(gameState: GameState, player: PlayerState, card: Card, profile: DeckAiProfile) {
   const attackers = player.unitZone.filter(unit => canUnitAttack(gameState, unit)) as Card[];
   const opponent = getOpponent(gameState, player);
@@ -1686,6 +2030,18 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
   const strongestDefenderValue = Math.max(0, ...defenderCards.map(defender =>
     scoreCardValue(defender, profile) + (defender.damage || 0) * 6 + (defender.power || 0) / 900
   ));
+  const templeSpearResetSupport = getTempleMagicSpearPostAttackResetSupport(player, card);
+  const templeSpearPowerAfterReset = power + (templeSpearResetSupport?.bestBoost || 0);
+  const templeSpearResetFixesBlock =
+    isTempleMagicSpear(card) &&
+    !!templeSpearResetSupport &&
+    defenderCount > 0 &&
+    strongestDefenderPower >= power &&
+    templeSpearPowerAfterReset > strongestDefenderPower;
+  const templeSpearWouldStillDieToBestBlock =
+    isTempleMagicSpear(card) &&
+    defenderCount > 0 &&
+    strongestDefenderPower >= Math.max(power, templeSpearPowerAfterReset);
   const otherAttackDamage = Math.max(0, totalAvailableDamage - damage);
   const attackWouldBeFatal = !!opponent && isDamageFatal(damage, opponent.deck.length, opponentErosion);
   const otherAttackersCanClose = !!opponent && (
@@ -1738,6 +2094,15 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
     if (damage <= 1) badAttackPenalty += losingIntoDefender ? 12 : 6;
     if (card.godMark) badAttackPenalty += 18;
     if (!clearClosingPurpose) badAttackPenalty += 10;
+    if (templeSpearResetFixesBlock) {
+      badAttackPenalty *= 0.45;
+      score += 18 + Math.min(18, (templeSpearResetSupport?.bestBoost || 0) / 70);
+    } else if (isTempleMagicSpear(card) && !templeSpearResetSupport && !clearClosingPurpose) {
+      badAttackPenalty += 24;
+    }
+    if (templeSpearWouldStillDieToBestBlock && !attackWouldBeFatal && !singleAttackThreat) {
+      badAttackPenalty += 34 + Math.min(18, preserveValue * 0.3);
+    }
     score -= badAttackPenalty * pressureDiscount;
   } else if (expendableBait) {
     score += 12;
@@ -1948,6 +2313,15 @@ export function scoreActivatableEffect(
     notes.push('资源转换');
   }
 
+  const templeSpearBattleReset = getTempleMagicSpearBattleResetOpportunity(gameState, player, effect, profile);
+  if (templeSpearBattleReset) {
+    score += templeSpearBattleReset.score;
+    tags.add('reset');
+    tags.add('combat');
+    tags.add('buff');
+    notes.push(...templeSpearBattleReset.notes);
+  }
+
   if (textHasAny(searchableText, [/召唤|放置到战场|登场|play.*unit|summon|play_from/i])) {
     const openSlots = player.unitZone.filter(slot => slot === null).length;
     score += openSlots > 0 ? 6 + openSlots : -5;
@@ -2090,6 +2464,7 @@ export function scoreActivatableEffect(
   }
 
   if (
+    !templeSpearBattleReset &&
     (timingTags.has('engine') || timingTags.has('draw') || timingTags.has('search') || timingTags.has('resource') || timingTags.has('summon') || timingTags.has('revive')) &&
     (gameState.phase === 'BATTLE_FREE' || gameState.phase === 'COUNTERING') &&
     !timingTags.has('combo') &&
@@ -2394,6 +2769,16 @@ export function chooseDefender(
       else if (trades) score -= 10 + Math.min(18, boardPresenceValue * 0.18);
       if (card.godMark) score -= 16;
     }
+    if (
+      profile.id === 'white-temple' &&
+      isTempleMagicSpear(card) &&
+      (trades || sacrifice) &&
+      !(currentHitFatal || critical || deckCritical)
+    ) {
+      score -= 90;
+      if (nonFatalHit) score -= 20;
+      if (totalAttackerDamage <= 2) score -= 18;
+    }
 
     const preserveMultiplier = (critical || deckCritical) ? 0.18 : (danger || deckPressure) ? 0.25 : 0.45;
     score -= cardValue * preserveMultiplier * profile.weights.defenseBias;
@@ -2435,19 +2820,180 @@ function inferQueryIntent(query: EffectQuery): QueryIntent {
   const step = String(query.context?.step || '');
   const effectId = String(query.context?.effectId || '');
   const semantic = `${step} ${effectId}`;
+  const intentText = `${text} ${semantic}`;
   if (/103000189_grave_enter|EXILE_COST|BANISH_COST|COST_EXILE|COST_BANISH/i.test(semantic)) return 'cost';
   if (/费用|支付|舍弃|弃置|牺牲|作为费用|放逐费用|选择放逐费用/i.test(text)) return 'cost';
   if (isSacrificeLikeQuery(query) || /COST|PAYMENT|DISCARD|SACRIFICE/i.test(semantic)) return 'cost';
   if (/KEEP|PRESERVE|SAVE|HOLD/i.test(semantic)) return 'keep';
-  if (/DESTROY|EXILE|BANISH|SILENCE|CANNOT|BOTTOM|BOUNCE|ZERO|REMOVE|OPPONENT|_destroy|_exile|_silence|_zero|cannot_defend|damage_zero/i.test(semantic)) return 'offense';
-  if (/REVIVE|REBIRTH|REANIMATE|SUMMON|PLAY_FROM|PUT|TO_FIELD|ENTER|RETURN_FIELD|_plan|_rebirth/i.test(semantic)) return 'revive';
-  if (/SEARCH|RETURN|ADD|HAND|SALVAGE|RECOVER|_search|_return|_salvage/i.test(semantic)) return 'search';
-  if (/BOOST|BUFF|POWER|DAMAGE|READY|RESET|RUSH|PROTECT|BLESS|SHENYI|SPIRIT|IMMUNE|_boost|_power|_ready|_reset|_protect|spirit_boost/i.test(semantic)) return 'benefit';
+  if (/DESTROY|EXILE|BANISH|SILENCE|CANNOT|BOTTOM|BOUNCE|ZERO|REMOVE|OPPONENT|WEAKEN|_destroy|_exile|_silence|_zero|cannot_defend|damage_zero/i.test(intentText)) return 'offense';
+  if (/REVIVE|REBIRTH|REANIMATE|SUMMON|PLAY_FROM|PUT|TO_FIELD|ENTER|RETURN_FIELD|_plan|_rebirth/i.test(intentText)) return 'revive';
+  if (/SEARCH|RETURN|ADD|HAND|SALVAGE|RECOVER|_search|_return|_salvage/i.test(intentText)) return 'search';
+  if (/BOOST|BUFF|POWER|DAMAGE|READY|RESET|RUSH|PROTECT|BLESS|SHENYI|SPIRIT|IMMUNE|_boost|_power|_ready|_reset|_protect|spirit_boost/i.test(intentText)) return 'benefit';
   if (/鐮村潖|鏀剧疆鍒板鍦皘闄ゅ|涓嶈兘|鍔涢噺鍙樹负0/.test(text)) return 'offense';
   if (/鍔涢噺\+|浼ゅ\+|鑾峰緱|閲嶇疆|绔栫疆|淇濇姢/.test(text)) return 'benefit';
   if (/鏀剧疆鍒版垬鍦簗澧撳湴.*鎴樺満/.test(text)) return 'revive';
   if (/鍔犲叆鎵嬬墝|妫€绱鎼滅储/.test(text)) return 'search';
   return 'neutral';
+}
+
+function getBattleUnitIds(gameState: GameState) {
+  const ids = new Set<string>();
+  const battle = gameState.battleState;
+  (battle?.attackers || []).forEach(id => ids.add(id));
+  if (battle?.defender) ids.add(battle.defender);
+  if (battle?.unitTargetId) ids.add(battle.unitTargetId);
+  return ids;
+}
+
+function queryHasAnyText(query: EffectQuery, patterns: RegExp[]) {
+  const text = queryText(query);
+  return patterns.some(pattern => pattern.test(text));
+}
+
+function scoreTargetTacticalContext(
+  gameState: GameState,
+  playerUid: string,
+  query: EffectQuery,
+  card: Card,
+  isMine: boolean,
+  intent: QueryIntent
+) {
+  const player = gameState.players[playerUid];
+  const opponent = player ? getOpponent(gameState, player) : undefined;
+  const knowledge = getCardKnowledge(card);
+  const roles = new Set(knowledge?.roles || []);
+  const battleUnitIds = getBattleUnitIds(gameState);
+  const isBattleUnit = battleUnitIds.has(card.gamecardId);
+  const isCurrentAttacker = !!gameState.battleState?.attackers?.includes(card.gamecardId);
+  const isCurrentDefender = gameState.battleState?.defender === card.gamecardId ||
+    gameState.battleState?.unitTargetId === card.gamecardId;
+  const playerIsTurn = player?.isTurn ?? gameState.playerIds[gameState.currentTurnPlayer] === playerUid;
+  const canBlockNow = !isMine && playerIsTurn && card.cardlocation === 'UNIT' && canDefendSoon(gameState, card);
+  const canAttackNow = card.cardlocation === 'UNIT' && canUnitAttack(gameState, card);
+  const readyOwnAttackers = player?.unitZone.filter(unit => canUnitAttack(gameState, unit)).length || 0;
+  const opponentErosion = opponent ? countErosion(opponent) : 0;
+  const currentBattleDamage = (gameState.battleState?.attackers || [])
+    .map(id => findCardInState(gameState, id))
+    .reduce((sum, unit) => sum + Math.max(0, unit?.damage || 0), 0);
+  const currentBattleFatal = !!player && isDamageFatal(currentBattleDamage, player.deck.length, countErosion(player));
+  const closeToPressure = opponentErosion >= 7 ||
+    (opponent ? readyOwnAttackers > 0 && readyOwnAttackers >= Math.max(1, 10 - opponentErosion - 1) : false);
+  const removalLike = intent === 'offense' || queryHasAnyText(query, [
+    /DESTROY|EXILE|BANISH|SILENCE|CANNOT|REMOVE|BOUNCE|RETURN.*HAND/i,
+    /destroy|exile|banish|silence|cannot_defend|cannot_attack|bounce|remove/i,
+  ]);
+  const tempoRestriction = queryHasAnyText(query, [
+    /CANNOT.*DEFEND|cannot_defend|EXHAUST|REST|TAP|ZERO|POWER.*0|DAMAGE.*0/i,
+    /妯疆|涓嶈兘闃插尽|涓嶈兘鏀诲嚮|闃插尽.*涓嶈兘/i,
+  ]);
+  const benefitCombat = intent === 'benefit' && queryHasAnyText(query, [
+    /BOOST|BUFF|POWER|DAMAGE|READY|RESET|PROTECT|BLESS|IMMUNE/i,
+    /battle|combat|defend|attack|浼ゅ|鍔涢噺|闃叉|淇濇姢/i,
+  ]);
+  let score = 0;
+
+  if (!isMine && removalLike) {
+    if (card.cardlocation === 'UNIT') {
+      score += (card.godMark ? 18 : 0) +
+        (roles.has('engine') ? 18 : 0) +
+        (roles.has('combo_piece') ? 14 : 0) +
+        (roles.has('finisher') ? 14 : 0) +
+        (roles.has('protection') ? 8 : 0);
+      score += Math.max(0, card.damage || 0) * 6 + Math.max(0, card.power || 0) / 1100;
+      if (isBattleUnit) score += 40;
+      if (isCurrentAttacker) score += 18 + Math.max(0, card.damage || 0) * 4;
+      if (isCurrentAttacker && currentBattleFatal) score += 280;
+      if (canBlockNow) score += closeToPressure || tempoRestriction ? 95 : 10;
+      if (tempoRestriction && canBlockNow) score += 150;
+      if (tempoRestriction && card.isExhausted && !isBattleUnit) score -= 16;
+    } else if (card.cardlocation === 'ITEM') {
+      score += 14 + (roles.has('engine') ? 20 : 0) + (roles.has('resource') ? 10 : 0);
+    }
+  }
+
+  if (isMine && benefitCombat && card.cardlocation === 'UNIT') {
+    if (isBattleUnit) score += 64;
+    if (isCurrentDefender) score += 96;
+    if (isCurrentAttacker) score += 48;
+    if (canAttackNow) score += 8 + Math.max(0, card.damage || 0) * 4;
+    if (card.isExhausted && /READY|RESET|ready|reset/i.test(queryText(query))) score += 16;
+    if (card.godMark || roles.has('combo_piece') || roles.has('engine')) score += 8;
+  }
+
+  return score;
+}
+
+function scoreCostPreservationValue(
+  gameState: GameState | undefined,
+  owner: PlayerState | undefined,
+  card: Card | null | undefined,
+  profile: DeckAiProfile
+) {
+  if (!gameState || !owner || !card) return 0;
+  const knowledge = getCardKnowledge(card);
+  const roles = new Set(knowledge?.roles || []);
+  const text = cardSearchText(card);
+  const { preserve, preferred } = profileCardBias(profile, card);
+  const location = card.cardlocation;
+  const isHand = !location || location === 'HAND';
+  const isFieldUnit = location === 'UNIT';
+  const isFieldItem = location === 'ITEM';
+  const battleUnitIds = getBattleUnitIds(gameState);
+  const currentBattleCard = battleUnitIds.has(card.gamecardId);
+  const opponent = getOpponent(gameState, owner);
+  let score = 0;
+
+  if (card.feijingMark && isHand) score -= 22;
+  else if (card.feijingMark) score -= 8;
+
+  score += preserve * 1.15 + preferred * 0.8;
+  if (card.godMark) score += isFieldUnit ? 58 : 30;
+  if (roles.has('engine')) score += isFieldUnit || isFieldItem ? 24 : 14;
+  if (roles.has('combo_piece')) score += isFieldUnit ? 26 : 16;
+  if (roles.has('finisher')) score += isFieldUnit ? 18 : 10;
+  if (roles.has('protection')) score += isHand ? 22 : 10;
+  if (/COUNTER|COUNTERING|NEGATE|SILENCE|PREVENT|PROTECT|IMMUNE|反制|无效|沉默|防止|保护|不会被破坏/i.test(text)) {
+    score += isHand ? 24 : 12;
+  }
+
+  if (currentBattleCard) score += 140;
+
+  if (isFieldUnit) {
+    const boardPresenceValue = scoreStrategicBoardPresenceValue(gameState, owner.uid, card, profile);
+    score += boardPresenceValue * 0.35;
+    if (card.playedTurn === gameState.turnCount) score += 12;
+
+    if (canUnitAttack(gameState, card)) {
+      score += Math.max(0, card.damage || 0) * 7 + Math.max(0, card.power || 0) / 900;
+      if (owner.isTurn && opponent) {
+        const readyAttackers = owner.unitZone.filter(unit => canUnitAttack(gameState, unit)) as Card[];
+        const totalDamage = readyAttackers.reduce((sum, unit) => sum + Math.max(0, unit.damage || 0), 0);
+        const damageWithoutCard = Math.max(0, totalDamage - Math.max(0, card.damage || 0));
+        const opponentErosion = countErosion(opponent);
+        const damageToCritical = Math.max(1, 10 - opponentErosion);
+        if (totalDamage > opponent.deck.length && damageWithoutCard <= opponent.deck.length) {
+          score += 70;
+        } else if (totalDamage >= damageToCritical && damageWithoutCard < damageToCritical) {
+          score += 52;
+        } else if (opponentErosion >= 7) {
+          score += 18;
+        }
+      }
+    }
+
+    if (canDefendSoon(gameState, card)) {
+      const incomingThreat = estimateIncomingThreat(gameState, owner, profile);
+      if (incomingThreat.lethalWithoutBlocks || incomingThreat.defendersNeeded > 0) {
+        score += 34 + incomingThreat.defendersNeeded * 18 + Math.max(0, card.damage || 0) * 4;
+      } else if (incomingThreat.totalDamage >= Math.max(4, 10 - countErosion(owner))) {
+        score += 24;
+      }
+    }
+  } else if (isFieldItem) {
+    if (roles.has('resource') || roles.has('engine')) score += 18;
+  }
+
+  return score;
 }
 
 function scoreElementMagicInstructorModeChoice(
@@ -2560,6 +3106,10 @@ function scoreQueryCardOption(
   const ownBoardPresenceValue = isMine
     ? scoreStrategicBoardPresenceValue(gameState, playerUid, card, profile)
     : 0;
+  const tacticalTargetScore = scoreTargetTacticalContext(gameState, playerUid, query, card, isMine, intent);
+  const ownerUid = findCardOwnerUid(gameState, card);
+  const costOwner = ownerUid ? gameState.players[ownerUid] : gameState.players[playerUid];
+  const costPreservationValue = scoreCostPreservationValue(gameState, costOwner, card, profile);
 
   if (isPreventDestroyTargetQuery(query)) {
     if (!isMine) return -160;
@@ -2575,7 +3125,8 @@ function scoreQueryCardOption(
     return -preserveValue -
       (isFieldCard ? attackValue * 0.5 : 0) -
       ownBoardPresenceValue * 0.95 -
-      (card.godMark && isMine ? 24 : 0);
+      (card.godMark && isMine ? 24 : 0) -
+      costPreservationValue;
   }
 
   if (intent === 'keep') {
@@ -2588,7 +3139,7 @@ function scoreQueryCardOption(
     else if (hasOwnCardOptions) score -= 60;
     if (card.isExhausted) score += /READY|RESET|ready|reset/i.test(queryText(query)) ? 8 : -2;
     if ((card.damage || 0) <= 0 && /DAMAGE|浼ゅ/i.test(queryText(query))) score -= 5;
-    return score;
+    return score + tacticalTargetScore;
   }
 
   if (intent === 'revive') {
@@ -2622,7 +3173,7 @@ function scoreQueryCardOption(
       return -110 - preserveValue - attackValue - ownBoardPresenceValue * 1.15;
     }
 
-    let score = targetPriority + attackValue * 0.45;
+    let score = targetPriority + attackValue * 0.45 + tacticalTargetScore;
     if (!isMine) score += 20;
     else if (hasOpponentCardOptions) score -= 55;
     else score -= 35 + ownBoardPresenceValue * 0.35;
@@ -2848,7 +3399,8 @@ export function scorePaymentSacrificeValue(
   const baseScore = getCardKnowledgeValue(card, 'preserveValue') +
     scoreCardValue(card, profile, gameState && owner ? { gameState, player: owner } : {}) * 0.25 +
     boardPresenceValue * 0.8 +
-    scoreComboCard(gameState, owner, card, profile, 'paymentSacrifice');
+    scoreComboCard(gameState, owner, card, profile, 'paymentSacrifice') +
+    scoreCostPreservationValue(gameState, owner, card, profile);
   if (!gameState || !owner) return baseScore;
 
   const strategyContext = buildStrategyContext(gameState, owner, profile);

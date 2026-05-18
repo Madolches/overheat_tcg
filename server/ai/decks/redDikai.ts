@@ -89,6 +89,7 @@ export const redDikaiProfile: DeckAiProfile = {
   },
   softCompensation: {
     openingSmoothing: true,
+    fixedOpeningHandIds: ['102050432', '102050086', '102050427', '302050013'],
     openingLookahead: 8,
     maxOpeningReplacements: 1,
     extremeBrickRescueChance: 0.32,
@@ -248,8 +249,22 @@ export const redDikaiProfile: DeckAiProfile = {
     },
     adjustEffectScore: context => {
       let score = 0;
-      if (context.effect.id === '102050432_reset_attack_unit' && context.gameState.phase === 'COUNTERING') {
-        score -= 35;
+      if (context.effect.id === '102050432_reset_attack_unit') {
+        const battle = context.gameState?.battleState;
+        const currentTurnUid = context.gameState?.playerIds?.[context.gameState.currentTurnPlayer];
+        const isCurrentAttacker = !!battle?.attackers?.includes(context.card.gamecardId);
+        const hasAttacked = !!context.card.hasAttackedThisTurn;
+        const isOwnTurn = !!context.player?.uid && currentTurnUid === context.player.uid;
+
+        if (!context.card.isExhausted) {
+          score -= 80;
+        } else if (isOwnTurn && (isCurrentAttacker || hasAttacked)) {
+          score += 55 + (opponentErosion(context) >= 6 ? 10 : 0);
+        } else if (context.gameState?.phase === 'COUNTERING') {
+          score -= 35;
+        } else {
+          score -= 18;
+        }
       }
       if (effectHasTag(context, 'combat') || effectHasTag(context, 'finisher') || effectHasTag(context, 'buff')) score += 5;
       if (effectHasTag(context, 'removal') || effectHasTag(context, 'tempo')) score += opponentHasTrait(context, 'large-defenders') ? 5 : 2.5;

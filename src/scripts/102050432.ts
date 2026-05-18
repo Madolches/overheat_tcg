@@ -18,8 +18,10 @@ const cardEffects: CardEffect[] = [{
   limitCount: 1,
   limitNameType: true,
   description: '同名1回合1次：放逐合计2张「迪凯」神蚀卡，重置这个单位。本回合下一次攻击可以攻击对手的单位。',
-  condition: (gameState, playerState) =>
+  condition: (gameState, playerState, instance) =>
     canActivateDefaultTiming(gameState, playerState) &&
+    instance.cardlocation === 'UNIT' &&
+    instance.isExhausted &&
     cardsInZones(playerState, ['HAND', 'DECK', 'GRAVE']).filter(({ card }) => card.godMark && card.specialName === '迪凯').length >= 2,
   execute: async (instance, gameState, playerState) => {
     const costs = cardsInZones(playerState, ['HAND', 'DECK', 'GRAVE']).filter(({ card }) => card.godMark && card.specialName === '迪凯');
