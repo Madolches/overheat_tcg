@@ -20,6 +20,7 @@ const WHITE_COMBAT_PROTECTION_EFFECT_IDS = new Set([
 const SAINT_KINGDOM_ARCHER_ID = '101130202';
 const SAINT_KINGDOM_ARCHER_EFFECT_ID = '101130202_hand_to_field';
 const CHURCH_ESCORT_EFFECT_ID = '101140151_enter_exile';
+const FUTURE_READ_BOTTOM_ATTACKER_EFFECT_ID = '101140152_bottom_attacker';
 const SAINT_KINGDOM_ARCHER_TARGET_PRIORITY: Record<string, number> = {
   '101130440': 22,
   '101130458': 21,
@@ -132,6 +133,7 @@ export const whiteTempleProfile: DeckAiProfile = {
       '201130038_blessing': 3,
       '101000487_grave_exile_boost': 2,
       '101140152_silence_god': 3,
+      [FUTURE_READ_BOTTOM_ATTACKER_EFFECT_ID]: 2,
       '201100037_eclipse': 2,
     },
     avoidEffectIds: {
@@ -317,6 +319,18 @@ export const whiteTempleProfile: DeckAiProfile = {
     },
     adjustEffectScore: context => {
       let score = 0;
+      if (context.effect.id === FUTURE_READ_BOTTOM_ATTACKER_EFFECT_ID) {
+        const battle = context.gameState?.battleState;
+        const opponentAttackingGodmark = !!battle?.attackers?.some(id =>
+          context.opponent?.unitZone.some(unit => unit?.gamecardId === id && unit.godMark)
+        );
+        const ownAttackingGodmark = !!battle?.attackers?.some(id =>
+          context.player?.unitZone.some(unit => unit?.gamecardId === id && unit.godMark)
+        );
+        if (opponentAttackingGodmark) score += 72;
+        else if (ownAttackingGodmark) score -= 120;
+        else score -= 60;
+      }
       if ((effectHasTag(context, 'protection') || effectHasTag(context, 'removal')) && opponentIs(context, 'aggro', 'tempo')) score += 4;
       if (effectHasTag(context, 'reset') || effectHasTag(context, 'resource')) score += 1.5;
       if (effectHasTag(context, 'reset') && (opponentErosion(context) >= 6 || readyAttackers(context) >= 2)) score += 4;
@@ -346,6 +360,11 @@ export const whiteTempleProfile: DeckAiProfile = {
           : hasOpponentTargets
             ? -140
             : -20;
+      }
+      if (effectId === FUTURE_READ_BOTTOM_ATTACKER_EFFECT_ID) {
+        return queryOptionIsMine(context)
+          ? -160
+          : 120 + (card.godMark ? 18 : 0) + (card.damage || 0) * 8 + (card.power || 0) / 900;
       }
       if (!isResetTargetQuery(context)) return 0;
       if (context.option?.isMine === false) return 0;

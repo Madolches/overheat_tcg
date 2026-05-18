@@ -255,6 +255,12 @@ export const overlordTotemProfile: DeckAiProfile = {
         if (card.id === '103080213') return 34;
       }
 
+      if (effectId === '103080183_destroy') {
+        return queryOptionIsMine(context)
+          ? -90
+          : 46 + (card.damage || 0) * 8 + (card.power || 0) / 900 + (card.isExhausted ? -4 : 6);
+      }
+
       return 0;
     },
     adjustEffectScore: context => {

@@ -1,0 +1,522 @@
+import fs from 'fs';
+import path from 'path';
+import { spawnSync } from 'child_process';
+
+type Severity = 'error' | 'warning' | 'info';
+
+type BehaviorFinding = {
+  code: string;
+  severity: Severity;
+  gameId: string;
+  matchup: string;
+  deck?: string;
+  turn?: number;
+  phase?: string;
+  action?: string;
+  subject?: string;
+  detail: string;
+  recommendation: string;
+};
+
+const SEVERITY_RANK: Record<Severity, number> = {
+  error: 3,
+  warning: 2,
+  info: 1,
+};
+
+const DEFAULT_EVALUATE_ARGS = {
+  games: '1',
+  matchLimit: '5',
+  maxSteps: '1000',
+  maxTurns: '40',
+  stepTimeoutMs: '5000',
+  decisionLogLimit: '260',
+};
+
+const failOn = (() => {
+  const value = argValue('fail-on') as Severity | undefined;
+  return value && SEVERITY_RANK[value] ? value : undefined;
+})();
+
+const ISSUE_META: Record<string, { severity: Severity; recommendation: string }> = {
+  STEP_LIMIT_COUNTERING_PENDING: {
+    severity: 'error',
+    recommendation: 'Inspect the latest COUNTERING decisions and failed effect/story attempts; the AI may be holding priority or retrying an illegal action.',
+  },
+  STEP_TIMEOUT_COUNTERING: {
+    severity: 'error',
+    recommendation: 'Inspect COUNTERING priority, stack resolution, and pass/failure handling. This is the highest-risk stall class.',
+  },
+  STEP_TIMEOUT: {
+    severity: 'error',
+    recommendation: 'Inspect the final phase and active player. Add a focused regression once the repeated decision pattern is identified.',
+  },
+  SIMULATION_ERROR: {
+    severity: 'error',
+    recommendation: 'Check the thrown error first; if it is a timeout, classify the final phase and add a focused scenario.',
+  },
+  STEP_LIMIT_CONFRONTATION: {
+    severity: 'error',
+    recommendation: 'Check confrontation stack resolution and pass behavior; add a scenario for the last recorded stack state.',
+  },
+  STEP_LIMIT_QUERY_PENDING: {
+    severity: 'warning',
+    recommendation: 'Check the pending query callback and options. Add query scoring or skip the effect when no safe target exists.',
+  },
+  STEP_LIMIT_MAIN: {
+    severity: 'warning',
+    recommendation: 'Look for repeated low-value play/effect choices in MAIN. Tighten action thresholds or mark the effect as once-per-window skipped after failure.',
+  },
+  STEP_LIMIT_BATTLE_DECLARATION_READY_ATTACKERS: {
+    severity: 'warning',
+    recommendation: 'Attack selection may be indecisive. Inspect ATTACK candidates and unfavorable-attack holding rules.',
+  },
+  MISSED_LETHAL: {
+    severity: 'warning',
+    recommendation: 'Convert the match turn into a hard scenario and make lethal/erosion-lethal attack plans override development.',
+  },
+  MISSED_COMBO: {
+    severity: 'warning',
+    recommendation: 'Add a combo opportunity rule or lower the battle/combo threshold only when the payoff is live.',
+  },
+  UNDER_PRESSURE_NO_STABILIZE: {
+    severity: 'warning',
+    recommendation: 'Increase defender reserve or defensive effect priority for this matchup and deck profile.',
+  },
+  BAD_PAYMENT: {
+    severity: 'warning',
+    recommendation: 'Raise payment preservation value for ready defenders, current attackers, godmark units, or combo pieces.',
+  },
+  OVER_DEVELOP: {
+    severity: 'info',
+    recommendation: 'If repeated, make attack-before-developing stricter in closing windows.',
+  },
+  BAD_EFFECT_TIMING: {
+    severity: 'warning',
+    recommendation: 'Add an effect timing override or deck hook so the effect waits for its tactical window.',
+  },
+  QUERY_FAILED: {
+    severity: 'error',
+    recommendation: 'Add target-count gating before activation, or teach chooseQuerySelections how to safely answer this query.',
+  },
+  EFFECT_FAILED: {
+    severity: 'error',
+    recommendation: 'Check effect legality, costs, targetSpec, and failure skip handling for the effect id.',
+  },
+  LOW_VALUE_COUNTERING_ACTION: {
+    severity: 'warning',
+    recommendation: 'Raise the COUNTERING threshold or penalize setup/resource tags outside a concrete battle/chain payoff.',
+  },
+  REPEATED_EFFECT_FAILURE: {
+    severity: 'error',
+    recommendation: 'Add a per-window failure skip or fix the effect condition/target precheck.',
+  },
+  HIGH_PAYMENT_RISK: {
+    severity: 'warning',
+    recommendation: 'Tune payment scoring to protect defenders and core resources under pressure.',
+  },
+  LOW_DECK_PAYMENT: {
+    severity: 'warning',
+    recommendation: 'Reduce deck-payment willingness at low deck or high erosion unless the action is immediately lethal.',
+  },
+  HIGH_VALUE_BATTLE_LOSS: {
+    severity: 'warning',
+    recommendation: 'Inspect the preceding ATTACK/DEFEND decision; add a card-specific safe-attack or safe-defense rule.',
+  },
+};
+
+const HIGH_VALUE_NAME_PATTERNS = [
+  /迪凯|白虎|柯莉尔|魔枪|英剑|圣王子|卢恩|阿克蒂|可可亚|可可拉|伊丽瑟薇|艾尔蒙特|温多娜|达·哈尔|古·拉夫|ZERO/i,
+  /Dikai|Tiger|Koriel|Magic Spear|Hero Sword|Aketi|Commander|Overlord/i,
+];
+
+function argValue(name: string) {
+  const raw = process.argv.find(arg => arg.startsWith(`--${name}=`));
+  return raw ? raw.slice(name.length + 3) : undefined;
+}
+
+function hasFlag(name: string) {
+  return process.argv.includes(`--${name}`);
+}
+
+function escapeMarkdown(text: unknown) {
+  return String(text ?? '')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, ' ');
+}
+
+function markdownTable(headers: string[], rows: Array<Array<string | number>>) {
+  return [
+    `| ${headers.map(escapeMarkdown).join(' | ')} |`,
+    `| ${headers.map(() => '---').join(' | ')} |`,
+    ...rows.map(row => `| ${row.map(escapeMarkdown).join(' | ')} |`),
+  ].join('\n');
+}
+
+function stringifyJson(value: unknown) {
+  return JSON.stringify(value, null, 2);
+}
+
+function countBy<T>(items: T[], keyOf: (item: T) => string) {
+  const counts: Record<string, number> = {};
+  for (const item of items) {
+    const key = keyOf(item);
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  return counts;
+}
+
+function topEntries(record: Record<string, number>, limit = 20) {
+  return Object.entries(record)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit);
+}
+
+function normalizeNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function detail(log: any, key: string) {
+  const value = log?.details?.[key];
+  return value === undefined || value === null ? '' : String(value);
+}
+
+function scoreOf(log: any) {
+  const score = Number(log?.score);
+  return Number.isFinite(score) ? score : undefined;
+}
+
+function severityFor(code: string, fallback: Severity = 'warning') {
+  return ISSUE_META[code]?.severity || fallback;
+}
+
+function recommendationFor(code: string) {
+  return ISSUE_META[code]?.recommendation || 'Inspect the nearby decision logs and add a focused hard AI scenario if this repeats.';
+}
+
+function matchupOf(result: any) {
+  return `${result.deckA || 'A'} vs ${result.deckB || 'B'}`;
+}
+
+function addFinding(findings: BehaviorFinding[], result: any, code: string, fields: Partial<BehaviorFinding>) {
+  findings.push({
+    code,
+    severity: fields.severity || severityFor(code),
+    gameId: result.gameId || '(unknown game)',
+    matchup: matchupOf(result),
+    detail: fields.detail || '',
+    recommendation: fields.recommendation || recommendationFor(code),
+    deck: fields.deck,
+    turn: fields.turn,
+    phase: fields.phase,
+    action: fields.action,
+    subject: fields.subject,
+  });
+}
+
+function highValueName(text: string) {
+  return HIGH_VALUE_NAME_PATTERNS.some(pattern => pattern.test(text));
+}
+
+function analyzeBattleLogText(findings: BehaviorFinding[], result: any) {
+  const logs = Array.isArray(result.lastLogs) ? result.lastLogs : [];
+  for (const text of logs) {
+    const line = String(text || '');
+    if (!highValueName(line)) continue;
+    if (!/破坏|同归于尽|被破坏|destroy/i.test(line)) continue;
+    addFinding(findings, result, 'HIGH_VALUE_BATTLE_LOSS', {
+      severity: 'warning',
+      detail: `Recent battle log mentions a high-value card being destroyed: ${line}`,
+    });
+  }
+}
+
+function analyzeDiagnosis(findings: BehaviorFinding[], result: any) {
+  const diagnosis = result.diagnosis || {};
+  const detailText = `${diagnosis.title || ''}: ${diagnosis.detail || ''}`;
+  const timeoutPhaseMatch = detailText.match(/Step timeout .* phase ([A-Z_]+)/i);
+  const code = timeoutPhaseMatch
+    ? timeoutPhaseMatch[1] === 'COUNTERING'
+      ? 'STEP_TIMEOUT_COUNTERING'
+      : 'STEP_TIMEOUT'
+    : String(diagnosis.code || '');
+  if (diagnosis.severity === 'warning' || diagnosis.severity === 'error' || /^STEP_LIMIT/i.test(code)) {
+    addFinding(findings, result, code || 'MATCH_DIAGNOSIS', {
+      severity: diagnosis.severity === 'error' ? 'error' : severityFor(code, 'warning'),
+      detail: detailText,
+    });
+  }
+
+  for (const [metric, count] of Object.entries(diagnosis.metrics || {})) {
+    if (metric === 'BAD_EFFECT_TIMING') continue;
+    const numeric = Number(count);
+    if (!Number.isFinite(numeric) || numeric <= 0) continue;
+    addFinding(findings, result, metric, {
+      severity: severityFor(metric, numeric >= 3 ? 'error' : 'warning'),
+      detail: `${metric} occurred ${numeric} time(s) in decision diagnostics.`,
+    });
+  }
+}
+
+function analyzeDecisionLogs(findings: BehaviorFinding[], result: any) {
+  const logs = Array.isArray(result.aiDecisionLogs) ? result.aiDecisionLogs : [];
+  const failedEffects = new Map<string, { count: number; log: any }>();
+
+  for (const log of logs) {
+    const action = String(log.action || '');
+    const score = scoreOf(log);
+    const deck = log.playerName || log.profileId || log.playerUid;
+    const effectId = detail(log, 'effectId') || log.subject || 'UNKNOWN_EFFECT';
+
+    if (action === 'QUERY_FAILED') {
+      addFinding(findings, result, 'QUERY_FAILED', {
+        deck,
+        turn: log.turn,
+        phase: log.phase,
+        action,
+        subject: log.subject,
+        detail: `${deck} failed query ${log.subject || ''}: ${log.reason || ''}`,
+      });
+    }
+
+    if (action === 'ACTIVATE_EFFECT_FAILED') {
+      const key = `${deck}:${effectId}`;
+      const current = failedEffects.get(key) || { count: 0, log };
+      current.count++;
+      current.log = log;
+      failedEffects.set(key, current);
+      addFinding(findings, result, 'EFFECT_FAILED', {
+        deck,
+        turn: log.turn,
+        phase: log.phase,
+        action,
+        subject: effectId,
+        detail: `${deck} failed to activate ${effectId}: ${log.reason || ''}`,
+      });
+    }
+
+    if (
+      log.phase === 'COUNTERING' &&
+      ['ACTIVATE_EFFECT', 'PLAY_CONFRONTATION_STORY', 'PLAY_BATTLE_STORY'].includes(action) &&
+      score !== undefined &&
+      score < 18
+    ) {
+      addFinding(findings, result, 'LOW_VALUE_COUNTERING_ACTION', {
+        deck,
+        turn: log.turn,
+        phase: log.phase,
+        action,
+        subject: log.subject,
+        detail: `${deck} used ${action} in COUNTERING below threshold: score=${score.toFixed(1)}, subject=${log.subject || ''}.`,
+      });
+    }
+
+    if (action === 'ACTIVATE_EFFECT') {
+      const notes = `${detail(log, 'notes')} ${log.reason || ''}`;
+      const hasClearPayoff = /lethal|close|closing|saves|beats|threat|combo|斩杀|保|威胁|magic spear reset/i.test(notes);
+      if (/prefers|timing .*-[0-9]/i.test(notes) && !(hasClearPayoff && score !== undefined && score >= 18)) {
+        addFinding(findings, result, 'BAD_EFFECT_TIMING', {
+          deck,
+          turn: log.turn,
+          phase: log.phase,
+          action,
+          subject: log.subject,
+          detail: `${deck} activated ${log.subject || effectId} despite timing warning: ${notes.slice(0, 220)}`,
+        });
+      }
+    }
+
+    if (action === 'PAYMENT') {
+      const paymentRisk = normalizeNumber(log.details?.paymentRisk);
+      const estimatedDeckPayment = normalizeNumber(log.details?.estimatedDeckPayment);
+      const readyDefendersAfter = normalizeNumber(log.details?.readyDefendersAfterPayment);
+      const paymentCost = normalizeNumber(log.details?.paymentCost);
+      if (paymentRisk >= 35 || (paymentCost > 0 && readyDefendersAfter === 0 && /defense|防御|reserve/i.test(`${log.reason} ${log.subject}`))) {
+        addFinding(findings, result, 'HIGH_PAYMENT_RISK', {
+          deck,
+          turn: log.turn,
+          phase: log.phase,
+          action,
+          subject: log.subject,
+          detail: `${deck} made a risky payment: risk=${paymentRisk.toFixed(1)}, selection=${detail(log, 'selection')}`,
+        });
+      }
+      if (estimatedDeckPayment > 0 && /low deck|critical deck|牌库|deck payment risk/i.test(`${log.reason} ${detail(log, 'selection')}`)) {
+        addFinding(findings, result, 'LOW_DECK_PAYMENT', {
+          deck,
+          turn: log.turn,
+          phase: log.phase,
+          action,
+          subject: log.subject,
+          detail: `${deck} paid from deck under possible deck pressure: estimatedDeckPayment=${estimatedDeckPayment}.`,
+        });
+      }
+    }
+  }
+
+  for (const [key, entry] of failedEffects.entries()) {
+    if (entry.count < 2) continue;
+    const log = entry.log;
+    addFinding(findings, result, 'REPEATED_EFFECT_FAILURE', {
+      deck: log.playerName || log.profileId || log.playerUid,
+      turn: log.turn,
+      phase: log.phase,
+      action: log.action,
+      subject: key,
+      detail: `${key} failed ${entry.count} time(s) in the captured decision log.`,
+    });
+  }
+}
+
+function buildBehaviorReport(evalReport: any, sourcePath: string, findings: BehaviorFinding[]) {
+  const severityCounts = countBy(findings, finding => finding.severity);
+  const codeCounts = countBy(findings, finding => finding.code);
+  const deckCounts = countBy(findings.filter(finding => finding.deck), finding => finding.deck || 'UNKNOWN');
+  const sortedFindings = [...findings].sort((a, b) =>
+    SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] ||
+    a.code.localeCompare(b.code) ||
+    a.matchup.localeCompare(b.matchup)
+  );
+
+  return {
+    createdAt: new Date().toISOString(),
+    sourcePath,
+    sourceCreatedAt: evalReport.createdAt,
+    games: Array.isArray(evalReport.results) ? evalReport.results.length : 0,
+    summary: {
+      errors: severityCounts.error || 0,
+      warnings: severityCounts.warning || 0,
+      info: severityCounts.info || 0,
+      totalFindings: findings.length,
+    },
+    codeCounts,
+    deckCounts,
+    findings: sortedFindings,
+  };
+}
+
+function buildMarkdown(report: ReturnType<typeof buildBehaviorReport>) {
+  const lines: string[] = [];
+  lines.push('# AI Behavior Audit');
+  lines.push('');
+  lines.push(`- Created: ${report.createdAt}`);
+  lines.push(`- Source: ${report.sourcePath}`);
+  lines.push(`- Source created: ${report.sourceCreatedAt || 'unknown'}`);
+  lines.push(`- Games analyzed: ${report.games}`);
+  lines.push(`- Findings: ${report.summary.totalFindings} (errors ${report.summary.errors}, warnings ${report.summary.warnings}, info ${report.summary.info})`);
+  lines.push('');
+
+  lines.push('## Issue Counts');
+  lines.push('');
+  const issueRows = topEntries(report.codeCounts, 30).map(([code, count]) => [code, count]);
+  lines.push(issueRows.length ? markdownTable(['Code', 'Count'], issueRows) : '- No behavior anomalies detected.');
+  lines.push('');
+
+  lines.push('## Deck Counts');
+  lines.push('');
+  const deckRows = topEntries(report.deckCounts, 20).map(([deck, count]) => [deck, count]);
+  lines.push(deckRows.length ? markdownTable(['Deck', 'Count'], deckRows) : '- No deck-specific anomalies detected.');
+  lines.push('');
+
+  lines.push('## Findings');
+  lines.push('');
+  if (report.findings.length === 0) {
+    lines.push('- No findings.');
+  } else {
+    lines.push(markdownTable(
+      ['Severity', 'Code', 'Matchup', 'Deck', 'Turn', 'Phase', 'Action', 'Subject', 'Detail', 'Recommendation'],
+      report.findings.slice(0, 80).map(finding => [
+        finding.severity,
+        finding.code,
+        finding.matchup,
+        finding.deck || '',
+        finding.turn ?? '',
+        finding.phase || '',
+        finding.action || '',
+        finding.subject || '',
+        finding.detail,
+        finding.recommendation,
+      ])
+    ));
+  }
+  lines.push('');
+
+  lines.push('## How To Use');
+  lines.push('');
+  lines.push('- Convert repeated warnings into focused scenarios in `script/test-hard-ai-scenarios.ts`.');
+  lines.push('- Treat `STEP_LIMIT_*`, `QUERY_FAILED`, repeated `ACTIVATE_EFFECT_FAILED`, and low-score COUNTERING actions as first-priority fixes.');
+  lines.push('- Use `npm run ai:behavior-audit -- --no-run` to re-read the latest evaluation without running new games.');
+
+  return lines.join('\n');
+}
+
+function evaluateArgsFromCli() {
+  const args: string[] = [];
+  for (const [name, fallback] of Object.entries(DEFAULT_EVALUATE_ARGS)) {
+    args.push(`--${name}=${argValue(name) || fallback}`);
+  }
+  for (const optional of ['deck', 'deckId', 'matchOffset']) {
+    const value = argValue(optional);
+    if (value) args.push(`--${optional}=${value}`);
+  }
+  return args;
+}
+
+function runEvaluation() {
+  const args = ['--import', 'tsx', 'script/evaluate-ai.ts', ...evaluateArgsFromCli()];
+  const command = process.execPath;
+  const result = spawnSync(command, args, {
+    cwd: process.cwd(),
+    stdio: 'inherit',
+    shell: false,
+  });
+  if (result.status !== 0) {
+    throw new Error(`evaluate-ai failed with status ${result.status ?? 'unknown'}${result.error ? `: ${result.error.message}` : ''}`);
+  }
+}
+
+function resolveInputPath() {
+  const explicit = argValue('input');
+  if (explicit) return path.resolve(process.cwd(), explicit);
+  return path.join(process.cwd(), 'reports', 'ai-eval-latest.json');
+}
+
+function main() {
+  if (!hasFlag('no-run') && !argValue('input')) {
+    runEvaluation();
+  }
+
+  const inputPath = resolveInputPath();
+  const raw = fs.readFileSync(inputPath, 'utf8');
+  const evalReport = JSON.parse(raw);
+  const findings: BehaviorFinding[] = [];
+  for (const result of evalReport.results || []) {
+    analyzeDiagnosis(findings, result);
+    analyzeDecisionLogs(findings, result);
+    analyzeBattleLogText(findings, result);
+  }
+
+  const report = buildBehaviorReport(evalReport, path.relative(process.cwd(), inputPath), findings);
+  const markdown = buildMarkdown(report);
+  const reportsDir = path.join(process.cwd(), 'reports');
+  fs.mkdirSync(reportsDir, { recursive: true });
+  const id = Date.now();
+  const jsonPath = path.join(reportsDir, `ai-behavior-audit-${id}.json`);
+  const mdPath = path.join(reportsDir, `ai-behavior-audit-${id}.md`);
+  const latestJsonPath = path.join(reportsDir, 'ai-behavior-audit-latest.json');
+  const latestMdPath = path.join(reportsDir, 'ai-behavior-audit-latest.md');
+
+  fs.writeFileSync(jsonPath, stringifyJson(report), 'utf8');
+  fs.writeFileSync(mdPath, markdown, 'utf8');
+  fs.writeFileSync(latestJsonPath, stringifyJson(report), 'utf8');
+  fs.writeFileSync(latestMdPath, markdown, 'utf8');
+
+  console.log(`AI behavior audit finished: ${report.summary.totalFindings} findings`);
+  console.log(`Report: ${mdPath}`);
+  if (failOn && report.findings.some(finding => SEVERITY_RANK[finding.severity] >= SEVERITY_RANK[failOn])) {
+    process.exitCode = 1;
+  }
+}
+
+main();

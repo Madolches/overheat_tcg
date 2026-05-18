@@ -117,6 +117,7 @@ async function createSelfPlayGame(
 
   state.gameId = `ai_eval_${profileA.id}_vs_${profileB.id}_${firstSeat}_${gameIndex}`;
   state.mode = 'ai-selfplay';
+  (state as any).skipResolutionDelay = true;
   state.phase = 'MULLIGAN';
   state.rps = undefined;
   state.firstPlayerChoice = undefined;
