@@ -12,11 +12,13 @@ import {
   scorePaymentSacrificeValue,
   scorePaymentExhaustValue,
 } from '../server/ai/hardStrategy';
-import { getDeckAiProfile } from '../server/ai/deckProfiles';
+import { AI_DECK_PROFILES, getDeckAiProfile } from '../server/ai/deckProfiles';
 import { scoreEffectTimingWindow } from '../server/ai/effectTimingKnowledge';
 import { getComboAllianceAttack, KNOWN_COMBO_CARD_IDS } from '../server/ai/comboKnowledge';
 import { ServerGameService } from '../server/ServerGameService';
 import dikaiCardScript from '../src/scripts/102050432';
+import { initServerCardLibrary, loadServerCards, SERVER_CARD_LIBRARY } from '../server/card_loader';
+import { decodeDeckShareCode } from '../src/lib/deckShareCode';
 
 type ScenarioResult = {
   name: string;
@@ -1375,6 +1377,72 @@ function testRedDikaiFixedOpeningHand(): ScenarioResult {
   );
 }
 
+function testBlueAdventurerFixedOpeningHand(): ScenarioResult {
+  const profile = getDeckAiProfile('blue-adventurer');
+  const junkA = story({ id: 'BLUE_JUNK_A', fullName: 'Blue Junk A', color: 'BLUE', cardlocation: 'HAND' });
+  const junkB = story({ id: 'BLUE_JUNK_B', fullName: 'Blue Junk B', color: 'BLUE', cardlocation: 'HAND' });
+  const junkC = story({ id: 'BLUE_JUNK_C', fullName: 'Blue Junk C', color: 'BLUE', cardlocation: 'HAND' });
+  const junkD = story({ id: 'BLUE_JUNK_D', fullName: 'Blue Junk D', color: 'BLUE', cardlocation: 'HAND' });
+  const byakuya = unit({ id: '104030455', fullName: 'Byakuya', color: 'BLUE', cardlocation: 'DECK' });
+  const ting = unit({ id: '104030451', fullName: 'Xiaoting', color: 'BLUE', cardlocation: 'DECK' });
+  const guild = story({ id: '304030075', fullName: 'Dragon Wing Adventurer Guild', color: 'BLUE', type: 'ITEM', cardlocation: 'DECK' });
+  const aketi = unit({ id: '104020068', fullName: 'Nine-Tailed Fox Aketi', color: 'BLUE', cardlocation: 'DECK', godMark: true });
+  const state = game({
+    hand: [junkA, junkB, junkC, junkD],
+    deck: [byakuya, ting, guild, aketi, ...deckCards(6, 'BLUE_FIXED_FILLER')],
+    botDeckProfileId: 'blue-adventurer',
+  });
+
+  const result = applyOpeningHandSoftCompensation(state.players.BOT, profile);
+  const openingIds = state.players.BOT.hand.map((card: any) => card.id);
+  const expected = ['104030455', '104030451', '304030075', '104020068'];
+  const returnedJunk = [junkA, junkB, junkC, junkD].every(card =>
+    state.players.BOT.deck.some((deckCard: any) => deckCard.gamecardId === card.gamecardId)
+  );
+
+  return assertScenario(
+    'blue adventurer uses fixed opening hand',
+    result.applied &&
+      result.fixedOpening === true &&
+      openingIds.join(',') === expected.join(',') &&
+      returnedJunk,
+    `opening=${openingIds.join(',')}, fixed=${!!result.fixedOpening}, returnedJunk=${returnedJunk}`
+  );
+}
+
+function testBigSalalaFixedOpeningHand(): ScenarioResult {
+  const profile = getDeckAiProfile('big-salala');
+  const junkA = story({ id: 'BIG_SALALA_JUNK_A', fullName: 'Big Salala Junk A', color: 'GREEN', cardlocation: 'HAND' });
+  const junkB = story({ id: 'BIG_SALALA_JUNK_B', fullName: 'Big Salala Junk B', color: 'GREEN', cardlocation: 'HAND' });
+  const junkC = story({ id: 'BIG_SALALA_JUNK_C', fullName: 'Big Salala Junk C', color: 'GREEN', cardlocation: 'HAND' });
+  const junkD = story({ id: 'BIG_SALALA_JUNK_D', fullName: 'Big Salala Junk D', color: 'GREEN', cardlocation: 'HAND' });
+  const cradle = unit({ id: '105000481', fullName: 'Cradle Girl', color: 'YELLOW', cardlocation: 'DECK' });
+  const repairer = unit({ id: '103090253', fullName: 'Windmill Repairer', color: 'GREEN', cardlocation: 'DECK' });
+  const angel = unit({ id: '101140435', fullName: 'Battle Angel', color: 'WHITE', cardlocation: 'DECK' });
+  const salala = unit({ id: '103000426', fullName: 'Big Salala', color: 'GREEN', cardlocation: 'DECK', godMark: true });
+  const state = game({
+    hand: [junkA, junkB, junkC, junkD],
+    deck: [cradle, repairer, angel, salala, ...deckCards(6, 'BIG_SALALA_FIXED_FILLER')],
+    botDeckProfileId: 'big-salala',
+  });
+
+  const result = applyOpeningHandSoftCompensation(state.players.BOT, profile);
+  const openingIds = state.players.BOT.hand.map((card: any) => card.id);
+  const expected = ['105000481', '103090253', '101140435', '103000426'];
+  const returnedJunk = [junkA, junkB, junkC, junkD].every(card =>
+    state.players.BOT.deck.some((deckCard: any) => deckCard.gamecardId === card.gamecardId)
+  );
+
+  return assertScenario(
+    'big salala uses fixed opening hand',
+    result.applied &&
+      result.fixedOpening === true &&
+      openingIds.join(',') === expected.join(',') &&
+      returnedJunk,
+    `opening=${openingIds.join(',')}, fixed=${!!result.fixedOpening}, returnedJunk=${returnedJunk}`
+  );
+}
+
 function testMagicSpearResetEffectScoresWhenAttackWouldLose(): ScenarioResult {
   const profile = getDeckAiProfile('white-temple');
   const spear = unit({
@@ -1425,6 +1493,114 @@ function testMagicSpearResetEffectScoresWhenAttackWouldLose(): ScenarioResult {
   return assertScenario(
     'magic spear reset effect is valuable when attack would lose',
     scored.score >= 18 && scored.notes.some(note => note.includes('magic spear reset')),
+    `score=${scored.score.toFixed(1)}, notes=${scored.notes.join('|')}`
+  );
+}
+
+function testHolyPrinceResetHeldInLooseCountering(): ScenarioResult {
+  const profile = getDeckAiProfile('white-temple');
+  const lowUnit = unit({
+    id: 'WHITE_LOW_RESET_TARGET',
+    fullName: 'Low White Unit',
+    power: 1000,
+    damage: 1,
+    isExhausted: true,
+    playedTurn: 1,
+  });
+  const princeEffect = effect({
+    id: '101130441_reset_boost',
+    type: 'ACTIVATE',
+    description: 'reset a saint kingdom unit and give it power +500',
+  });
+  const prince = unit({
+    id: '101130441',
+    fullName: 'Holy Prince Rune',
+    power: 2000,
+    damage: 1,
+    godMark: true,
+    effects: [princeEffect],
+    playedTurn: 1,
+  });
+  const state = game(
+    {
+      unitZone: [lowUnit, prince, null, null, null, null],
+      grave: deckCards(3, 'PRINCE_COST_GRAVE'),
+      botDeckProfileId: 'white-temple',
+    },
+    {},
+    {
+      phase: 'COUNTERING',
+      currentTurnPlayer: 1,
+      priorityPlayerId: 'BOT',
+      previousPhase: 'MAIN',
+    }
+  );
+
+  const scored = scoreActivatableEffect(state, state.players.BOT, prince as any, princeEffect as any, profile, {
+    opponent: state.players.P1,
+    targetCount: 1,
+    hasTargetSpec: true,
+  });
+
+  return assertScenario(
+    'holy prince reset is held in loose countering windows',
+    scored.score < 18 && scored.notes.some(note => note.includes('post-attack high-value reset')),
+    `score=${scored.score.toFixed(1)}, notes=${scored.notes.join('|')}`
+  );
+}
+
+function testHolyPrinceResetSupportsMagicSpearCountering(): ScenarioResult {
+  const profile = getDeckAiProfile('white-temple');
+  const spear = unit({
+    id: '101130440',
+    fullName: 'Temple Knight Magic Spear',
+    power: 2000,
+    damage: 2,
+    isExhausted: true,
+    playedTurn: 1,
+  });
+  const princeEffect = effect({
+    id: '101130441_reset_boost',
+    type: 'ACTIVATE',
+    description: 'reset a saint kingdom unit and give it power +500',
+  });
+  const prince = unit({
+    id: '101130441',
+    fullName: 'Holy Prince Rune',
+    power: 2000,
+    damage: 1,
+    godMark: true,
+    effects: [princeEffect],
+    playedTurn: 1,
+  });
+  const blocker = unit({ id: 'BLOCKER_3000_PRINCE', fullName: '3000 Blocker', power: 3000, damage: 1, playedTurn: 1 });
+  const state = game(
+    {
+      unitZone: [spear, prince, null, null, null, null],
+      grave: deckCards(3, 'PRINCE_SUPPORT_COST'),
+      botDeckProfileId: 'white-temple',
+    },
+    { unitZone: [blocker, null, null, null, null, null] },
+    {
+      phase: 'COUNTERING',
+      currentTurnPlayer: 0,
+      priorityPlayerId: 'BOT',
+      previousPhase: 'BATTLE_DECLARATION',
+      battleState: { attackers: [spear.gamecardId], defender: blocker.gamecardId, isAlliance: false },
+    }
+  );
+
+  const scored = scoreActivatableEffect(state, state.players.BOT, prince as any, princeEffect as any, profile, {
+    opponent: state.players.P1,
+    targetCount: 1,
+    hasTargetSpec: true,
+  });
+
+  return assertScenario(
+    'holy prince reset supports magic spear in countering',
+    scored.score >= 18 &&
+      scored.notes.some(note => note.includes('magic spear reset')) &&
+      !scored.notes.some(note => note.includes('prefers')),
     `score=${scored.score.toFixed(1)}, notes=${scored.notes.join('|')}`
   );
 }
@@ -2052,8 +2228,8 @@ function testDefenseTakesProfitableWinAgainstHighValueAttacker(): ScenarioResult
   );
 }
 
-function testFiveDeckProfilesProduceTurnPlans(): ScenarioResult {
-  const ids = ['white-temple', 'blue-adventurer', 'red-dikai', 'yellow-alchemy', 'overlord-totem'];
+function testActiveDeckProfilesProduceTurnPlans(): ScenarioResult {
+  const ids = ['white-temple', 'blue-adventurer', 'red-dikai', 'big-salala'];
   const failures: string[] = [];
   for (const id of ids) {
     const profile = getDeckAiProfile(id);
@@ -2063,9 +2239,46 @@ function testFiveDeckProfilesProduceTurnPlans(): ScenarioResult {
     if (!plan.tacticalLine || !plan.mode) failures.push(id);
   }
   return assertScenario(
-    'all five hard AI deck profiles produce tactical turn plans',
+    'all active hard AI deck profiles produce tactical turn plans',
     failures.length === 0,
     failures.length ? `failed=${failures.join(',')}` : `profiles=${ids.length}`
+  );
+}
+
+function testActiveHardAiDeckProfileList(): ScenarioResult {
+  const activeIds = AI_DECK_PROFILES.map(profile => profile.id);
+  const legacyYellow = getDeckAiProfile('yellow-alchemy');
+  const legacyTotem = getDeckAiProfile('overlord-totem');
+  const activeMatches =
+    activeIds.join(',') === 'white-temple,blue-adventurer,red-dikai,big-salala' &&
+    !activeIds.includes('yellow-alchemy') &&
+    !activeIds.includes('overlord-totem') &&
+    legacyYellow.id === 'yellow-alchemy' &&
+    legacyTotem.id === 'overlord-totem';
+
+  return assertScenario(
+    'active hard AI deck list replaces yellow and totem with big salala',
+    activeMatches,
+    `active=${activeIds.join(',')}, legacyYellow=${legacyYellow.id}, legacyTotem=${legacyTotem.id}`
+  );
+}
+
+async function testBigSalalaShareCodeDeckIsValid(): Promise<ScenarioResult> {
+  const profile = getDeckAiProfile('big-salala');
+  await initServerCardLibrary();
+  const catalogRefs = (await loadServerCards())
+    .map(card => card.uniqueId)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+  const refs = decodeDeckShareCode(profile.shareCode || '', catalogRefs);
+  const cards = refs.map(ref => SERVER_CARD_LIBRARY[ref]).filter(Boolean);
+  const validation = ServerGameService.validateDeck(cards as any);
+  const hasSalala = cards.some(card => card?.id === '103000426');
+
+  return assertScenario(
+    'big salala share code resolves to a valid hard AI deck',
+    refs.length === 50 && cards.length === refs.length && validation.valid && hasSalala,
+    `refs=${refs.length}, cards=${cards.length}, valid=${validation.valid}, hasSalala=${hasSalala}`
   );
 }
 
@@ -2099,6 +2312,83 @@ function testBlueAdventurerConvertsTempoPressure(): ScenarioResult {
     'blue adventurer route converts tempo unit into erosion pressure',
     plan.attackBeforeDeveloping && hasRouteNote,
     `attackBefore=${plan.attackBeforeDeveloping}, notes=${plan.notes.join('|')}`
+  );
+}
+
+function testBlockedErosionLineStabilizesUnderIncomingLethal(): ScenarioResult {
+  const profile = getDeckAiProfile('blue-adventurer');
+  const tempoAttacker = unit({ id: 'BLUE_BLOCKED_PRESSURE', color: 'BLUE', damage: 1, power: 2000, playedTurn: 1 });
+  const whiteThreatA = unit({ id: 'WHITE_THREAT_A', color: 'WHITE', damage: 4, power: 3500, playedTurn: 1 });
+  const whiteThreatB = unit({ id: 'WHITE_THREAT_B', color: 'WHITE', damage: 4, power: 3500, playedTurn: 1 });
+  const state = game(
+    {
+      unitZone: [tempoAttacker, null, null, null, null, null],
+      erosionBack: erosionCards(2, 'BOT_BLOCKED_PRESSURE'),
+      botDeckProfileId: profile.id,
+    },
+    {
+      unitZone: [whiteThreatA, whiteThreatB, null, null, null, null],
+      erosionBack: erosionCards(9, 'P1_BLOCKED_PRESSURE'),
+    },
+    { botDeckProfiles: { BOT: profile.id } }
+  );
+  const plan = buildTurnPlan(state, state.players.BOT, profile);
+  return assertScenario(
+    'blocked erosion line stabilizes under incoming lethal',
+    plan.mode === 'defense' &&
+      !plan.attackBeforeDeveloping &&
+      plan.tacticalLine === 'stabilize' &&
+      plan.reserveDefenders >= 1 &&
+      plan.notes.some(note => note.includes('incoming lethal overrides')),
+    `mode=${plan.mode}, attackBefore=${plan.attackBeforeDeveloping}, reserve=${plan.reserveDefenders}, tactical=${plan.tacticalLine}, notes=${plan.notes.join('|')}`
+  );
+}
+
+async function testClosingPlanCommitsAfterOnePrecombatPlay(): Promise<ScenarioResult> {
+  const profile = getDeckAiProfile('blue-adventurer');
+  const attackerA = unit({ id: 'BLUE_PRECOMBAT_A', color: 'BLUE', damage: 2, power: 2500, playedTurn: 1 });
+  const attackerB = unit({ id: 'BLUE_PRECOMBAT_B', color: 'BLUE', damage: 1, power: 1500, playedTurn: 1 });
+  const rushUnit = unit({
+    id: 'BLUE_PRECOMBAT_RUSH',
+    color: 'BLUE',
+    fullName: 'Precombat Rush Unit',
+    damage: 1,
+    power: 2000,
+    acValue: 0,
+    baseAcValue: 0,
+    colorReq: {},
+    isrush: true,
+    cardlocation: 'HAND',
+  });
+  const blocker = unit({ id: 'P1_PRECOMBAT_BLOCKER', color: 'WHITE', damage: 1, power: 1000, playedTurn: 1 });
+  const state = game(
+    {
+      hand: [rushUnit],
+      unitZone: [attackerA, attackerB, null, null, null, null],
+      botDifficulty: 'hard',
+      botDeckProfileId: profile.id,
+    },
+    {
+      unitZone: [blocker, null, null, null, null, null],
+      erosionBack: erosionCards(9, 'P1_PRECOMBAT_CLOSE'),
+    },
+    {
+      turnCount: 3,
+      botDifficulty: 'hard',
+      botDeckProfiles: { BOT: profile.id },
+    }
+  );
+  const plan = buildTurnPlan(state, state.players.BOT, profile);
+  await ServerGameService.botMoveForPlayer(state, 'BOT');
+  const playedCards = state.aiDecisionLogs?.filter((log: any) => log.action === 'PLAY_CARD') || [];
+
+  return assertScenario(
+    'closing plan commits after one precombat play',
+    isClosingTurnPlan(plan) &&
+      !plan.attackBeforeDeveloping &&
+      playedCards.length === 1 &&
+      (state.players.BOT as any).botClosingAttackTurn === state.turnCount,
+    `closing=${isClosingTurnPlan(plan)}, attackBefore=${plan.attackBeforeDeveloping}, plays=${playedCards.length}, committed=${(state.players.BOT as any).botClosingAttackTurn}, phase=${state.phase}`
   );
 }
 
@@ -2279,6 +2569,70 @@ function testWhiteTigerBattleExileNeedsCurrentBattleThreat(): ScenarioResult {
     'white tiger battle exile waits for a real battle threat',
     noThreatScore < 18 && threatScore > noThreatScore + 45,
     `safe=${noThreatScore.toFixed(1)}, threatened=${threatScore.toFixed(1)}`
+  );
+}
+
+function testFutureReadBottomAttackerOnlyAnswersOpponentGodmark(): ScenarioResult {
+  const profile = getDeckAiProfile('white-temple');
+  const bottomEffect = effect({
+    id: '101140152_bottom_attacker',
+    description: 'put attacking godmark unit on deck bottom',
+    content: 'BOTTOM ATTACKING GODMARK UNIT',
+    cost: { type: 'EROSION', amount: 2 },
+  });
+  const liwei = unit({
+    id: '101140152',
+    fullName: 'Future Read Liwei',
+    color: 'WHITE',
+    power: 2500,
+    damage: 2,
+    godMark: true,
+    effects: [bottomEffect],
+  });
+  const ownGodAttacker = unit({ id: '101000501', fullName: 'Own White Tiger', color: 'WHITE', power: 3500, damage: 3, godMark: true, playedTurn: 1 });
+  const oppGodAttacker = unit({ id: 'OPP_GOD_ATTACKER', fullName: 'Opponent God Attacker', color: 'RED', power: 4000, damage: 3, godMark: true, playedTurn: 1 });
+  const ownAttackState = game(
+    { unitZone: [liwei, ownGodAttacker, null, null, null, null], erosionBack: erosionCards(10, 'BOT_LIWEI_OWN') },
+    {},
+    { phase: 'BATTLE_FREE', currentTurnPlayer: 0, battleState: { attackers: [ownGodAttacker.gamecardId] } }
+  );
+  const oppAttackState = game(
+    { unitZone: [liwei, null, null, null, null, null], erosionBack: erosionCards(10, 'BOT_LIWEI_OPP'), isTurn: false },
+    { unitZone: [oppGodAttacker, null, null, null, null, null], isTurn: true },
+    { phase: 'BATTLE_FREE', currentTurnPlayer: 1, battleState: { attackers: [oppGodAttacker.gamecardId] } }
+  );
+  const ownScore = scoreActivatableEffect(
+    ownAttackState,
+    ownAttackState.players.BOT,
+    liwei as any,
+    bottomEffect as any,
+    profile,
+    { opponent: ownAttackState.players.P1, targetCount: 1, hasTargetSpec: true }
+  ).score;
+  const oppScore = scoreActivatableEffect(
+    oppAttackState,
+    oppAttackState.players.BOT,
+    liwei as any,
+    bottomEffect as any,
+    profile,
+    { opponent: oppAttackState.players.P1, targetCount: 1, hasTargetSpec: true }
+  ).score;
+  const query = {
+    type: 'SELECT_CARD',
+    options: [
+      { card: ownGodAttacker, source: 'UNIT', isMine: true },
+      { card: oppGodAttacker, source: 'UNIT', isMine: false },
+    ],
+    minSelections: 1,
+    maxSelections: 1,
+    context: { effectId: '101140152_bottom_attacker' },
+  };
+  const selected = chooseQuerySelections(oppAttackState, 'BOT', query as any, profile, 'hard');
+
+  return assertScenario(
+    'future read bottom attacker only answers opponent godmark',
+    ownScore < 18 && oppScore >= 18 && selected[0] === oppGodAttacker.gamecardId,
+    `own=${ownScore.toFixed(1)}, opp=${oppScore.toFixed(1)}, selected=${selected[0]}`
   );
 }
 
@@ -2720,6 +3074,117 @@ function testBlueSwapChoosesErosionPayoff(): ScenarioResult {
   );
 }
 
+function testAketiBounceTargetsOpponentThreats(): ScenarioResult {
+  const profile = getDeckAiProfile('blue-adventurer');
+  const ownCore = unit({ id: '104020068', color: 'BLUE', fullName: 'Aketi Core', power: 3500, damage: 2, cardlocation: 'EROSION_FRONT', godMark: true });
+  const ownLow = unit({ id: 'BLUE_LOW_FRONT', color: 'BLUE', fullName: 'Blue Low Front', power: 500, damage: 0, cardlocation: 'EROSION_FRONT' });
+  const ownField = unit({ id: 'BLUE_OWN_FIELD', color: 'BLUE', fullName: 'Own Field Engine', power: 2500, damage: 2 });
+  const opponentThreat = unit({ id: 'OPP_AKETI_THREAT', color: 'RED', fullName: 'Opponent Threat', power: 4000, damage: 3, godMark: true });
+  const state = game(
+    {
+      erosionFront: [ownCore, ownLow],
+      unitZone: [ownField, null, null, null, null, null],
+      botDeckProfileId: 'blue-adventurer',
+    },
+    { unitZone: [opponentThreat, null, null, null, null, null] }
+  );
+  const costQuery = {
+    type: 'SELECT_CARD',
+    options: [
+      { card: ownCore, source: 'EROSION_FRONT', isMine: true },
+      { card: ownLow, source: 'EROSION_FRONT', isMine: true },
+    ],
+    minSelections: 1,
+    maxSelections: 1,
+    context: { effectId: 'aketi_goddess_bounce', step: 'COST' },
+  };
+  const bounceQuery = {
+    type: 'SELECT_CARD',
+    options: [
+      { card: ownField, source: 'UNIT', isMine: true },
+      { card: opponentThreat, source: 'UNIT', isMine: false },
+    ],
+    minSelections: 1,
+    maxSelections: 2,
+    context: { effectId: 'aketi_goddess_bounce', step: 'BOUNCE' },
+  };
+
+  const costSelected = chooseQuerySelections(state, 'BOT', costQuery as any, profile, 'hard');
+  const bounceSelected = chooseQuerySelections(state, 'BOT', bounceQuery as any, profile, 'hard');
+
+  return assertScenario(
+    'aketi bounce pays low erosion and targets opponent threat',
+    costSelected[0] === ownLow.gamecardId &&
+      bounceSelected.includes(opponentThreat.gamecardId) &&
+      !bounceSelected.includes(ownField.gamecardId),
+    `cost=${costSelected.join(',')}, bounce=${bounceSelected.join(',')}`
+  );
+}
+
+function testTotemHawkDestroyTargetsOpponentThreat(): ScenarioResult {
+  const profile = getDeckAiProfile('overlord-totem');
+  const ownCore = unit({ id: '103080183', color: 'GREEN', fullName: 'Totem Hawk', power: 2000, damage: 1 });
+  const ownLow = unit({ id: 'GREEN_LOW_FIELD', color: 'GREEN', fullName: 'Own Low Field', power: 500, damage: 0 });
+  const opponentThreat = unit({ id: 'OPP_TOTEM_TARGET', color: 'RED', fullName: 'Opponent Non-God Threat', power: 3000, damage: 2 });
+  const state = game(
+    { unitZone: [ownCore, ownLow, null, null, null, null], botDeckProfileId: 'overlord-totem' },
+    { unitZone: [opponentThreat, null, null, null, null, null] }
+  );
+  const query = {
+    type: 'SELECT_CARD',
+    options: [
+      { card: ownLow, source: 'UNIT', isMine: true },
+      { card: opponentThreat, source: 'UNIT', isMine: false },
+    ],
+    minSelections: 1,
+    maxSelections: 1,
+    context: { effectId: '103080183_destroy' },
+  };
+  const selected = chooseQuerySelections(state, 'BOT', query as any, profile, 'hard');
+  return assertScenario(
+    'totem hawk destroy targets opponent threat',
+    selected[0] === opponentThreat.gamecardId,
+    `selected=${selected[0]}`
+  );
+}
+
+async function testSelfPlayCounterStackSkipsVisualDelay(): Promise<ScenarioResult> {
+  const source = unit({
+    id: 'SELF_PLAY_STACK_SOURCE',
+    fullName: 'Self Play Stack Source',
+    effects: [effect({ id: 'self_play_stack_effect', description: 'test stack delay' })],
+  });
+  const state = game(
+    { unitZone: [source, null, null, null, null, null] },
+    {},
+    {
+      phase: 'COUNTERING',
+      previousPhase: 'MAIN',
+      isCountering: 1,
+      mode: 'ai-selfplay',
+      skipResolutionDelay: true,
+      counterStack: [{
+        type: 'EFFECT',
+        ownerUid: 'BOT',
+        card: source,
+        effectIndex: 0,
+        isNegated: true,
+        timestamp: Date.now(),
+      }],
+    }
+  );
+
+  const startedAt = Date.now();
+  await ServerGameService.resolveCounterStack(state as any);
+  const elapsedMs = Date.now() - startedAt;
+
+  return assertScenario(
+    'self-play counter stack skips visual delay',
+    elapsedMs < 500 && state.counterStack.length === 0 && !state.isResolvingStack && state.phase === 'MAIN',
+    `elapsed=${elapsedMs}ms, stack=${state.counterStack.length}, resolving=${!!state.isResolvingStack}, phase=${state.phase}`
+  );
+}
+
 function testTotemRitualChoosesOverlord(): ScenarioResult {
   const profile = getDeckAiProfile('overlord-totem');
   const lowTotem = unit({ id: '103080312', color: 'GREEN', fullName: 'Winged Totem', power: 1000, damage: 1, cardlocation: 'DECK' });
@@ -2777,7 +3242,11 @@ const scenarios: ScenarioRun[] = [
   testWhiteTempleMultiResetTakesBothKeyTargets,
   testWhiteTempleFixedOpeningHand,
   testRedDikaiFixedOpeningHand,
+  testBlueAdventurerFixedOpeningHand,
+  testBigSalalaFixedOpeningHand,
   testMagicSpearResetEffectScoresWhenAttackWouldLose,
+  testHolyPrinceResetHeldInLooseCountering,
+  testHolyPrinceResetSupportsMagicSpearCountering,
   testMagicSpearAttackNeedsResetSupportIntoLargeDefender,
   testMagicSpearHeldWhenResetOnlyTrades,
   testWhiteTemplePlaysArcherBeforeHandTargets,
@@ -2796,9 +3265,13 @@ const scenarios: ScenarioRun[] = [
   testDefenseSacrificesLowValueUnitToPreventLethalHit,
   testDefenseHighValueUnitBlocksLethalWhenOnlyOption,
   testDefenseTakesProfitableWinAgainstHighValueAttacker,
-  testFiveDeckProfilesProduceTurnPlans,
+  testActiveDeckProfilesProduceTurnPlans,
+  testActiveHardAiDeckProfileList,
+  testBigSalalaShareCodeDeckIsValid,
   testWhiteTempleConvertsHallPressure,
   testBlueAdventurerConvertsTempoPressure,
+  testBlockedErosionLineStabilizesUnderIncomingLethal,
+  testClosingPlanCommitsAfterOnePrecombatPlay,
   testRedDikaiCommitsNearKillPressure,
   testPrecombatCannotDefendDelaysAttack,
   testBlueErosionSummonSequencedBeforeAttack,
@@ -2806,6 +3279,7 @@ const scenarios: ScenarioRun[] = [
   testClosingPlanHelperRecognizesErosionLethal,
   testComboAllianceDoesNotOverrideDirectLethal,
   testWhiteTigerBattleExileNeedsCurrentBattleThreat,
+  testFutureReadBottomAttackerOnlyAnswersOpponentGodmark,
   testPaymentPreservesClosingAttacker,
   testLowAttackHeldIntoStrongerReadyDefender,
   testExpendableBaitAttackAllowedForClosingPressure,
@@ -2819,6 +3293,9 @@ const scenarios: ScenarioRun[] = [
   testYellowAlchemyCostPreservesCore,
   testRedDuelKeepsCommander,
   testBlueSwapChoosesErosionPayoff,
+  testAketiBounceTargetsOpponentThreats,
+  testTotemHawkDestroyTargetsOpponentThreat,
+  testSelfPlayCounterStackSkipsVisualDelay,
   testTotemRitualChoosesOverlord,
 ];
 

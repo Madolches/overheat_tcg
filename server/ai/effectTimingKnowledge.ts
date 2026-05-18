@@ -82,6 +82,11 @@ const MANUAL_EFFECT_TIMING_OVERRIDES: Record<string, {
     phaseBias: { BATTLE_DECLARATION: 5, BATTLE_FREE: 6, DAMAGE_CALCULATION: 5, MAIN: -2 },
     reasons: ['magic spear reset boost should convert an attack/reset turn, not idle setup'],
   },
+  '101130441_reset_boost': {
+    tags: ['resource', 'reset', 'combat', 'buff'],
+    phaseBias: { BATTLE_FREE: 7, COUNTERING: 11, DAMAGE_CALCULATION: 5, MAIN: -2 },
+    reasons: ['holy prince reset is a post-attack reset payoff for magic spear or hero sword'],
+  },
   '101130458_reset_silence': {
     tags: ['tempo', 'resource'],
     phaseBias: { MAIN: 5, BATTLE_DECLARATION: 4, BATTLE_FREE: 3, COUNTERING: 2 },

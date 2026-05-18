@@ -12,8 +12,7 @@ const AI_OPPONENT_DECKS = [
   { id: 'white-temple', name: '纯白殿堂', detail: '稳健防守与场面控制' },
   { id: 'blue-adventurer', name: '纯蓝冒险家', detail: '节奏展开与灵活交换' },
   { id: 'red-dikai', name: '纯红迪凯', detail: '高速进攻与连续压制' },
-  { id: 'yellow-alchemy', name: '纯黄炼金', detail: '资源循环与后期续航' },
-  { id: 'overlord-totem', name: '霸者图腾', detail: '墓地复归与图腾压迫' },
+  { id: 'big-salala', name: '大萨拉拉', detail: '绿白中速压制与高质量战斗' },
 ] as const;
 
 export const PracticeSetup: React.FC = () => {
