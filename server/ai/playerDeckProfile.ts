@@ -1,8 +1,13 @@
 import { Card, GameState, PlayerState } from '../../src/types/game';
 import { DeckAiMatchupPlan, DeckAiProfile, PlayerDeckArchetype, PlayerDeckProfile } from './types';
 import { getCardKnowledge } from './cardKnowledge';
+import { ALL_DECK_AI_PROFILES } from './deckProfiles';
+import { SERVER_CARD_LIBRARY } from '../card_loader';
+import { decodeDeckShareCode } from '../../src/lib/deckShareCode';
 
 const getCardCost = (card: Card) => Math.max(0, card.baseAcValue ?? card.acValue ?? 0);
+const knownProfileDeckRefs = new Map<string, { id: string; name: string; refs: Map<string, number> }>();
+let knownProfileCatalogKey = '';
 
 function allPlayerCards(player: PlayerState | undefined) {
   if (!player) return [] as Card[];
@@ -17,6 +22,63 @@ function allPlayerCards(player: PlayerState | undefined) {
     ...player.erosionFront,
     ...player.erosionBack,
   ].filter((card): card is Card => !!card);
+}
+
+function incrementMap(map: Map<string, number>, key: string, amount = 1) {
+  map.set(key, (map.get(key) || 0) + amount);
+}
+
+function cardProfileRef(card: Card) {
+  return card.uniqueId || card.id;
+}
+
+function getKnownProfileDeckRefs() {
+  const catalogRefs = Object.keys(SERVER_CARD_LIBRARY).filter(ref => ref.includes(':')).sort();
+  const catalogKey = `${catalogRefs.length}|${catalogRefs.join('|')}`;
+  if (knownProfileCatalogKey === catalogKey && knownProfileDeckRefs.size > 0) return knownProfileDeckRefs;
+
+  knownProfileDeckRefs.clear();
+  knownProfileCatalogKey = catalogKey;
+  if (catalogRefs.length === 0) return knownProfileDeckRefs;
+
+  for (const profile of ALL_DECK_AI_PROFILES) {
+    if (!profile.shareCode) continue;
+    try {
+      const refs = decodeDeckShareCode(profile.shareCode, catalogRefs);
+      const counts = new Map<string, number>();
+      refs.forEach(ref => incrementMap(counts, ref));
+      knownProfileDeckRefs.set(profile.id, { id: profile.id, name: profile.displayName, refs: counts });
+    } catch {
+      // Ignore stale or incompatible share codes; dynamic profiling still works.
+    }
+  }
+
+  return knownProfileDeckRefs;
+}
+
+function detectKnownDeckProfile(cards: Card[]) {
+  const fullCounts = new Map<string, number>();
+  cards.forEach(card => incrementMap(fullCounts, cardProfileRef(card)));
+  const fullSize = [...fullCounts.values()].reduce((sum, count) => sum + count, 0);
+  if (fullSize < 45) return undefined;
+
+  let best: { id: string; name: string; score: number; overlap: number; missing: number; extra: number } | undefined;
+  for (const known of getKnownProfileDeckRefs().values()) {
+    const knownSize = [...known.refs.values()].reduce((sum, count) => sum + count, 0);
+    let overlap = 0;
+    for (const [ref, count] of known.refs.entries()) {
+      overlap += Math.min(count, fullCounts.get(ref) || 0);
+    }
+    const missing = Math.max(0, knownSize - overlap);
+    const extra = Math.max(0, fullSize - overlap);
+    const score = overlap / Math.max(1, Math.max(knownSize, fullSize));
+    if (!best || score > best.score) {
+      best = { id: known.id, name: known.name, score, overlap, missing, extra };
+    }
+  }
+
+  if (!best || best.score < 0.92 || best.missing > 4 || best.extra > 4) return undefined;
+  return best;
 }
 
 function cardText(card: Card) {
@@ -95,6 +157,7 @@ function chooseArchetype(scores: PlayerDeckProfile['scores'], size: number): { a
 
 export function analyzePlayerDeckProfile(cards: Card[], uid?: string): PlayerDeckProfile {
   const size = cards.length;
+  const knownProfile = detectKnownDeckProfile(cards);
   const colors: Record<string, number> = {};
   const factions: Record<string, number> = {};
   const typeCounts: Record<string, number> = {};
@@ -199,8 +262,10 @@ export function analyzePlayerDeckProfile(cards: Card[], uid?: string): PlayerDec
   const primaryFactions = topKeys(factions).join('/');
   return {
     uid,
+    knownProfileId: knownProfile?.id,
+    knownProfileName: knownProfile?.name,
     archetype,
-    confidence,
+    confidence: knownProfile ? Math.max(confidence, 0.98) : confidence,
     size,
     averageCost: Number(avgCost.toFixed(2)),
     colors,
@@ -209,7 +274,7 @@ export function analyzePlayerDeckProfile(cards: Card[], uid?: string): PlayerDec
     roleCounts,
     scores,
     traits,
-    summary: `${primaryColors || 'unknown'} ${primaryFactions || 'unknown'} ${archetype} (${traits.slice(0, 3).join(', ') || 'balanced'})`,
+    summary: `${knownProfile ? `${knownProfile.name} ` : ''}${primaryColors || 'unknown'} ${primaryFactions || 'unknown'} ${archetype} (${traits.slice(0, 3).join(', ') || 'balanced'})`,
   };
 }
 
@@ -226,6 +291,9 @@ export function buildDynamicMatchupPlan(opponent: PlayerDeckProfile | undefined,
   const plan: DeckAiMatchupPlan = {
     notes: [`dynamic opponent: ${opponent.summary}`],
   };
+  if (opponent.knownProfileId) {
+    plan.notes!.push(`known opponent profile: ${opponent.knownProfileId}`);
+  }
   const confidence = Math.max(0.45, opponent.confidence);
   const scale = (value: number) => Number((value * confidence).toFixed(2));
   const addNote = (note: string) => plan.notes!.push(note);

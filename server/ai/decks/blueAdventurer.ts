@@ -1,3 +1,4 @@
+import { Card } from '../../../src/types/game';
 import { DeckAiProfile } from '../types';
 import { cardCost, cardText, effectHasTag, hasAny, hasRole, openUnitSlots, opponentErosion, opponentHasTrait, opponentIs, queryEffectId, queryOptionCard, queryOptionIsMine, queryStep, readyAttackers } from './strategyUtils';
 
@@ -34,6 +35,147 @@ const BLUE_OPPONENT_TEMPO_EFFECT_IDS = new Set([
   'sodo_entry_bounce',
   '104030459_entry_exhaust',
 ]);
+
+const BLUE_SELF_SWAP_EFFECT_IDS = new Set([
+  '104030459_swap_activate',
+  '104030453_swap',
+  'wen_swap_activate',
+  'freya_ranger_activate',
+]);
+
+const BLUE_GUILD_TRIGGER_EFFECT_ID = '304030075_trigger';
+
+function blueUnitValue(card: Card | null | undefined) {
+  if (!card) return 0;
+  return (BLUE_EROSION_PAYOFF_PRIORITY[card.id] || 0) +
+    (BLUE_CORE_IDS.has(card.id) ? 10 : 0) +
+    Math.max(0, card.damage || 0) * 8 +
+    Math.max(0, card.power || 0) / 700 +
+    (card.godMark ? 18 : 0) +
+    (card.isrush ? 6 : 0);
+}
+
+function blueOpponentTargetValue(card: Card | null | undefined) {
+  if (!card) return 0;
+  return (card.godMark ? 18 : 0) +
+    (card.damage || 0) * 10 +
+    (card.power || 0) / 750 +
+    (card.isExhausted ? -18 : 0);
+}
+
+function bestGuildExhaustTargetValue(context: any) {
+  const candidates = (context.opponent?.unitZone || []).filter((unit: Card | null): unit is Card =>
+    !!unit && !unit.godMark && !unit.isExhausted
+  );
+  return Math.max(0, ...candidates.map(blueOpponentTargetValue));
+}
+
+function guildEnteringUnit(context: any) {
+  const enteringId = context.query?.context?.enteringCardId;
+  if (!enteringId) return undefined;
+  return (context.player?.unitZone || []).find((unit: Card | null) => unit?.gamecardId === enteringId);
+}
+
+function bestGuildGraveRecycleValue(context: any) {
+  const candidates = (context.player?.grave || []).filter((card: Card | null): card is Card =>
+    !!card && card.type === 'UNIT'
+  );
+  return Math.max(0, ...candidates.map(blueUnitValue));
+}
+
+function scoreGuildChoiceOption(context: any) {
+  const optionId = String(context.option?.id || '');
+  const entering = guildEnteringUnit(context);
+  const exhaustTarget = bestGuildExhaustTargetValue(context);
+  const recycleTarget = bestGuildGraveRecycleValue(context);
+  const pressure =
+    readyAttackers(context) > 0 ||
+    opponentErosion(context) >= 5 ||
+    context.opponentDeckProfile?.archetype === 'engine' ||
+    context.opponentDeckProfile?.archetype === 'combo';
+
+  if (optionId === 'OPTION_B') {
+    return exhaustTarget > 0 ? 70 + Math.min(34, exhaustTarget * 0.45) : -60;
+  }
+  if (optionId === 'OPTION_A') {
+    if (!entering) return -30;
+    return 22 + blueUnitValue(entering) * 0.45 + (pressure ? 18 : 0);
+  }
+  if (optionId === 'OPTION_C') {
+    return recycleTarget > 0 ? 18 + Math.min(26, recycleTarget * 0.35) : -34;
+  }
+  return 0;
+}
+
+function faceUpErosionUnits(player: any, source?: Card) {
+  const fieldSpecialNames = new Set(
+    (player?.unitZone || []).filter((unit: Card | null): unit is Card => !!unit && !!unit.specialName).map((unit: Card) => unit.specialName)
+  );
+  const itemSpecialNames = new Set(
+    (player?.itemZone || []).filter((item: Card | null): item is Card => !!item && !!item.specialName).map((item: Card) => item.specialName)
+  );
+  return (player?.erosionFront || []).filter((card: Card | null): card is Card =>
+    !!card &&
+    card.displayState === 'FRONT_UPRIGHT' &&
+    card.type === 'UNIT' &&
+    !card.godMark &&
+    (!source?.specialName || card.specialName !== source.specialName) &&
+    (!card.specialName || (!fieldSpecialNames.has(card.specialName) && !itemSpecialNames.has(card.specialName)))
+  );
+}
+
+function estimateBlueErosionUpgrade(context: any) {
+  const effectId = String(context.effect?.id || '');
+  const player = context.player;
+  const source = context.card as Card | undefined;
+  if (!player || !source) return undefined;
+
+  if (effectId === 'accept_commission_activate') {
+    const candidates = faceUpErosionUnits(player)
+      .filter(card => (card.acValue ?? 0) <= 2);
+    const bestIn = Math.max(0, ...candidates.map(blueUnitValue));
+    return { valid: candidates.length > 0, delta: bestIn, bestIn, out: 0 };
+  }
+
+  if (effectId === 'aketi_play_from_erosion') {
+    const value = blueUnitValue(source);
+    return { valid: value > 0, delta: value - 8, bestIn: value, out: 0 };
+  }
+
+  if (effectId === 'dragon_wing_receptionist_activate') {
+    const fieldUnits = (player.unitZone || []).filter((unit: Card | null): unit is Card =>
+      !!unit &&
+      unit.gamecardId !== source.gamecardId &&
+      !unit.godMark
+    );
+    const erosionUnits = faceUpErosionUnits(player);
+    const bestIn = Math.max(0, ...erosionUnits.map(blueUnitValue));
+    const worstOut = fieldUnits.length > 0
+      ? Math.min(...fieldUnits.map(blueUnitValue))
+      : 0;
+    const sourceAttackCost = (source.damage || 0) * 8 + Math.max(0, source.power || 0) / 900;
+    return {
+      valid: fieldUnits.length > 0 && erosionUnits.length > 0,
+      delta: bestIn - worstOut - sourceAttackCost * 0.45,
+      bestIn,
+      out: worstOut,
+    };
+  }
+
+  if (BLUE_SELF_SWAP_EFFECT_IDS.has(effectId)) {
+    const erosionUnits = faceUpErosionUnits(player, source);
+    const bestIn = Math.max(0, ...erosionUnits.map(blueUnitValue));
+    const sourceValue = blueUnitValue(source);
+    return {
+      valid: erosionUnits.length > 0,
+      delta: bestIn - sourceValue - 8,
+      bestIn,
+      out: sourceValue,
+    };
+  }
+
+  return undefined;
+}
 
 export const blueAdventurerProfile: DeckAiProfile = {
   id: 'blue-adventurer',
@@ -167,11 +309,12 @@ export const blueAdventurerProfile: DeckAiProfile = {
       let minMainEffectScoreDelta = 0;
       let minBattleEffectScoreDelta = 0;
       let attackBeforeDeveloping: boolean | undefined;
+      const liveOpponentErosion = context.opponent?.isGoddessMode ? 0 : context.plan.opponentErosion;
       const pressureReady =
         context.plan.attackers > 0 &&
         (
-          context.plan.opponentErosion >= 4 ||
-          context.plan.totalAvailableDamage >= Math.max(1, 10 - context.plan.opponentErosion - 2) ||
+          liveOpponentErosion >= 4 ||
+          context.plan.totalAvailableDamage >= Math.max(1, 10 - liveOpponentErosion - 2) ||
           context.opponentDeckProfile?.archetype === 'engine' ||
           context.opponentDeckProfile?.archetype === 'combo' ||
           context.opponentDeckProfile?.archetype === 'control'
@@ -241,11 +384,28 @@ export const blueAdventurerProfile: DeckAiProfile = {
       return 0;
     },
     adjustQueryScore: context => {
-      const card = queryOptionCard(context);
-      if (!card) return 0;
       const effectId = queryEffectId(context);
       const step = queryStep(context);
+      if (effectId === BLUE_GUILD_TRIGGER_EFFECT_ID && step === 'RESOLVE_OPTION') {
+        return scoreGuildChoiceOption(context);
+      }
+
+      const card = queryOptionCard(context);
+      if (!card) return 0;
       const source = String(context.option?.source || card.cardlocation || '');
+
+      if (effectId === BLUE_GUILD_TRIGGER_EFFECT_ID) {
+        if (step === 'FINALIZE_EXHAUST') {
+          return queryOptionIsMine(context)
+            ? -90
+            : 76 + blueOpponentTargetValue(card);
+        }
+        if (step === 'FINALIZE_RECYCLE') {
+          return queryOptionIsMine(context)
+            ? 42 + blueUnitValue(card) * 0.55
+            : -70;
+        }
+      }
 
       if (BLUE_SWAP_EFFECT_IDS.has(effectId)) {
         if (!queryOptionIsMine(context)) return -60;
@@ -278,11 +438,31 @@ export const blueAdventurerProfile: DeckAiProfile = {
     },
     adjustEffectScore: context => {
       let score = 0;
+      const effectId = String(context.effect.id || '');
       if (effectHasTag(context, 'search') || effectHasTag(context, 'summon')) score += 3;
       if (effectHasTag(context, 'tempo') && opponentHasTrait(context, 'large-defenders')) score += 4;
       if (effectHasTag(context, 'draw') && (context.player?.deck.length || 0) <= 13) score -= 4;
       if (opponentIs(context, 'engine', 'combo') && (effectHasTag(context, 'tempo') || effectHasTag(context, 'removal'))) score += 3;
       if ((effectHasTag(context, 'tempo') || effectHasTag(context, 'combat')) && (opponentErosion(context) >= 5 || readyAttackers(context) >= 2)) score += 3;
+
+      if (BLUE_SWAP_EFFECT_IDS.has(effectId)) {
+        const upgrade = estimateBlueErosionUpgrade(context);
+        if (!upgrade?.valid) {
+          score -= 70;
+        } else if (upgrade.delta >= 22) {
+          score += 10 + Math.min(22, upgrade.delta * 0.45);
+        } else if (upgrade.delta >= 12 && (context as any).plan?.mode !== 'pressure') {
+          score += 4;
+        } else {
+          score -= 38 + Math.min(26, Math.abs(upgrade.delta));
+        }
+
+        const attackers = readyAttackers(context);
+        if (context.gameState?.phase === 'MAIN' && attackers > 0 && (!upgrade || upgrade.delta < 26)) {
+          score -= 12 + attackers * 4;
+        }
+      }
+
       return score;
     },
   },

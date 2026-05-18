@@ -144,10 +144,11 @@ export const overlordTotemProfile: DeckAiProfile = {
       let minBattleEffectScoreDelta = 0;
       let attackBeforeDeveloping: boolean | undefined;
       const boardOnline = context.plan.attackers >= 2 || context.plan.totalAvailableDamage >= 3;
+      const liveOpponentErosion = context.opponent?.isGoddessMode ? 0 : context.plan.opponentErosion;
       const pressureReady =
         boardOnline &&
         (
-          context.plan.opponentErosion >= 5 ||
+          liveOpponentErosion >= 5 ||
           context.opponentDeckProfile?.archetype === 'engine' ||
           context.opponentDeckProfile?.archetype === 'combo' ||
           context.opponentDeckProfile?.archetype === 'control'

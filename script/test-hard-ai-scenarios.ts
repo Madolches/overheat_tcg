@@ -5,6 +5,8 @@ import {
   chooseDefender,
   choosePlayableCard,
   chooseQuerySelections,
+  canUnitAttack,
+  countPendingUnitReturnSlots,
   isClosingTurnPlan,
   scoreAttackCandidate,
   scoreActivatableEffect,
@@ -14,6 +16,7 @@ import {
 } from '../server/ai/hardStrategy';
 import { AI_DECK_PROFILES, getDeckAiProfile } from '../server/ai/deckProfiles';
 import { scoreEffectTimingWindow } from '../server/ai/effectTimingKnowledge';
+import { inferPlayerDeckProfile } from '../server/ai/playerDeckProfile';
 import { getComboAllianceAttack, KNOWN_COMBO_CARD_IDS } from '../server/ai/comboKnowledge';
 import { ServerGameService } from '../server/ServerGameService';
 import dikaiCardScript from '../src/scripts/102050432';
@@ -663,10 +666,25 @@ async function testHardAiChoosesConfrontationFieldEffect(): Promise<ScenarioResu
 
   const candidates = ServerGameService.getBotActivatableEffectCandidates(state, 'BOT');
   const used = await ServerGameService.tryUseBotConfrontationAction(state, 'BOT', 18);
+  const activationLog = state.aiDecisionLogs?.find((log: any) =>
+    log.action === 'ACTIVATE_EFFECT' &&
+    log.playerUid === 'BOT' &&
+    log.details?.effectId === tempoEffect.id
+  );
+  const failureLog = state.aiDecisionLogs?.find((log: any) =>
+    log.action === 'ACTIVATE_EFFECT_FAILED' &&
+    log.playerUid === 'BOT' &&
+    log.details?.effectId === tempoEffect.id
+  );
   return assertScenario(
     'hard AI chooses useful field effect in confrontation',
-    candidates.length > 0 && candidates[0].effect.id === tempoEffect.id && candidates[0].score >= 18 && used && state.pendingQuery?.context?.sourceCardId === source.gamecardId,
-    `candidates=${candidates.length}, top=${candidates[0]?.effect.id}, score=${(candidates[0]?.score ?? 0).toFixed(1)}, used=${used}, query=${state.pendingQuery?.callbackKey}`
+    candidates.length > 0 &&
+      candidates[0].effect.id === tempoEffect.id &&
+      candidates[0].score >= 18 &&
+      used &&
+      !!activationLog &&
+      !failureLog,
+    `candidates=${candidates.length}, top=${candidates[0]?.effect.id}, score=${(candidates[0]?.score ?? 0).toFixed(1)}, used=${used}, activated=${!!activationLog}, failed=${!!failureLog}, query=${state.pendingQuery?.callbackKey}`
   );
 }
 
@@ -1352,17 +1370,17 @@ function testRedDikaiFixedOpeningHand(): ScenarioResult {
   const junkD = story({ id: 'RED_JUNK_D', fullName: 'Red Junk D', color: 'RED', cardlocation: 'HAND' });
   const captain = unit({ id: '102050432', fullName: 'Knight Captain Dikai', color: 'RED', cardlocation: 'DECK', godMark: true });
   const guard = unit({ id: '102050086', fullName: 'Royal Guard', color: 'RED', cardlocation: 'DECK' });
-  const celia = unit({ id: '102050427', fullName: 'Celia', color: 'RED', cardlocation: 'DECK' });
+  const patrol = unit({ id: '102050141', fullName: 'Railway Patrol', color: 'RED', cardlocation: 'DECK' });
   const scadi = story({ id: '302050013', fullName: 'Scadi', color: 'RED', type: 'ITEM', cardlocation: 'DECK', godMark: true });
   const state = game({
     hand: [junkA, junkB, junkC, junkD],
-    deck: [captain, guard, celia, scadi, ...deckCards(6, 'RED_FIXED_FILLER')],
+    deck: [captain, guard, patrol, scadi, ...deckCards(6, 'RED_FIXED_FILLER')],
     botDeckProfileId: 'red-dikai',
   });
 
   const result = applyOpeningHandSoftCompensation(state.players.BOT, profile);
   const openingIds = state.players.BOT.hand.map((card: any) => card.id);
-  const expected = ['102050432', '102050086', '102050427', '302050013'];
+  const expected = ['102050086', '102050141', '102050432', '302050013'];
   const returnedJunk = [junkA, junkB, junkC, junkD].every(card =>
     state.players.BOT.deck.some((deckCard: any) => deckCard.gamecardId === card.gamecardId)
   );
@@ -1374,6 +1392,169 @@ function testRedDikaiFixedOpeningHand(): ScenarioResult {
       openingIds.join(',') === expected.join(',') &&
       returnedJunk,
     `opening=${openingIds.join(',')}, fixed=${!!result.fixedOpening}, returnedJunk=${returnedJunk}`
+  );
+}
+
+function testRedDikaiHoldsRushUnitOnFirstTurn(): ScenarioResult {
+  const profile = getDeckAiProfile('red-dikai');
+  const rushUnit = unit({
+    id: '102050432',
+    fullName: 'Knight Captain Dikai',
+    color: 'RED',
+    cardlocation: 'HAND',
+    isrush: true,
+    godMark: true,
+    damage: 4,
+    power: 4000,
+    acValue: 1,
+    baseAcValue: 1,
+  });
+  const normalUnit = unit({
+    id: '102050086',
+    fullName: 'Royal Guard',
+    color: 'RED',
+    cardlocation: 'HAND',
+    isrush: false,
+    damage: 1,
+    power: 1500,
+    acValue: 1,
+    baseAcValue: 1,
+  });
+  const state = game(
+    {
+      isFirst: true,
+      hand: [rushUnit, normalUnit],
+      botDeckProfileId: 'red-dikai',
+    },
+    {},
+    { turnCount: 1, phase: 'MAIN' }
+  );
+
+  const rushScore = scorePlayableCard(state as any, state.players.BOT as any, rushUnit as any, profile);
+  const normalScore = scorePlayableCard(state as any, state.players.BOT as any, normalUnit as any, profile);
+  const chosen = choosePlayableCard(state as any, state.players.BOT as any, profile, 'hard', () => true);
+
+  return assertScenario(
+    'red dikai holds rush unit on first turn',
+    rushScore < 0 && chosen?.gamecardId === normalUnit.gamecardId,
+    `rush=${rushScore.toFixed(1)}, normal=${normalScore.toFixed(1)}, chosen=${chosen?.id || 'none'}`
+  );
+}
+
+function testRedScadiHeldUntilDikaiField(): ScenarioResult {
+  const profile = getDeckAiProfile('red-dikai');
+  const scadi = story({
+    id: '302050013',
+    fullName: 'Scadi',
+    color: 'RED',
+    type: 'ITEM',
+    cardlocation: 'HAND',
+    effects: [effect({ id: 'equip_universal', description: 'equip to one of your units' })],
+  });
+  const guard = unit({
+    id: '102050086',
+    fullName: 'Royal Guard',
+    color: 'RED',
+    cardlocation: 'HAND',
+    damage: 1,
+    power: 1500,
+    acValue: 1,
+    baseAcValue: 1,
+  });
+  const dikai = unit({
+    id: '102050432',
+    fullName: 'Knight Captain Dikai',
+    color: 'RED',
+    cardlocation: 'HAND',
+    isrush: true,
+    godMark: true,
+    damage: 4,
+    power: 4000,
+    acValue: 5,
+    baseAcValue: 5,
+  });
+  const state = game(
+    { hand: [scadi, guard, dikai], botDeckProfileId: 'red-dikai' },
+    {},
+    { turnCount: 2, phase: 'MAIN' }
+  );
+
+  const scadiScore = scorePlayableCard(state as any, state.players.BOT as any, scadi as any, profile);
+  const chosen = choosePlayableCard(state as any, state.players.BOT as any, profile, 'hard', () => true);
+
+  return assertScenario(
+    'red scadi is held until dikai is on field',
+    scadiScore < 0 && chosen?.gamecardId !== scadi.gamecardId,
+    `scadi=${scadiScore.toFixed(1)}, chosen=${chosen?.id || 'none'}`
+  );
+}
+
+function testRedScadiEquipTargetsDikai(): ScenarioResult {
+  const profile = getDeckAiProfile('red-dikai');
+  const scadiEquip = effect({ id: 'equip_universal', description: 'equip to one of your units' });
+  const scadi = story({
+    id: '302050013',
+    fullName: 'Scadi',
+    color: 'RED',
+    type: 'ITEM',
+    cardlocation: 'ITEM',
+    effects: [scadiEquip],
+  });
+  const dikai = unit({ id: '102050432', fullName: 'Knight Captain Dikai', color: 'RED', damage: 4, power: 4000, godMark: true });
+  const guard = unit({ id: '102050086', fullName: 'Royal Guard', color: 'RED', damage: 1, power: 1500 });
+  const state = game(
+    { itemZone: [scadi], unitZone: [guard, dikai, null, null, null, null], botDeckProfileId: 'red-dikai' },
+    {}
+  );
+  const query = {
+    type: 'SELECT_CARD',
+    options: [
+      { card: guard, source: 'UNIT', isMine: true },
+      { card: dikai, source: 'UNIT', isMine: true },
+    ],
+    minSelections: 1,
+    maxSelections: 1,
+    context: { sourceCardId: scadi.gamecardId, effectId: 'equip_universal' },
+  };
+
+  const selected = chooseQuerySelections(state, 'BOT', query as any, profile, 'hard');
+  return assertScenario(
+    'red scadi equip targets dikai',
+    selected[0] === dikai.gamecardId,
+    `selected=${selected[0]}, dikai=${dikai.gamecardId}`
+  );
+}
+
+function testRedScadiStaysEquippedToDikai(): ScenarioResult {
+  const profile = getDeckAiProfile('red-dikai');
+  const scadiEquip = effect({ id: 'equip_universal', description: 'equip to one of your units' });
+  const dikai = unit({ id: '102050432', fullName: 'Knight Captain Dikai', color: 'RED', damage: 4, power: 4000, godMark: true });
+  const scadi = story({
+    id: '302050013',
+    fullName: 'Scadi',
+    color: 'RED',
+    type: 'ITEM',
+    cardlocation: 'ITEM',
+    equipTargetId: dikai.gamecardId,
+    effects: [scadiEquip],
+  });
+  const state = game(
+    { itemZone: [scadi], unitZone: [dikai, null, null, null, null, null], botDeckProfileId: 'red-dikai' },
+    {}
+  );
+  const scored = scoreActivatableEffect(
+    state as any,
+    state.players.BOT as any,
+    scadi as any,
+    scadiEquip as any,
+    profile,
+    { targetCount: 1, hasTargetSpec: true }
+  );
+
+  return assertScenario(
+    'red scadi stays equipped to dikai',
+    scored.score < 0,
+    `score=${scored.score.toFixed(1)}, notes=${scored.notes.join('|')}`
   );
 }
 
@@ -1410,6 +1591,87 @@ function testBlueAdventurerFixedOpeningHand(): ScenarioResult {
   );
 }
 
+function testBlueGuildChoosesExhaustOptionForBlocker(): ScenarioResult {
+  const profile = getDeckAiProfile('blue-adventurer');
+  const entering = unit({
+    id: '104030451',
+    fullName: 'Xiaoting',
+    color: 'BLUE',
+    power: 1000,
+    damage: 1,
+    playedTurn: 5,
+  });
+  const blocker = unit({
+    id: 'BLUE_GUILD_BLOCKER',
+    fullName: 'Guild Exhaust Blocker',
+    color: 'RED',
+    power: 3500,
+    damage: 2,
+    isExhausted: false,
+  });
+  const state = game(
+    { unitZone: [entering, null, null, null, null, null], botDeckProfileId: 'blue-adventurer' },
+    { unitZone: [blocker, null, null, null, null, null] },
+    { phase: 'MAIN' }
+  );
+  const query = {
+    type: 'SELECT_CHOICE',
+    options: [
+      { id: 'OPTION_A', label: 'buff entering unit' },
+      { id: 'OPTION_B', label: 'exhaust opponent unit' },
+      { id: 'OPTION_C', label: 'recycle guild card' },
+    ],
+    minSelections: 1,
+    maxSelections: 1,
+    callbackKey: 'EFFECT_RESOLVE',
+    context: {
+      sourceCardId: 'BLUE_GUILD_ITEM',
+      effectId: '304030075_trigger',
+      enteringCardId: entering.gamecardId,
+      step: 'RESOLVE_OPTION',
+    },
+  };
+
+  const selected = chooseQuerySelections(state as any, 'BOT', query as any, profile, 'hard');
+  return assertScenario(
+    'blue guild chooses exhaust option for blocker',
+    selected[0] === 'OPTION_B',
+    `selected=${selected.join(',')}`
+  );
+}
+
+function testBlueGuildExhaustTargetsHighestThreat(): ScenarioResult {
+  const profile = getDeckAiProfile('blue-adventurer');
+  const low = unit({ id: 'BLUE_GUILD_LOW_TARGET', fullName: 'Low Guild Target', color: 'RED', power: 1000, damage: 1 });
+  const high = unit({ id: 'BLUE_GUILD_HIGH_TARGET', fullName: 'High Guild Target', color: 'RED', power: 4000, damage: 3 });
+  const state = game(
+    { botDeckProfileId: 'blue-adventurer' },
+    { unitZone: [low, high, null, null, null, null] }
+  );
+  const query = {
+    type: 'SELECT_CARD',
+    options: [
+      { card: low, source: 'UNIT', isMine: false },
+      { card: high, source: 'UNIT', isMine: false },
+    ],
+    minSelections: 1,
+    maxSelections: 1,
+    callbackKey: 'EFFECT_RESOLVE',
+    context: {
+      sourceCardId: 'BLUE_GUILD_ITEM',
+      effectId: '304030075_trigger',
+      step: 'FINALIZE_EXHAUST',
+    },
+  };
+
+  const selected = chooseQuerySelections(state as any, 'BOT', query as any, profile, 'hard');
+  return assertScenario(
+    'blue guild exhaust targets highest threat',
+    selected[0] === high.gamecardId,
+    `selected=${selected[0]}, high=${high.gamecardId}`
+  );
+}
+
 function testBigSalalaFixedOpeningHand(): ScenarioResult {
   const profile = getDeckAiProfile('big-salala');
   const junkA = story({ id: 'BIG_SALALA_JUNK_A', fullName: 'Big Salala Junk A', color: 'GREEN', cardlocation: 'HAND' });
@@ -1440,6 +1702,76 @@ function testBigSalalaFixedOpeningHand(): ScenarioResult {
       openingIds.join(',') === expected.join(',') &&
       returnedJunk,
     `opening=${openingIds.join(',')}, fixed=${!!result.fixedOpening}, returnedJunk=${returnedJunk}`
+  );
+}
+
+function testBigSalalaWarSongEquipsSalala(): ScenarioResult {
+  const profile = getDeckAiProfile('big-salala');
+  const equipEffect = effect({ id: 'equip_universal', description: 'equip to one of your units' });
+  const warSong = story({
+    id: '301000016',
+    fullName: 'War Song Blessing',
+    color: 'WHITE',
+    type: 'ITEM',
+    cardlocation: 'ITEM',
+    effects: [equipEffect],
+  });
+  const salala = unit({ id: '103000426', fullName: 'Big Salala', color: 'GREEN', power: 4000, damage: 3, godMark: true });
+  const repairer = unit({ id: '103090253', fullName: 'Windmill Repairer', color: 'GREEN', power: 2000, damage: 1 });
+  const state = game(
+    { itemZone: [warSong], unitZone: [repairer, salala, null, null, null, null], botDeckProfileId: 'big-salala' },
+    {}
+  );
+  const query = {
+    type: 'SELECT_CARD',
+    options: [
+      { card: repairer, source: 'UNIT', isMine: true },
+      { card: salala, source: 'UNIT', isMine: true },
+    ],
+    minSelections: 1,
+    maxSelections: 1,
+    context: { sourceCardId: warSong.gamecardId, effectId: 'equip_universal' },
+  };
+
+  const selected = chooseQuerySelections(state as any, 'BOT', query as any, profile, 'hard');
+  return assertScenario(
+    'big salala war song equips salala',
+    selected[0] === salala.gamecardId,
+    `selected=${selected[0]}, salala=${salala.gamecardId}`
+  );
+}
+
+function testBigSalalaWarSongStaysEquipped(): ScenarioResult {
+  const profile = getDeckAiProfile('big-salala');
+  const equipEffect = effect({ id: 'equip_universal', description: 'equip to one of your units' });
+  const salala = unit({ id: '103000426', fullName: 'Big Salala', color: 'GREEN', power: 4000, damage: 3, godMark: true });
+  const warSong = story({
+    id: '301000016',
+    fullName: 'War Song Blessing',
+    color: 'WHITE',
+    type: 'ITEM',
+    cardlocation: 'ITEM',
+    equipTargetId: salala.gamecardId,
+    effects: [equipEffect],
+  });
+  const state = game(
+    { itemZone: [warSong], unitZone: [salala, null, null, null, null, null], botDeckProfileId: 'big-salala' },
+    {}
+  );
+
+  const scored = scoreActivatableEffect(
+    state as any,
+    state.players.BOT as any,
+    warSong as any,
+    equipEffect as any,
+    profile,
+    { targetCount: 1, hasTargetSpec: true }
+  );
+
+  return assertScenario(
+    'big salala war song stays equipped',
+    scored.score < 0,
+    `score=${scored.score.toFixed(1)}, notes=${scored.notes.join('|')}`
   );
 }
 
@@ -1906,6 +2238,114 @@ function testBotDoesNotAlwaysSpendFeijing(): ScenarioResult {
   );
 }
 
+function testOpeningFirstPlayerPaymentUsesUnitAgainstNonAggro(): ScenarioResult {
+  const profile = getDeckAiProfile('white-temple');
+  const payer = unit({
+    id: 'OPENING_PAYMENT_UNIT',
+    fullName: 'Opening Payment Unit',
+    color: 'WHITE',
+    power: 1000,
+    damage: 1,
+    playedTurn: 1,
+  });
+  const sourceCard = story({
+    id: 'OPENING_PAYMENT_SOURCE',
+    fullName: 'Opening Payment Source',
+    color: 'WHITE',
+    acValue: 1,
+    baseAcValue: 1,
+  });
+  const state = game(
+    {
+      isFirst: true,
+      hand: [sourceCard],
+      unitZone: [payer, null, null, null, null, null],
+      deck: deckCards(20, 'BOT_OPENING_PAY_NON_AGGRO'),
+      botDifficulty: 'hard',
+      botDeckProfileId: profile.id,
+    },
+    {
+      botDeckProfileId: 'white-temple',
+      deck: deckCards(20, 'P1_OPENING_PAY_NON_AGGRO'),
+    },
+    {
+      turnCount: 1,
+      phase: 'MAIN',
+      currentTurnPlayer: 0,
+      botDifficulty: 'hard',
+      botDeckProfiles: { BOT: profile.id, P1: 'white-temple' },
+    }
+  );
+  const payment = ServerGameService.buildBotPaymentSelectionForPlayer(state, 'BOT', {
+    paymentCost: 1,
+    paymentColor: 'WHITE',
+    context: {
+      cardId: sourceCard.gamecardId,
+      sourceCardId: sourceCard.gamecardId,
+      paymentTargetId: sourceCard.gamecardId,
+    },
+  }) as any;
+  return assertScenario(
+    'opening first-player payment uses unit against non-aggro',
+    (payment.exhaustUnitIds || []).includes(payer.gamecardId),
+    `payment=${JSON.stringify(payment)}`
+  );
+}
+
+function testOpeningFirstPlayerPaymentStillRespectsAggro(): ScenarioResult {
+  const profile = getDeckAiProfile('white-temple');
+  const payer = unit({
+    id: 'OPENING_PAYMENT_AGGRO_UNIT',
+    fullName: 'Opening Payment Aggro Unit',
+    color: 'WHITE',
+    power: 1000,
+    damage: 1,
+    playedTurn: 1,
+  });
+  const sourceCard = story({
+    id: 'OPENING_PAYMENT_AGGRO_SOURCE',
+    fullName: 'Opening Payment Aggro Source',
+    color: 'WHITE',
+    acValue: 1,
+    baseAcValue: 1,
+  });
+  const state = game(
+    {
+      isFirst: true,
+      hand: [sourceCard],
+      unitZone: [payer, null, null, null, null, null],
+      deck: deckCards(20, 'BOT_OPENING_PAY_AGGRO'),
+      botDifficulty: 'hard',
+      botDeckProfileId: profile.id,
+    },
+    {
+      botDeckProfileId: 'red-dikai',
+      deck: deckCards(20, 'P1_OPENING_PAY_AGGRO'),
+    },
+    {
+      turnCount: 1,
+      phase: 'MAIN',
+      currentTurnPlayer: 0,
+      botDifficulty: 'hard',
+      botDeckProfiles: { BOT: profile.id, P1: 'red-dikai' },
+    }
+  );
+  const payment = ServerGameService.buildBotPaymentSelectionForPlayer(state, 'BOT', {
+    paymentCost: 1,
+    paymentColor: 'WHITE',
+    context: {
+      cardId: sourceCard.gamecardId,
+      sourceCardId: sourceCard.gamecardId,
+      paymentTargetId: sourceCard.gamecardId,
+    },
+  }) as any;
+  return assertScenario(
+    'opening first-player payment still respects aggro',
+    !(payment.exhaustUnitIds || []).includes(payer.gamecardId),
+    `payment=${JSON.stringify(payment)}`
+  );
+}
+
 function testPaymentProtectsGodMark(): ScenarioResult {
   const profile = getDeckAiProfile('white-temple');
   const god = unit({ id: 'PAY_GOD', fullName: 'Pay God', godMark: true, power: 5000, damage: 2 });
@@ -2263,6 +2703,41 @@ function testActiveHardAiDeckProfileList(): ScenarioResult {
   );
 }
 
+async function testHardAiProfilesOpponentFromHiddenDeckAndHand(): Promise<ScenarioResult> {
+  const whiteProfile = getDeckAiProfile('white-temple');
+  const redProfile = getDeckAiProfile('red-dikai');
+  await initServerCardLibrary();
+  const catalogRefs = Object.keys(SERVER_CARD_LIBRARY).filter(ref => ref.includes(':')).sort();
+  const redRefs = decodeDeckShareCode(redProfile.shareCode || '', catalogRefs);
+  const redCards = redRefs.map((ref, index) => ({
+    ...SERVER_CARD_LIBRARY[ref],
+    uniqueId: ref,
+    gamecardId: `HIDDEN_RED_${index}`,
+    cardlocation: index < 4 ? 'HAND' : 'DECK',
+  }));
+  const state = game(
+    {
+      unitZone: [unit({ id: 'WHITE_SCOUT', color: 'WHITE', damage: 1, playedTurn: 1 }), null, null, null, null, null],
+      botDeckProfileId: whiteProfile.id,
+    },
+    {
+      hand: redCards.slice(0, 4),
+      deck: redCards.slice(4),
+    },
+    { botDeckProfiles: { BOT: whiteProfile.id }, turnCount: 2 }
+  );
+
+  const opponentProfile = inferPlayerDeckProfile(state, 'P1');
+  const plan = buildTurnPlan(state, state.players.BOT, whiteProfile);
+  return assertScenario(
+    'hard AI profiles opponent from hidden deck and hand',
+    opponentProfile?.knownProfileId === 'red-dikai' &&
+      plan.opponentProfileId === 'red-dikai' &&
+      plan.notes.some(note => note === 'matchup=red-dikai'),
+    `known=${opponentProfile?.knownProfileId || 'none'}, planOpponent=${plan.opponentProfileId || 'none'}, notes=${plan.notes.join('|')}`
+  );
+}
+
 async function testBigSalalaShareCodeDeckIsValid(): Promise<ScenarioResult> {
   const profile = getDeckAiProfile('big-salala');
   await initServerCardLibrary();
@@ -2392,6 +2867,145 @@ async function testClosingPlanCommitsAfterOnePrecombatPlay(): Promise<ScenarioRe
   );
 }
 
+async function testHardAiPlaysTargetedStoryOnlyOnce(): Promise<ScenarioResult> {
+  const profile = getDeckAiProfile('white-temple');
+  const targetEffect = effect({
+    id: 'targeted_story_effect',
+    type: 'ALWAYS',
+    description: 'destroy target opponent unit',
+    content: 'DESTROY TARGET OPPONENT UNIT',
+    targetSpec: {
+      title: 'choose opponent unit',
+      description: 'choose opponent unit',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'OPPONENT',
+    },
+  });
+  const targetedStory = story({
+    id: 'TARGETED_STORY',
+    fullName: 'Targeted Story',
+    color: 'WHITE',
+    acValue: 1,
+    baseAcValue: 1,
+    effects: [targetEffect],
+  });
+  const threat = unit({ id: 'TARGETED_STORY_THREAT', fullName: 'Targeted Story Threat', color: 'RED', damage: 2, power: 3500 });
+  const state = game(
+    {
+      hand: [targetedStory],
+      unitZone: [unit({ id: 'WHITE_COLOR_SOURCE', color: 'WHITE', damage: 1, playedTurn: 1 }), null, null, null, null, null],
+      botDifficulty: 'hard',
+      botDeckProfileId: profile.id,
+    },
+    { unitZone: [threat, null, null, null, null, null] },
+    {
+      turnCount: 3,
+      botDifficulty: 'hard',
+      botDeckProfiles: { BOT: profile.id },
+    }
+  );
+
+  await ServerGameService.botMoveForPlayer(state, 'BOT');
+  const failure = state.aiDecisionLogs?.find((log: any) =>
+    log.action === 'PLAY_CARD_FAILED' &&
+    log.subject === 'Targeted Story'
+  );
+  const playLog = state.aiDecisionLogs?.find((log: any) =>
+    log.action === 'PLAY_CARD' &&
+    log.subject === 'Targeted Story'
+  );
+  const inPlayZone = state.players.BOT.playZone.some((card: any) => card.gamecardId === targetedStory.gamecardId);
+  const stillInHand = state.players.BOT.hand.some((card: any) => card.gamecardId === targetedStory.gamecardId);
+  const paymentQuery = state.pendingQuery?.type === 'SELECT_PAYMENT';
+
+  return assertScenario(
+    'hard AI plays paid targeted story once with declared target',
+    !failure && !!playLog && inPlayZone && !stillInHand && !paymentQuery,
+    `failed=${failure?.details?.error || 'none'}, played=${!!playLog}, inPlay=${inPlayZone}, stillInHand=${stillInHand}, paymentQuery=${paymentQuery}, hand=${state.players.BOT.hand.length}, playZone=${state.players.BOT.playZone.length}`
+  );
+}
+
+function testBigSalalaMillWaitsForDeckPressure(): ScenarioResult {
+  const profile = getDeckAiProfile('big-salala');
+  const millEffect = effect({
+    id: '103000426_mill_three',
+    type: 'ACTIVATE',
+    description: 'main phase: mill opponent deck top 3',
+    content: 'mill opponent deck top 3',
+  });
+  const earlySource = unit({
+    id: '103000426',
+    fullName: 'Salala',
+    color: 'GREEN',
+    godMark: true,
+    damage: 3,
+    power: 4000,
+    acValue: 5,
+    baseAcValue: 5,
+    effects: [millEffect],
+  });
+  const lateSource = unit({
+    id: '103000426',
+    fullName: 'Salala',
+    color: 'GREEN',
+    godMark: true,
+    damage: 3,
+    power: 4000,
+    acValue: 5,
+    baseAcValue: 5,
+    effects: [millEffect],
+  });
+  const salalaDeckCopies = [
+    unit({ id: '103000426', fullName: 'Salala Deck Copy A', cardlocation: 'DECK', color: 'GREEN', godMark: true }),
+    unit({ id: '103000426', fullName: 'Salala Deck Copy B', cardlocation: 'DECK', color: 'GREEN', godMark: true }),
+  ];
+  const earlyState = game(
+    {
+      unitZone: [earlySource, null, null, null, null, null],
+      deck: [...salalaDeckCopies, ...deckCards(20, 'BOT_SALALA_EARLY')],
+      botDeckProfileId: profile.id,
+    },
+    { deck: deckCards(18, 'P1_SALALA_EARLY') },
+    { botDeckProfiles: { BOT: profile.id }, turnCount: 3 }
+  );
+  const lateState = game(
+    {
+      unitZone: [lateSource, null, null, null, null, null],
+      hand: [unit({ id: '103000426', fullName: 'Salala Hand Copy', color: 'GREEN', godMark: true })],
+      grave: [unit({ id: '103000426', fullName: 'Salala Grave Copy', cardlocation: 'GRAVE', color: 'GREEN', godMark: true })],
+      deck: deckCards(14, 'BOT_SALALA_LATE'),
+      botDeckProfileId: profile.id,
+    },
+    { deck: deckCards(3, 'P1_SALALA_LATE') },
+    { botDeckProfiles: { BOT: profile.id }, turnCount: 7 }
+  );
+
+  const earlyScore = scoreActivatableEffect(
+    earlyState,
+    earlyState.players.BOT,
+    earlySource as any,
+    millEffect as any,
+    profile,
+    {}
+  );
+  const lateScore = scoreActivatableEffect(
+    lateState,
+    lateState.players.BOT,
+    lateSource as any,
+    millEffect as any,
+    profile,
+    {}
+  );
+
+  return assertScenario(
+    'big salala mill waits for deck pressure',
+    earlyScore.score < 18 && lateScore.score >= 18,
+    `early=${earlyScore.score.toFixed(1)} notes=${earlyScore.notes.join('|')} late=${lateScore.score.toFixed(1)} notes=${lateScore.notes.join('|')}`
+  );
+}
+
 function testRedDikaiCommitsNearKillPressure(): ScenarioResult {
   const profile = getDeckAiProfile('red-dikai');
   const dikaiA = unit({ id: 'RED_ROUTE_A', color: 'RED', damage: 2, power: 2500, playedTurn: 1 });
@@ -2406,6 +3020,50 @@ function testRedDikaiCommitsNearKillPressure(): ScenarioResult {
     'red dikai route commits attackers in near-kill window',
     plan.attackBeforeDeveloping && plan.reserveDefenders === 0 && hasRouteNote,
     `attackBefore=${plan.attackBeforeDeveloping}, reserve=${plan.reserveDefenders}, notes=${plan.notes.join('|')}`
+  );
+}
+
+function testRedPursuitUsesAllianceAttackForTrigger(): ScenarioResult {
+  const profile = getDeckAiProfile('red-dikai');
+  const pursuit = unit({
+    id: '102050085',
+    fullName: 'Pursuit Troop',
+    color: 'RED',
+    damage: 1,
+    power: 500,
+    isrush: true,
+    playedTurn: 3,
+  });
+  const partner = unit({
+    id: '102050086',
+    fullName: 'Royal Guard',
+    color: 'RED',
+    damage: 1,
+    power: 2000,
+    playedTurn: 1,
+  });
+  const defender = unit({
+    id: 'P1_PURSUIT_BLOCKER',
+    fullName: 'Pursuit Blocker',
+    color: 'WHITE',
+    damage: 1,
+    power: 1500,
+    playedTurn: 1,
+  });
+  const state = game(
+    { unitZone: [pursuit, partner, null, null, null, null], botDeckProfileId: 'red-dikai' },
+    { unitZone: [defender, null, null, null, null, null] },
+    { phase: 'BATTLE_DECLARATION', turnCount: 3 }
+  );
+  const attackCandidates = state.players.BOT.unitZone.filter(unit => canUnitAttack(state, unit)) as any[];
+  const plan = getComboAllianceAttack(state as any, state.players.BOT as any, profile, attackCandidates);
+
+  return assertScenario(
+    'red pursuit uses alliance attack for trigger',
+    !!plan &&
+      plan.comboId === 'red-pursuit-alliance-damage' &&
+      plan.attackers.some(card => card.gamecardId === pursuit.gamecardId),
+    plan ? `combo=${plan.comboId}, attackers=${plan.attackers.map(card => card.id).join(',')}, score=${plan.score.toFixed(1)}` : 'no alliance plan'
   );
 }
 
@@ -2708,6 +3366,74 @@ function testLowAttackHeldIntoStrongerReadyDefender(): ScenarioResult {
   );
 }
 
+function testGoddessModeDoesNotCreateFalseErosionAttackPressure(): ScenarioResult {
+  const profile = getDeckAiProfile('red-dikai');
+  const lowAttacker = unit({
+    id: 'RED_LOW_GODDESS_ATTACKER',
+    fullName: 'Red Low Goddess Attacker',
+    color: 'RED',
+    damage: 1,
+    power: 500,
+    playedTurn: 1,
+  });
+  const strongDefender = unit({
+    id: 'GODDESS_READY_DEFENDER',
+    fullName: 'Goddess Ready Defender',
+    color: 'WHITE',
+    damage: 3,
+    power: 8000,
+    playedTurn: 1,
+  });
+  const state = game(
+    { unitZone: [lowAttacker, null, null, null, null, null] },
+    {
+      unitZone: [strongDefender, null, null, null, null, null],
+      deck: deckCards(20, 'P1_GODDESS_SAFE_DECK'),
+      erosionBack: erosionCards(10, 'P1_GODDESS_EROSION'),
+      isGoddessMode: true,
+    },
+    { phase: 'BATTLE_DECLARATION' }
+  );
+
+  const score = scoreAttackCandidate(state, state.players.BOT, lowAttacker as any, profile);
+  const chosen = chooseAttacker(state, state.players.BOT, profile);
+  return assertScenario(
+    'goddess mode does not create false erosion attack pressure',
+    score < 0 && !chosen,
+    `score=${score.toFixed(1)}, chosen=${chosen ? chosen.fullName : 'none'}`
+  );
+}
+
+function testGoddessModeDeckLethalStillAttacks(): ScenarioResult {
+  const profile = getDeckAiProfile('red-dikai');
+  const attacker = unit({
+    id: 'RED_GODDESS_DECK_LETHAL',
+    fullName: 'Red Goddess Deck Lethal',
+    color: 'RED',
+    damage: 2,
+    power: 2500,
+    playedTurn: 1,
+  });
+  const state = game(
+    { unitZone: [attacker, null, null, null, null, null] },
+    {
+      unitZone: [null, null, null, null, null, null],
+      deck: deckCards(3, 'P1_GODDESS_LOW_DECK'),
+      erosionBack: erosionCards(10, 'P1_GODDESS_LOW_EROSION'),
+      isGoddessMode: true,
+    },
+    { phase: 'BATTLE_DECLARATION' }
+  );
+
+  const chosen = chooseAttacker(state, state.players.BOT, profile);
+  const score = scoreAttackCandidate(state, state.players.BOT, attacker as any, profile);
+  return assertScenario(
+    'goddess mode deck lethal still attacks',
+    chosen?.gamecardId === attacker.gamecardId && score > 0,
+    `score=${score.toFixed(1)}, chosen=${chosen ? chosen.fullName : 'none'}`
+  );
+}
+
 function testExpendableBaitAttackAllowedForClosingPressure(): ScenarioResult {
   const profile = getDeckAiProfile('red-dikai');
   const baitAttacker = unit({
@@ -2749,6 +3475,73 @@ function testExpendableBaitAttackAllowedForClosingPressure(): ScenarioResult {
     'expendable bait attack is allowed when it opens closing pressure',
     score > 0,
     `score=${score.toFixed(1)}`
+  );
+}
+
+function testAllianceMarkedUnitIsNotNormalAttackCandidate(): ScenarioResult {
+  const profile = getDeckAiProfile('white-temple');
+  const tiger = unit({
+    id: '101000501',
+    fullName: 'White Tiger',
+    color: 'WHITE',
+    damage: 3,
+    power: 3500,
+    playedTurn: 1,
+    inAllianceGroup: true,
+  });
+  const partner = unit({
+    id: 'WHITE_READY_PARTNER',
+    fullName: 'Ready Partner',
+    color: 'WHITE',
+    damage: 1,
+    power: 1500,
+    playedTurn: 1,
+  });
+  const state = game(
+    { unitZone: [tiger, partner, null, null, null, null], botDeckProfileId: 'white-temple' },
+    { deck: deckCards(20, 'P1_ALLIANCE_MARKER') },
+    { phase: 'BATTLE_DECLARATION' }
+  );
+
+  const tigerCanAttack = canUnitAttack(state, tiger as any);
+  const chosen = chooseAttacker(state, state.players.BOT, profile);
+  return assertScenario(
+    'alliance-marked unit is not chosen for normal attack',
+    !tigerCanAttack && chosen?.gamecardId === partner.gamecardId,
+    `tigerCanAttack=${tigerCanAttack}, chosen=${chosen?.id || 'none'}`
+  );
+}
+
+function testBattleCleanupClearsAllianceMarkersAcrossZones(): ScenarioResult {
+  const tiger = unit({
+    id: '101000501',
+    fullName: 'White Tiger',
+    color: 'WHITE',
+    damage: 3,
+    power: 3500,
+    playedTurn: 1,
+    inAllianceGroup: true,
+  });
+  const exiledPartner = unit({
+    id: 'WHITE_EXILED_ALLIANCE_PARTNER',
+    fullName: 'Exiled Alliance Partner',
+    color: 'WHITE',
+    damage: 1,
+    power: 1500,
+    cardlocation: 'EXILE',
+    inAllianceGroup: true,
+  });
+  const state = game({
+    unitZone: [tiger, null, null, null, null, null],
+    exile: [exiledPartner],
+    botDeckProfileId: 'white-temple',
+  });
+
+  ServerGameService.clearAllianceAttackMarkers(state as any, [tiger.gamecardId, exiledPartner.gamecardId]);
+  return assertScenario(
+    'battle cleanup clears alliance markers across zones',
+    !(tiger as any).inAllianceGroup && !(exiledPartner as any).inAllianceGroup,
+    `field=${!!(tiger as any).inAllianceGroup}, exile=${!!(exiledPartner as any).inAllianceGroup}`
   );
 }
 
@@ -3048,6 +3841,163 @@ function testRedDuelKeepsCommander(): ScenarioResult {
   );
 }
 
+function testDikaiDeclinesLowValueUnitTarget(): ScenarioResult {
+  const profile = getDeckAiProfile('red-dikai');
+  const dikai = unit({
+    id: '102050432',
+    color: 'RED',
+    fullName: 'Knight Captain Dikai',
+    power: 4000,
+    damage: 4,
+    godMark: true,
+    playedTurn: 1,
+    data: { canAttackAnyUnit: true },
+  });
+  const lowTarget = unit({
+    id: 'P1_LOW_DIKAI_TARGET',
+    color: 'WHITE',
+    fullName: 'Low Exhausted Target',
+    power: 1000,
+    damage: 1,
+    isExhausted: true,
+  });
+  const state = game(
+    { unitZone: [dikai, null, null, null, null, null], botDeckProfileId: 'red-dikai' },
+    { unitZone: [lowTarget, null, null, null, null, null], deck: deckCards(20, 'P1_DIKAI_LOW_TARGET') },
+    { phase: 'BATTLE_DECLARATION' }
+  );
+  const query = {
+    type: 'SELECT_CHOICE',
+    options: [
+      { id: 'YES', label: 'attack unit' },
+      { id: 'NO', label: 'attack player' },
+    ],
+    minSelections: 1,
+    maxSelections: 1,
+    callbackKey: 'DIKAI_ATTACK_TARGET_CHOICE',
+    context: { attackerIds: [dikai.gamecardId], isAlliance: false, targetMode: 'ANY', sourceCardId: dikai.gamecardId },
+  };
+  const selected = chooseQuerySelections(state, 'BOT', query as any, profile, 'hard');
+  return assertScenario(
+    'dikai declines low-value unit target',
+    selected[0] === 'NO',
+    `selected=${selected[0]}`
+  );
+}
+
+function testDikaiPrioritizesHighValueUnitTarget(): ScenarioResult {
+  const profile = getDeckAiProfile('red-dikai');
+  const dikai = unit({
+    id: '102050432',
+    color: 'RED',
+    fullName: 'Knight Captain Dikai',
+    power: 4500,
+    damage: 4,
+    godMark: true,
+    playedTurn: 1,
+    data: { canAttackAnyUnit: true },
+  });
+  const lowTarget = unit({
+    id: 'P1_LOW_DIKAI_SELECT',
+    color: 'WHITE',
+    fullName: 'Low Dikai Select',
+    power: 1000,
+    damage: 1,
+    isExhausted: true,
+  });
+  const highTarget = unit({
+    id: 'P1_HIGH_DIKAI_SELECT',
+    color: 'WHITE',
+    fullName: 'High Dikai Select',
+    power: 3000,
+    damage: 3,
+    godMark: true,
+  });
+  const state = game(
+    { unitZone: [dikai, null, null, null, null, null], botDeckProfileId: 'red-dikai' },
+    { unitZone: [lowTarget, highTarget, null, null, null, null], deck: deckCards(20, 'P1_DIKAI_HIGH_TARGET') },
+    { phase: 'BATTLE_DECLARATION' }
+  );
+  const choiceQuery = {
+    type: 'SELECT_CHOICE',
+    options: [
+      { id: 'YES', label: 'attack unit' },
+      { id: 'NO', label: 'attack player' },
+    ],
+    minSelections: 1,
+    maxSelections: 1,
+    callbackKey: 'DIKAI_ATTACK_TARGET_CHOICE',
+    context: { attackerIds: [dikai.gamecardId], isAlliance: false, targetMode: 'ANY', sourceCardId: dikai.gamecardId },
+  };
+  const targetQuery = {
+    type: 'SELECT_CARD',
+    options: [
+      { card: lowTarget, source: 'UNIT', isMine: false },
+      { card: highTarget, source: 'UNIT', isMine: false },
+    ],
+    minSelections: 1,
+    maxSelections: 1,
+    callbackKey: 'DIKAI_ATTACK_TARGET_SELECT',
+    context: { attackerIds: [dikai.gamecardId], isAlliance: false, targetMode: 'ANY', sourceCardId: dikai.gamecardId },
+  };
+  const choice = chooseQuerySelections(state, 'BOT', choiceQuery as any, profile, 'hard');
+  const selected = chooseQuerySelections(state, 'BOT', targetQuery as any, profile, 'hard');
+  return assertScenario(
+    'dikai prioritizes high-value unit target',
+    choice[0] === 'YES' && selected[0] === highTarget.gamecardId,
+    `choice=${choice[0]}, selected=${selected[0]}`
+  );
+}
+
+function testDikaiPrefersDirectDamageWhenOpponentCannotDefend(): ScenarioResult {
+  const profile = getDeckAiProfile('red-dikai');
+  const dikai = unit({
+    id: '102050432',
+    color: 'RED',
+    fullName: 'Knight Captain Dikai',
+    power: 4500,
+    damage: 4,
+    godMark: true,
+    playedTurn: 1,
+    data: { canAttackAnyUnit: true },
+  });
+  const highTarget = unit({
+    id: 'P1_HIGH_CANNOT_DEFEND_DIKAI',
+    color: 'WHITE',
+    fullName: 'High Cannot Defend Target',
+    power: 3000,
+    damage: 3,
+    godMark: true,
+    data: { cannotDefendTurn: 5 },
+  });
+  const state = game(
+    { unitZone: [dikai, null, null, null, null, null], botDeckProfileId: 'red-dikai' },
+    {
+      unitZone: [highTarget, null, null, null, null, null],
+      erosionBack: erosionCards(8, 'P1_DIKAI_DIRECT_DAMAGE'),
+      deck: deckCards(20, 'P1_DIKAI_DIRECT_DECK'),
+    },
+    { phase: 'BATTLE_DECLARATION', turnCount: 5 }
+  );
+  const choiceQuery = {
+    type: 'SELECT_CHOICE',
+    options: [
+      { id: 'YES', label: 'attack unit' },
+      { id: 'NO', label: 'attack player' },
+    ],
+    minSelections: 1,
+    maxSelections: 1,
+    callbackKey: 'DIKAI_ATTACK_TARGET_CHOICE',
+    context: { attackerIds: [dikai.gamecardId], isAlliance: false, targetMode: 'ANY', sourceCardId: dikai.gamecardId },
+  };
+  const choice = chooseQuerySelections(state, 'BOT', choiceQuery as any, profile, 'hard');
+  return assertScenario(
+    'dikai prefers direct damage when opponent cannot defend',
+    choice[0] === 'NO',
+    `choice=${choice[0]}`
+  );
+}
+
 function testBlueSwapChoosesErosionPayoff(): ScenarioResult {
   const profile = getDeckAiProfile('blue-adventurer');
   const lowValue = unit({ id: 'BLUE_LOW_EROSION', color: 'BLUE', fullName: 'Low Erosion Unit', power: 500, damage: 0, cardlocation: 'EROSION_FRONT' });
@@ -3071,6 +4021,111 @@ function testBlueSwapChoosesErosionPayoff(): ScenarioResult {
     'blue swap chooses erosion payoff',
     selected[0] === batla.gamecardId,
     `selected=${selected[0]}`
+  );
+}
+
+function testBlueReceptionistHoldsEmptySwapBeforeAttack(): ScenarioResult {
+  const profile = getDeckAiProfile('blue-adventurer');
+  const swapEffect = effect({
+    id: 'dragon_wing_receptionist_activate',
+    description: 'summon swap play from erosion',
+  });
+  const receptionist = unit({
+    id: '104030451',
+    color: 'BLUE',
+    fullName: 'Dragon Wing Receptionist',
+    power: 1500,
+    damage: 1,
+    playedTurn: 1,
+    effects: [swapEffect],
+  });
+  const fieldUnit = unit({
+    id: 'BLUE_FIELD_LOW_SWAP',
+    color: 'BLUE',
+    fullName: 'Blue Field Low Swap',
+    power: 1000,
+    damage: 1,
+    playedTurn: 1,
+  });
+  const erosionUnit = unit({
+    id: 'BLUE_EROSION_LOW_SWAP',
+    color: 'BLUE',
+    fullName: 'Blue Erosion Low Swap',
+    power: 500,
+    damage: 0,
+    cardlocation: 'EROSION_FRONT',
+    displayState: 'FRONT_UPRIGHT',
+  });
+  const state = game(
+    {
+      unitZone: [receptionist, fieldUnit, null, null, null, null],
+      erosionFront: [erosionUnit],
+      botDeckProfileId: 'blue-adventurer',
+    },
+    { deck: deckCards(20, 'P1_BLUE_EMPTY_SWAP') }
+  );
+  const effectScore = scoreActivatableEffect(state, state.players.BOT, receptionist as any, swapEffect as any, profile, {
+    opponent: state.players.P1,
+    targetCount: 1,
+    hasTargetSpec: true,
+  });
+  const attacker = chooseAttacker(state, state.players.BOT, profile);
+  return assertScenario(
+    'blue receptionist holds empty swap before attack',
+    effectScore.score < 0 && !!attacker,
+    `effect=${effectScore.score.toFixed(1)}, attacker=${attacker ? attacker.fullName : 'none'}, notes=${effectScore.notes.join('|')}`
+  );
+}
+
+function testBlueReceptionistUsesHighValueErosionUpgrade(): ScenarioResult {
+  const profile = getDeckAiProfile('blue-adventurer');
+  const swapEffect = effect({
+    id: 'dragon_wing_receptionist_activate',
+    description: 'summon swap play from erosion',
+  });
+  const receptionist = unit({
+    id: '104030451',
+    color: 'BLUE',
+    fullName: 'Dragon Wing Receptionist',
+    power: 1500,
+    damage: 1,
+    playedTurn: 1,
+    effects: [swapEffect],
+  });
+  const fieldUnit = unit({
+    id: 'BLUE_FIELD_LOW_UPGRADE',
+    color: 'BLUE',
+    fullName: 'Blue Field Low Upgrade',
+    power: 500,
+    damage: 0,
+    playedTurn: 1,
+  });
+  const payoff = unit({
+    id: '104030453',
+    color: 'BLUE',
+    fullName: 'Batla Payoff Upgrade',
+    power: 2500,
+    damage: 2,
+    cardlocation: 'EROSION_FRONT',
+    displayState: 'FRONT_UPRIGHT',
+  });
+  const state = game(
+    {
+      unitZone: [receptionist, fieldUnit, null, null, null, null],
+      erosionFront: [payoff],
+      botDeckProfileId: 'blue-adventurer',
+    },
+    { deck: deckCards(20, 'P1_BLUE_GOOD_SWAP') }
+  );
+  const effectScore = scoreActivatableEffect(state, state.players.BOT, receptionist as any, swapEffect as any, profile, {
+    opponent: state.players.P1,
+    targetCount: 1,
+    hasTargetSpec: true,
+  });
+  return assertScenario(
+    'blue receptionist uses high-value erosion upgrade',
+    effectScore.score >= 12,
+    `effect=${effectScore.score.toFixed(1)}, notes=${effectScore.notes.join('|')}`
   );
 }
 
@@ -3145,6 +4200,173 @@ function testTotemHawkDestroyTargetsOpponentThreat(): ScenarioResult {
     'totem hawk destroy targets opponent threat',
     selected[0] === opponentThreat.gamecardId,
     `selected=${selected[0]}`
+  );
+}
+
+function testPendingSimeteReturnReservesLastUnitSlot(): ScenarioResult {
+  const profile = getDeckAiProfile('white-temple');
+  const fieldUnits = Array.from({ length: 5 }, (_, index) =>
+    unit({ id: `FIELD_UNIT_${index}`, fullName: `Field Unit ${index}`, power: 1500 + index * 100 })
+  );
+  const returning = unit({
+    id: '101140437_EXILED_CORE',
+    fullName: 'Exiled Core',
+    cardlocation: 'EXILE',
+    data: { returnToOwnerFieldAtTurnEndSourceName: '神罚天使丝梅特' },
+  });
+  const handUnit = unit({
+    id: 'LAST_SLOT_FILLER',
+    fullName: 'Last Slot Filler',
+    cardlocation: 'HAND',
+    power: 5000,
+    damage: 3,
+  });
+  const state = game(
+    { hand: [handUnit], exile: [returning], unitZone: [...fieldUnits, null], botDeckProfileId: 'white-temple' },
+    {}
+  );
+
+  const pending = countPendingUnitReturnSlots(state as any, state.players.BOT as any);
+  const score = scorePlayableCard(state as any, state.players.BOT as any, handUnit as any, profile);
+  const chosen = choosePlayableCard(state as any, state.players.BOT as any, profile, 'hard', () => true);
+
+  return assertScenario(
+    'pending simete exile return reserves last unit slot',
+    pending === 1 && score < 0 && !chosen,
+    `pending=${pending}, score=${score.toFixed(1)}, chosen=${chosen?.id || 'none'}`
+  );
+}
+
+function testEscortReturnQueueReservesOwnerUnitSlot(): ScenarioResult {
+  const profile = getDeckAiProfile('big-salala');
+  const fieldUnits = Array.from({ length: 5 }, (_, index) =>
+    unit({ id: `ESCORT_FIELD_${index}`, fullName: `Escort Field ${index}`, color: 'WHITE' })
+  );
+  const escorted = unit({
+    id: 'ESCORTED_UNIT',
+    fullName: 'Escorted Unit',
+    cardlocation: 'EXILE',
+  });
+  const handUnit = unit({
+    id: 'ESCORT_LAST_SLOT_FILLER',
+    fullName: 'Escort Last Slot Filler',
+    cardlocation: 'HAND',
+    color: 'WHITE',
+    power: 4500,
+    damage: 2,
+  });
+  const state = game(
+    { hand: [handUnit], exile: [escorted], unitZone: [...fieldUnits, null], botDeckProfileId: 'big-salala' },
+    {}
+  );
+  (state.players.P1 as any).escortReturns = [{
+    cardId: escorted.gamecardId,
+    ownerUid: 'BOT',
+    zone: 'UNIT',
+    afterTurn: state.turnCount,
+  }];
+
+  const pending = countPendingUnitReturnSlots(state as any, state.players.BOT as any);
+  const score = scorePlayableCard(state as any, state.players.BOT as any, handUnit as any, profile);
+
+  return assertScenario(
+    'escort return queue reserves owner unit slot',
+    pending === 1 && score < 0,
+    `pending=${pending}, score=${score.toFixed(1)}`
+  );
+}
+
+function testPendingReturnPenalizesSummonStoryLastSlot(): ScenarioResult {
+  const profile = getDeckAiProfile('blue-adventurer');
+  const fieldUnits = Array.from({ length: 5 }, (_, index) =>
+    unit({ id: `SUMMON_STORY_FIELD_${index}`, fullName: `Summon Story Field ${index}`, color: 'BLUE' })
+  );
+  const returning = unit({
+    id: 'PENDING_STORY_RETURN',
+    fullName: 'Pending Story Return',
+    cardlocation: 'EXILE',
+    data: { escortReturn: { ownerUid: 'BOT', zone: 'UNIT', returnOnOpponentEndAfterTurn: 5 } },
+  });
+  const summonStory = story({
+    id: 'PENDING_SUMMON_STORY',
+    fullName: 'Pending Summon Story',
+    color: 'BLUE',
+    effects: [effect({ id: 'pending_summon_story', description: 'summon a unit from deck to field' })],
+  });
+  const state = game(
+    { hand: [summonStory], exile: [returning], unitZone: [...fieldUnits, null], botDeckProfileId: 'blue-adventurer' },
+    {}
+  );
+
+  const score = scorePlayableCard(state as any, state.players.BOT as any, summonStory as any, profile);
+
+  return assertScenario(
+    'pending return penalizes summon story using last slot',
+    score < 0,
+    `score=${score.toFixed(1)}`
+  );
+}
+
+function testPendingReturnPenalizesSummonEffectLastSlot(): ScenarioResult {
+  const profile = getDeckAiProfile('blue-adventurer');
+  const summonEffect = effect({ id: 'pending_summon_effect', description: 'summon a unit from deck to field' });
+  const source = unit({ id: 'SUMMON_SOURCE', fullName: 'Summon Source', color: 'BLUE', effects: [summonEffect] });
+  const fieldUnits = Array.from({ length: 4 }, (_, index) =>
+    unit({ id: `SUMMON_EFFECT_FIELD_${index}`, fullName: `Summon Effect Field ${index}`, color: 'BLUE' })
+  );
+  const returning = unit({
+    id: 'PENDING_EFFECT_RETURN',
+    fullName: 'Pending Effect Return',
+    cardlocation: 'EXILE',
+    data: { returnFromExileAfterBattleTurn: 5, returnFromExileAfterBattleOwnerUid: 'BOT' },
+  });
+  const state = game(
+    { exile: [returning], unitZone: [source, ...fieldUnits, null], botDeckProfileId: 'blue-adventurer' },
+    {}
+  );
+
+  const scored = scoreActivatableEffect(
+    state as any,
+    state.players.BOT as any,
+    source as any,
+    summonEffect as any,
+    profile,
+    { targetCount: 1, hasTargetSpec: true }
+  );
+
+  return assertScenario(
+    'pending return penalizes summon effect using last slot',
+    scored.score < 0 && scored.notes.some(note => note.includes('pending exile return')),
+    `score=${scored.score.toFixed(1)}, notes=${scored.notes.join('|')}`
+  );
+}
+
+function testLastUnitSlotDevelopsWithoutPendingReturn(): ScenarioResult {
+  const profile = getDeckAiProfile('white-temple');
+  const fieldUnits = Array.from({ length: 5 }, (_, index) =>
+    unit({ id: `SAFE_FIELD_${index}`, fullName: `Safe Field ${index}`, color: 'WHITE' })
+  );
+  const handUnit = unit({
+    id: 'SAFE_LAST_SLOT_UNIT',
+    fullName: 'Safe Last Slot Unit',
+    cardlocation: 'HAND',
+    color: 'WHITE',
+    power: 5000,
+    damage: 3,
+  });
+  const state = game(
+    { hand: [handUnit], unitZone: [...fieldUnits, null], botDeckProfileId: 'white-temple' },
+    {}
+  );
+
+  const pending = countPendingUnitReturnSlots(state as any, state.players.BOT as any);
+  const score = scorePlayableCard(state as any, state.players.BOT as any, handUnit as any, profile);
+  const chosen = choosePlayableCard(state as any, state.players.BOT as any, profile, 'hard', () => true);
+
+  return assertScenario(
+    'last unit slot develops without pending return',
+    pending === 0 && score > 0 && chosen?.gamecardId === handUnit.gamecardId,
+    `pending=${pending}, score=${score.toFixed(1)}, chosen=${chosen?.id || 'none'}`
   );
 }
 
@@ -3242,8 +4464,16 @@ const scenarios: ScenarioRun[] = [
   testWhiteTempleMultiResetTakesBothKeyTargets,
   testWhiteTempleFixedOpeningHand,
   testRedDikaiFixedOpeningHand,
+  testRedDikaiHoldsRushUnitOnFirstTurn,
+  testRedScadiHeldUntilDikaiField,
+  testRedScadiEquipTargetsDikai,
+  testRedScadiStaysEquippedToDikai,
   testBlueAdventurerFixedOpeningHand,
+  testBlueGuildChoosesExhaustOptionForBlocker,
+  testBlueGuildExhaustTargetsHighestThreat,
   testBigSalalaFixedOpeningHand,
+  testBigSalalaWarSongEquipsSalala,
+  testBigSalalaWarSongStaysEquipped,
   testMagicSpearResetEffectScoresWhenAttackWouldLose,
   testHolyPrinceResetHeldInLooseCountering,
   testHolyPrinceResetSupportsMagicSpearCountering,
@@ -3254,6 +4484,8 @@ const scenarios: ScenarioRun[] = [
   testWhiteTempleProtectsArcherLineFromPayment,
   testWhiteTempleEscortTargetsOpponentFirst,
   testBotDoesNotAlwaysSpendFeijing,
+  testOpeningFirstPlayerPaymentUsesUnitAgainstNonAggro,
+  testOpeningFirstPlayerPaymentStillRespectsAggro,
   testPaymentProtectsGodMark,
   testDiscardCostUsesFeijingBeforeProtectionCard,
   testCostAvoidsCurrentBattleUnit,
@@ -3267,12 +4499,15 @@ const scenarios: ScenarioRun[] = [
   testDefenseTakesProfitableWinAgainstHighValueAttacker,
   testActiveDeckProfilesProduceTurnPlans,
   testActiveHardAiDeckProfileList,
+  testHardAiProfilesOpponentFromHiddenDeckAndHand,
   testBigSalalaShareCodeDeckIsValid,
   testWhiteTempleConvertsHallPressure,
   testBlueAdventurerConvertsTempoPressure,
   testBlockedErosionLineStabilizesUnderIncomingLethal,
   testClosingPlanCommitsAfterOnePrecombatPlay,
+  testHardAiPlaysTargetedStoryOnlyOnce,
   testRedDikaiCommitsNearKillPressure,
+  testRedPursuitUsesAllianceAttackForTrigger,
   testPrecombatCannotDefendDelaysAttack,
   testBlueErosionSummonSequencedBeforeAttack,
   testDirectLethalDoesNotWaitForSetup,
@@ -3282,7 +4517,12 @@ const scenarios: ScenarioRun[] = [
   testFutureReadBottomAttackerOnlyAnswersOpponentGodmark,
   testPaymentPreservesClosingAttacker,
   testLowAttackHeldIntoStrongerReadyDefender,
+  testGoddessModeDoesNotCreateFalseErosionAttackPressure,
+  testGoddessModeDeckLethalStillAttacks,
   testExpendableBaitAttackAllowedForClosingPressure,
+  testAllianceMarkedUnitIsNotNormalAttackCandidate,
+  testBattleCleanupClearsAllianceMarkersAcrossZones,
+  testBigSalalaMillWaitsForDeckPressure,
   testErosionRecoveryPrefersHighValueGodmark,
   testYellowAlchemyConvertsEnginePressure,
   testOverlordTotemConvertsRecursiveBoard,
@@ -3292,9 +4532,19 @@ const scenarios: ScenarioRun[] = [
   testRemovalTargetsLethalCurrentAttacker,
   testYellowAlchemyCostPreservesCore,
   testRedDuelKeepsCommander,
+  testDikaiDeclinesLowValueUnitTarget,
+  testDikaiPrioritizesHighValueUnitTarget,
+  testDikaiPrefersDirectDamageWhenOpponentCannotDefend,
   testBlueSwapChoosesErosionPayoff,
+  testBlueReceptionistHoldsEmptySwapBeforeAttack,
+  testBlueReceptionistUsesHighValueErosionUpgrade,
   testAketiBounceTargetsOpponentThreats,
   testTotemHawkDestroyTargetsOpponentThreat,
+  testPendingSimeteReturnReservesLastUnitSlot,
+  testEscortReturnQueueReservesOwnerUnitSlot,
+  testPendingReturnPenalizesSummonStoryLastSlot,
+  testPendingReturnPenalizesSummonEffectLastSlot,
+  testLastUnitSlotDevelopsWithoutPendingReturn,
   testSelfPlayCounterStackSkipsVisualDelay,
   testTotemRitualChoosesOverlord,
 ];
