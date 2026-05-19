@@ -27,6 +27,7 @@ import {
   isClosingTurnPlan,
   scoreCardValue,
   scoreActivatableEffect,
+  scoreMainPhaseCardSequencingValue,
   applyOpeningHandSoftCompensation,
   scoreAttackCandidate,
   scorePaymentExhaustValue,
@@ -6280,20 +6281,35 @@ export const ServerGameService = {
   },
 
   getBotEffectPaymentCost(effect: CardEffect) {
-    const explicitCost = Number(effect.playCost || 0);
+    const explicitCost = Number((effect.cost as any)?.paymentCost || effect.playCost || 0);
     if (Number.isFinite(explicitCost) && explicitCost > 0) return explicitCost;
 
     const text = `${effect.description || ''} ${effect.content || ''}`;
     const match = text.match(/支付\s*(\d+)\s*费用/) ||
       text.match(/pay\s*(\d+)\s*(?:cost|resource)?/i);
     const parsed = match ? Number(match[1]) : 0;
-    return Number.isFinite(parsed) ? parsed : 0;
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    const looksLikeAccessPayment = /支付|鏀粯|敮浠|费|費|费用|璐|璐圭敤|pay|payment|cost|resource/i.test(text);
+    return effect.cost && looksLikeAccessPayment ? 1 : 0;
   },
 
-  canBotPayPositiveCost(gameState: GameState, player: PlayerState, cost: number, cardColor?: string, sourceCard?: Card) {
+  botEffectPaymentExhaustsSource(effect: CardEffect) {
+    const text = `${effect.description || ''} ${effect.content || ''}`;
+    return /横置|妯疆|exhaust/i.test(text);
+  },
+
+  canBotPayPositiveCost(
+    gameState: GameState,
+    player: PlayerState,
+    cost: number,
+    cardColor?: string,
+    sourceCard?: Card,
+    options: { excludeUnitIds?: string[] } = {}
+  ) {
     if (cost <= 0) return true;
     const normalizedColor = cardColor === 'NONE' ? undefined : cardColor;
     const sourceCardId = sourceCard?.gamecardId;
+    const excludedUnitIds = new Set(options.excludeUnitIds || []);
 
     const hasSpecialSubstitute = player.hand.some(card =>
       ServerGameService.canUse204000145AsPaymentSubstitute(card, normalizedColor, cost, sourceCardId) ||
@@ -6311,7 +6327,7 @@ export const ServerGameService = {
     if (hasFeijing) remainingCost = Math.max(0, remainingCost - 3);
 
     const readyUnitPayment = player.unitZone
-      .filter((card): card is Card => !!card && !card.isExhausted && !(card as any).data?.cannotExhaustByEffect)
+      .filter((card): card is Card => !!card && !card.isExhausted && !(card as any).data?.cannotExhaustByEffect && !excludedUnitIds.has(card.gamecardId))
       .reduce((total, card) => {
         const data = (card as any).data || {};
         const accessMin = Math.max(1, Number(data.accessTapMinValue || 1));
@@ -6353,7 +6369,8 @@ export const ServerGameService = {
       player,
       paymentCost,
       paymentTarget?.color || query.paymentColor,
-      paymentTarget || sourceCard
+      paymentTarget || sourceCard,
+      { excludeUnitIds: query.context?.paymentOptions?.excludeExhaustUnitIds || [] }
     );
   },
 
@@ -6758,7 +6775,12 @@ export const ServerGameService = {
           const rules = ServerGameService.checkEffectLimitsAndReqs(gameState, playerUid, card, effect, location);
           if (!rules.valid) return undefined;
           const paymentCost = ServerGameService.getBotEffectPaymentCost(effect);
-          if (paymentCost > 0 && !ServerGameService.canBotPayPositiveCost(gameState, player, paymentCost, card.color, card)) {
+          const paymentOptions = ServerGameService.botEffectPaymentExhaustsSource(effect)
+            ? { excludeExhaustUnitIds: [card.gamecardId] }
+            : undefined;
+          if (paymentCost > 0 && !ServerGameService.canBotPayPositiveCost(gameState, player, paymentCost, card.color, card, {
+            excludeUnitIds: paymentOptions?.excludeExhaustUnitIds,
+          })) {
             return undefined;
           }
           const projectedPayment = paymentCost > 0
@@ -6769,6 +6791,7 @@ export const ServerGameService = {
                 cardId: card.gamecardId,
                 sourceCardId: card.gamecardId,
                 paymentTargetId: card.gamecardId,
+                paymentOptions,
               },
             })
             : {};
@@ -7557,6 +7580,8 @@ export const ServerGameService = {
             totalDamage: turnPlan.totalAvailableDamage,
             damageToCritical: turnPlan.damageToCritical,
             lethalWindow: turnPlan.lethalWindow,
+            likelyDefenders: turnPlan.likelyDefenders,
+            damageThroughLikelyDefenders: turnPlan.damageThroughLikelyDefenders,
             reserveDefenders: turnPlan.reserveDefenders,
             defendersNeededNextTurn: turnPlan.defendersNeededNextTurn,
             incomingDamage: turnPlan.opponentPotentialDamage,
@@ -7957,6 +7982,39 @@ export const ServerGameService = {
         return;
       }
 
+      if (
+        difficulty === 'hard' &&
+        turnPlan &&
+        !turnPlan.attackBeforeDeveloping &&
+        gameState.turnCount > 1 &&
+        (bot as any).botClosingAttackStartedTurn === gameState.turnCount &&
+        (isClosingTurnPlan(turnPlan) || turnPlan.totalAvailableDamage >= Math.max(1, turnPlan.damageToCritical))
+      ) {
+        const attackCandidates = bot.unitZone.filter(unit => canUnitAttack(gameState, unit)) as Card[];
+        if (attackCandidates.length > 0) {
+          ServerGameService.markBotClosingAttackCommitment(gameState, playerUid, turnPlan);
+          ServerGameService.recordAiDecision(gameState, playerUid, {
+            action: 'ENTER_BATTLE',
+            subject: `${attackCandidates.length} attackers`,
+            reason: 'Continue the current pressure attack line instead of developing more cards after combat has already started this turn.',
+            details: {
+              attackers: attackCandidates.length,
+              pressureAttackAlreadyStarted: true,
+              opponentErosion: turnPlan.opponentErosion,
+              totalAvailableDamage: attackCandidates.reduce((sum, unit) => sum + Math.max(0, unit.damage || 0), 0),
+              damageToCritical: turnPlan.damageToCritical,
+              ownDeck: bot.deck.length,
+            },
+            candidates: attackCandidates.slice(0, 3).map(card => ({
+              name: ServerGameService.getAiCardName(card),
+              score: scoreAttackCandidate(gameState, bot, card, profile),
+            })),
+          });
+          await ServerGameService.advancePhase(gameState, 'DECLARE_BATTLE', playerUid);
+          return;
+        }
+      }
+
       if (difficulty === 'hard' && turnPlan && gameState.turnCount > 1 && (bot as any).botReservedAttackTurn !== gameState.turnCount) {
         const attackCandidates = bot.unitZone.filter(unit => canUnitAttack(gameState, unit)) as Card[];
         const shouldAttackBeforeDeveloping = turnPlan.attackBeforeDeveloping;
@@ -8116,6 +8174,28 @@ export const ServerGameService = {
           const adjustment = ServerGameService.scoreRedDikaiScadiDeckPaymentAdjustment(bot, estimatedDeckPayment);
           scadiErosionPaymentBonus -= adjustment;
         }
+        let closingDevelopmentPenalty = 0;
+        if (
+          difficulty === 'hard' &&
+          turnPlan &&
+          isClosingTurnPlan(turnPlan) &&
+          gameState.turnCount > 1 &&
+          !turnPlan.attackBeforeDeveloping
+        ) {
+          const sequencingValue = scoreMainPhaseCardSequencingValue(gameState, bot, card, profile);
+          const addsImmediateAttacker = card.type === 'UNIT' && card.isrush && bot.unitZone.some(slot => slot === null);
+          const tacticalSupport =
+            sequencingValue >= 36 ||
+            (turnPlan.likelyDefenders > 0 && card.type !== 'UNIT') ||
+            (addsImmediateAttacker && (card.damage || 0) > 0);
+          if (!tacticalSupport) {
+            closingDevelopmentPenalty += 95;
+            if (card.type === 'UNIT' && (card.damage || 0) <= 1) closingDevelopmentPenalty += 18;
+            if (turnPlan.lethalWindow || turnPlan.tacticalLine === 'lethal' || turnPlan.tacticalLine === 'erosion-lethal') {
+              closingDevelopmentPenalty += 35;
+            }
+          }
+        }
         const exhaustedClosingAttackers = exhaustedPaymentUnits
           .map(id => bot.unitZone.find(unit => unit?.gamecardId === id))
           .filter((unit): unit is Card => !!unit && canUnitAttack(gameState, unit));
@@ -8144,13 +8224,14 @@ export const ServerGameService = {
         return {
           card,
           rawScore,
-          score: rawScore + defenseDevelopmentBonus + scadiErosionPaymentBonus - defensivePaymentPenalty - closingPaymentPenalty,
+          score: rawScore + defenseDevelopmentBonus + scadiErosionPaymentBonus - defensivePaymentPenalty - closingPaymentPenalty - closingDevelopmentPenalty,
           effectiveCost,
           initialPaymentSelection,
           defensivePaymentPenalty,
           defenseDevelopmentBonus,
           scadiErosionPaymentBonus,
           closingPaymentPenalty,
+          closingDevelopmentPenalty,
           exhaustedPaymentUnits,
           estimatedDeckPayment,
           netReadyDefenders,
@@ -8200,6 +8281,7 @@ export const ServerGameService = {
             defensivePaymentPenalty: Number(chosenPlayOption.defensivePaymentPenalty.toFixed(1)),
             defenseDevelopmentBonus: Number(chosenPlayOption.defenseDevelopmentBonus.toFixed(1)),
             closingPaymentPenalty: Number(chosenPlayOption.closingPaymentPenalty.toFixed(1)),
+            closingDevelopmentPenalty: Number(chosenPlayOption.closingDevelopmentPenalty.toFixed(1)),
             paymentExhaustsUnits: chosenPlayOption.exhaustedPaymentUnits.length,
             estimatedDeckPayment: chosenPlayOption.estimatedDeckPayment,
             netReadyDefenders: chosenPlayOption.netReadyDefenders,
@@ -8257,6 +8339,7 @@ export const ServerGameService = {
               defensivePaymentPenalty: Number(chosenPlayOption.defensivePaymentPenalty.toFixed(1)),
               defenseDevelopmentBonus: Number(chosenPlayOption.defenseDevelopmentBonus.toFixed(1)),
               closingPaymentPenalty: Number(chosenPlayOption.closingPaymentPenalty.toFixed(1)),
+              closingDevelopmentPenalty: Number(chosenPlayOption.closingDevelopmentPenalty.toFixed(1)),
               estimatedDeckPayment: chosenPlayOption.estimatedDeckPayment,
             },
           });
@@ -8334,6 +8417,9 @@ export const ServerGameService = {
       const opponent = opponentUid ? gameState.players[opponentUid] : undefined;
       const opponentErosion = opponent ? countErosion(opponent) : 0;
       const totalAvailableDamage = attackCandidates.reduce((sum, unit) => sum + (unit.damage || 0), 0);
+      const attackDamages = attackCandidates
+        .map(unit => Math.max(0, unit.damage || 0))
+        .sort((a, b) => b - a);
       const likelyDefenders = opponent
         ? opponent.unitZone.filter(unit =>
           unit &&
@@ -8343,8 +8429,10 @@ export const ServerGameService = {
           !((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount)
         ).length
         : 0;
+      const damageThroughLikelyDefenders = Math.max(0, totalAvailableDamage -
+        attackDamages.slice(0, likelyDefenders).reduce((sum, damage) => sum + damage, 0));
       const damageToCritical = damageToErosionCritical(opponent);
-      const erosionPressureWindow = !!opponent && !opponent.isGoddessMode && totalAvailableDamage >= damageToCritical;
+      const erosionPressureWindow = !!opponent && !opponent.isGoddessMode && damageThroughLikelyDefenders >= damageToCritical;
       const lethalWindow = opponent ? battleDamageWouldDeckOut(totalAvailableDamage, opponent) : false;
       const ownErosion = turnPlan?.ownErosion ?? countErosion(bot);
       const opponentPotentialDamage = turnPlan?.opponentPotentialDamage ?? (opponent
@@ -8354,9 +8442,17 @@ export const ServerGameService = {
         opponentPotentialDamage > 0 ||
         !!turnPlan?.opponentLethalWithoutBlocks ||
         !!turnPlan?.opponentLethalThroughOneBlock;
+      const forcingAttackWindow = difficulty === 'hard' && !!turnPlan && (
+        isClosingTurnPlan(turnPlan) ||
+        turnPlan.tacticalLine === 'lethal' ||
+        turnPlan.tacticalLine === 'erosion-lethal' ||
+        turnPlan.lethalWindow ||
+        turnPlan.damageThroughLikelyDefenders >= Math.max(1, turnPlan.damageToCritical)
+      );
       const shouldReserveDefenders =
         difficulty === 'hard' &&
         !forcedAttackUnit &&
+        !forcingAttackWindow &&
         !turnPlan?.desperationAttack &&
         dynamicCounterPressure &&
         !lethalWindow &&
@@ -8373,6 +8469,7 @@ export const ServerGameService = {
       const shouldHoldOnlyAttacker =
         difficulty === 'hard' &&
         !forcedAttackUnit &&
+        !forcingAttackWindow &&
         !turnPlan?.desperationAttack &&
         dynamicCounterPressure &&
         !lethalWindow &&
@@ -8416,9 +8513,17 @@ export const ServerGameService = {
       const comboAllianceAttack = difficulty === 'hard' && !forcedAttackUnit
         ? getComboAllianceAttack(gameState, bot, profile, attackCandidates)
         : undefined;
+      const relaxedAttackThreshold =
+        forcingAttackWindow ||
+        isClosingTurnPlan(turnPlan) ||
+        lethalWindow ||
+        erosionPressureWindow ||
+        (!!turnPlan?.desperationAttack && (lethalWindow || erosionPressureWindow));
       const minimumAttackScore =
-        difficulty === 'hard' && !forcedAttackUnit && !isClosingTurnPlan(turnPlan) && !turnPlan?.desperationAttack
-          ? 14
+        difficulty === 'hard' && !forcedAttackUnit
+          ? relaxedAttackThreshold
+            ? 0
+            : (turnPlan?.mode === 'defense' || turnPlan?.mode === 'stabilize' || turnPlan?.desperationAttack ? 30 : 14)
           : 0;
       if (comboAllianceAttack) {
         ServerGameService.markBotClosingAttackCommitment(gameState, playerUid, turnPlan);
@@ -8435,6 +8540,7 @@ export const ServerGameService = {
             opponentErosion,
             totalAvailableDamage,
             likelyDefenders,
+            damageThroughLikelyDefenders,
             reservedDefenders: reservedDefenderIds.size,
             planMode: turnPlan?.mode,
           },
@@ -8466,6 +8572,17 @@ export const ServerGameService = {
         return isRush || !wasPlayedThisTurn;
       });
       if (attacker) {
+        if (
+          difficulty === 'hard' &&
+          (
+            isClosingTurnPlan(turnPlan) ||
+            erosionPressureWindow ||
+            lethalWindow ||
+            totalAvailableDamage >= Math.max(1, damageToCritical)
+          )
+        ) {
+          (bot as any).botClosingAttackStartedTurn = gameState.turnCount;
+        }
         ServerGameService.markBotClosingAttackCommitment(gameState, playerUid, turnPlan);
         const chosen = scoredAvailableAttackers.find(candidate => candidate.card.gamecardId === attacker.gamecardId) ||
           scoredAttackers.find(candidate => candidate.card.gamecardId === attacker.gamecardId);
@@ -8487,6 +8604,7 @@ export const ServerGameService = {
             opponentErosion,
             totalAvailableDamage,
             likelyDefenders,
+            damageThroughLikelyDefenders,
             damageToCritical,
             lethalWindow,
             erosionPressureWindow,
@@ -8529,6 +8647,7 @@ export const ServerGameService = {
             heldUnfavorableAttack,
             bestAttackScore: scoredAvailableAttackers[0]?.score,
             minimumAttackScore,
+            damageThroughLikelyDefenders,
             opponentPotentialDamage,
             dynamicCounterPressure,
             ownErosion,

@@ -2515,6 +2515,58 @@ function testEffectPaymentUsesActivationCostNotSourcePlayCost(): ScenarioResult 
   );
 }
 
+function testEffectCostFunctionPrecheckSkipsUnaffordableActivation(): ScenarioResult {
+  const profile = getDeckAiProfile('big-salala');
+  const paidCost = (async () => true) as any;
+  paidCost.paymentCost = 1;
+  paidCost.paymentColor = 'GREEN';
+  const source = unit({
+    id: '103090078',
+    fullName: 'Windmill Cannon',
+    color: 'GREEN',
+    faction: 'Green Engine',
+    power: 2500,
+    damage: 2,
+    effects: [effect({
+      id: '103090078_destroy_later',
+      type: 'ACTIVATE',
+      triggerLocation: ['UNIT'],
+      description: 'pay 1 cost and exhaust this: destroy later',
+      condition: () => true,
+      cost: paidCost,
+      targetSpec: { controller: 'OPPONENT', zones: ['UNIT'], minSelections: 1, maxSelections: 1 },
+    })],
+  });
+  const target = unit({
+    id: 'OPPONENT_TARGET_FOR_WINDMILL',
+    fullName: 'Opponent Target',
+    power: 1500,
+    damage: 1,
+  });
+  const state = game(
+    {
+      deck: [],
+      unitZone: [source, null, null, null, null, null],
+      erosionBack: erosionCards(9, 'BOT_EFFECT_COST_EROSION'),
+      botDifficulty: 'hard',
+      botDeckProfileId: profile.id,
+    },
+    { unitZone: [target, null, null, null, null, null] },
+    {
+      phase: 'MAIN',
+      botDifficulty: 'hard',
+      botDeckProfiles: { BOT: profile.id },
+    }
+  );
+  const candidates = ServerGameService.getBotActivatableEffectCandidates(state, 'BOT') as any[];
+  const included = candidates.some(candidate => candidate.effect?.id === '103090078_destroy_later');
+  return assertScenario(
+    'effect cost function precheck skips unaffordable activation',
+    !included,
+    `included=${included}, candidates=${candidates.map(candidate => `${candidate.effect?.id}:${candidate.paymentCost}`).join(',')}`
+  );
+}
+
 function testOpeningFirstPlayerPaymentUsesUnitAgainstNonAggro(): ScenarioResult {
   const profile = getDeckAiProfile('white-temple');
   const payer = unit({
@@ -2751,6 +2803,66 @@ function testPaymentExhaustUsesLowUnitBeforeClosingAttacker(): ScenarioResult {
   );
 }
 
+function testBigSalalaPaymentPreservesCradleUnderPressure(): ScenarioResult {
+  const profile = getDeckAiProfile('big-salala');
+  const cradle = unit({
+    id: '105000481',
+    fullName: 'Cradle Girl',
+    color: 'YELLOW',
+    damage: 0,
+    power: 0,
+    playedTurn: 1,
+  });
+  const captain = unit({
+    id: '101140099',
+    fullName: 'Church Knight Captain',
+    color: 'WHITE',
+    damage: 2,
+    power: 1500,
+    playedTurn: 1,
+  });
+  const opponentA = unit({ id: 'P1_PAYMENT_PRESSURE_A', color: 'BLUE', damage: 3, power: 3000, playedTurn: 1 });
+  const opponentB = unit({ id: 'P1_PAYMENT_PRESSURE_B', color: 'BLUE', damage: 3, power: 2500, playedTurn: 1 });
+  const sourceCard = story({ id: 'BIG_SALALA_PAYMENT_SOURCE', color: 'GREEN', acValue: 1, baseAcValue: 1 });
+  const state = game(
+    {
+      hand: [sourceCard],
+      unitZone: [cradle, captain, null, null, null, null],
+      erosionBack: erosionCards(4, 'BOT_BIG_PAYMENT_EROSION'),
+      deck: deckCards(9, 'BOT_BIG_PAYMENT_DECK'),
+      botDifficulty: 'hard',
+      botDeckProfileId: profile.id,
+    },
+    {
+      unitZone: [opponentA, opponentB, null, null, null, null],
+      botDeckProfileId: 'blue-adventurer',
+    },
+    {
+      phase: 'END',
+      turnCount: 5,
+      botDifficulty: 'hard',
+      botDeckProfiles: { BOT: profile.id, P1: 'blue-adventurer' },
+    }
+  );
+  const payment = ServerGameService.buildBotPaymentSelectionForPlayer(state, 'BOT', {
+    paymentCost: 1,
+    paymentColor: 'GREEN',
+    context: {
+      cardId: sourceCard.gamecardId,
+      sourceCardId: sourceCard.gamecardId,
+      paymentTargetId: sourceCard.gamecardId,
+    },
+  }) as any;
+  const cradleScore = scorePaymentExhaustValue(state, cradle as any, profile, 'hard');
+  const captainScore = scorePaymentExhaustValue(state, captain as any, profile, 'hard');
+  return assertScenario(
+    'big salala payment preserves cradle under pressure',
+    !(payment.exhaustUnitIds || []).includes(cradle.gamecardId) &&
+      cradleScore > captainScore,
+    `payment=${JSON.stringify(payment)}, cradle=${cradleScore.toFixed(1)}, captain=${captainScore.toFixed(1)}`
+  );
+}
+
 function testNegativeCostProtectsErosionGodmark(): ScenarioResult {
   const profile = getDeckAiProfile('white-temple');
   const low = unit({
@@ -2912,6 +3024,64 @@ function testDefenseHighValueUnitBlocksLethalWhenOnlyOption(): ScenarioResult {
   return assertScenario(
     'defense uses high-value unit when it is the only lethal block',
     chosen?.gamecardId === god.gamecardId,
+    `chosen=${chosen?.fullName || 'none'}`
+  );
+}
+
+function testDefensePreservesHighValueIfBlockCannotStopFollowupLethal(): ScenarioResult {
+  const profile = getDeckAiProfile('blue-adventurer');
+  const cocoa = unit({
+    id: '104030126',
+    fullName: 'Twin Star Cocoa',
+    color: 'BLUE',
+    godMark: true,
+    power: 3000,
+    damage: 3,
+    playedTurn: 11,
+  });
+  const salala = unit({
+    id: '103000426',
+    fullName: 'Big Salala',
+    color: 'GREEN',
+    godMark: true,
+    power: 4000,
+    damage: 3,
+    playedTurn: 1,
+    isExhausted: true,
+  });
+  const unicorn = unit({
+    id: '103000189',
+    fullName: 'Clean Unicorn',
+    color: 'WHITE',
+    power: 3500,
+    damage: 3,
+    playedTurn: 1,
+  });
+  const state = game(
+    {
+      unitZone: [cocoa, null, null, null, null, null],
+      erosionBack: erosionCards(7, 'BOT_COCOA_DOOMED_EROSION'),
+      deck: deckCards(10, 'BOT_COCOA_DOOMED_DECK'),
+      botDeckProfileId: 'blue-adventurer',
+    },
+    {
+      unitZone: [salala, unicorn, null, null, null, null],
+      botDeckProfileId: 'big-salala',
+    },
+    {
+      phase: 'DEFENSE_DECLARATION',
+      currentTurnPlayer: 1,
+      battleState: { attackers: [salala.gamecardId], isAlliance: false },
+      botDeckProfiles: { BOT: 'blue-adventurer', P1: 'big-salala' },
+    }
+  );
+  state.players.BOT.isTurn = false;
+  state.players.P1.isTurn = true;
+
+  const chosen = chooseDefender(state, state.players.BOT, [salala] as any, [cocoa] as any, profile, 'hard');
+  return assertScenario(
+    'defense preserves high-value unit if block cannot stop follow-up lethal',
+    !chosen,
     `chosen=${chosen?.fullName || 'none'}`
   );
 }
@@ -3196,6 +3366,66 @@ async function testClosingPlayDoesNotExhaustLethalAttackers(): Promise<ScenarioR
       enteredBattle &&
       state.phase === 'BATTLE_DECLARATION',
     `closing=${isClosingTurnPlan(plan)}, attackBefore=${plan.attackBeforeDeveloping}, played=${!!playedDistraction}, battle=${!!enteredBattle}, phase=${state.phase}, notes=${plan.notes.join('|')}`
+  );
+}
+
+async function testClosingPlayDoesNotOverdevelopLowImpactUnit(): Promise<ScenarioResult> {
+  const profile = getDeckAiProfile('big-salala');
+  const salala = unit({ id: '103000426', fullName: 'Big Salala', color: 'GREEN', godMark: true, damage: 3, power: 4000, playedTurn: 1 });
+  const angel = unit({ id: '101140435', fullName: 'War Angel', color: 'WHITE', damage: 2, power: 3000, playedTurn: 1 });
+  const lowUnit = unit({
+    id: '105000481',
+    fullName: 'Low Impact Watcher',
+    color: 'GREEN',
+    damage: 1,
+    power: 1000,
+    acValue: 2,
+    baseAcValue: 2,
+    colorReq: {},
+    cardlocation: 'HAND',
+  });
+  const tempoStory = story({
+    id: 'BIG_CLOSE_TEMPO_STORY',
+    fullName: 'Closing Cannot Defend Setup',
+    color: 'GREEN',
+    acValue: 0,
+    baseAcValue: 0,
+    effects: [effect({ id: 'big_close_cannot_defend', description: 'target opponent unit cannot defend this turn' })],
+  });
+  const blocker = unit({ id: 'P1_BIG_CLOSE_BLOCKER', color: 'BLUE', damage: 1, power: 1500, playedTurn: 1 });
+  const state = game(
+    {
+      hand: [lowUnit, tempoStory],
+      unitZone: [salala, angel, null, null, null, null],
+      deck: deckCards(20, 'BOT_BIG_CLOSE_DECK'),
+      botDifficulty: 'hard',
+      botDeckProfileId: profile.id,
+    },
+    {
+      unitZone: [blocker, null, null, null, null, null],
+      erosionBack: erosionCards(7, 'P1_BIG_CLOSE_EROSION'),
+      deck: deckCards(20, 'P1_BIG_CLOSE_DECK'),
+    },
+    {
+      turnCount: 6,
+      botDifficulty: 'hard',
+      botDeckProfiles: { BOT: profile.id },
+    }
+  );
+  const plan = buildTurnPlan(state, state.players.BOT, profile);
+  await ServerGameService.botMoveForPlayer(state, 'BOT');
+  const playedLowUnit = state.aiDecisionLogs?.some((log: any) =>
+    log.action === 'PLAY_CARD' &&
+    log.subject === 'Low Impact Watcher'
+  );
+  const enteredBattle = state.aiDecisionLogs?.some((log: any) => log.action === 'ENTER_BATTLE');
+
+  return assertScenario(
+    'closing play does not overdevelop low-impact unit',
+    !plan.attackBeforeDeveloping &&
+      !playedLowUnit &&
+      (enteredBattle || state.players.BOT.playZone.some((card: any) => card.gamecardId === tempoStory.gamecardId)),
+    `closing=${isClosingTurnPlan(plan)}, pressure=${plan.totalAvailableDamage}/${plan.damageToCritical}, attackBefore=${plan.attackBeforeDeveloping}, played=${!!playedLowUnit}, battle=${!!enteredBattle}, phase=${state.phase}, notes=${plan.notes.join('|')}`
   );
 }
 
@@ -3737,6 +3967,97 @@ function testHighValueAttackerHeldIntoReadyDefenderWithoutClosing(): ScenarioRes
   );
 }
 
+function testAketiHeldIntoReadyDefenderDuringLoosePressure(): ScenarioResult {
+  const profile = getDeckAiProfile('blue-adventurer');
+  const aketi = unit({
+    id: '104020068',
+    fullName: '九尾天狐【阿克蒂】',
+    color: 'BLUE',
+    damage: 1,
+    power: 2500,
+    playedTurn: 1,
+    godMark: true,
+  });
+  const supportAttacker = unit({
+    id: 'BLUE_LOW_SUPPORT_ATTACKER',
+    fullName: 'Blue Low Support Attacker',
+    color: 'BLUE',
+    damage: 1,
+    power: 1000,
+    playedTurn: 1,
+  });
+  const readyDefender = unit({
+    id: 'GREEN_READY_TRADE_DEFENDER',
+    fullName: 'Green Ready Trade Defender',
+    color: 'GREEN',
+    damage: 2,
+    power: 2500,
+    playedTurn: 1,
+  });
+  const state = game(
+    { unitZone: [aketi, supportAttacker, null, null, null, null], botDeckProfileId: profile.id },
+    {
+      unitZone: [readyDefender, null, null, null, null, null],
+      deck: deckCards(20, 'P1_AKETI_PRESSURE_DECK'),
+      erosionBack: erosionCards(8, 'P1_AKETI_PRESSURE_EROSION'),
+    },
+    { phase: 'BATTLE_DECLARATION', botDeckProfiles: { BOT: profile.id, P1: 'big-salala' } }
+  );
+
+  const score = scoreAttackCandidate(state, state.players.BOT, aketi as any, profile);
+  const chosen = chooseAttacker(state, state.players.BOT, profile);
+  return assertScenario(
+    'aketi is held into ready defender during loose pressure',
+    score < 0 && chosen?.gamecardId !== aketi.gamecardId,
+    `score=${score.toFixed(1)}, chosen=${chosen ? chosen.fullName : 'none'}`
+  );
+}
+
+function testSaintKingdomArcherHeldIntoReadyDefenderDuringLoosePressure(): ScenarioResult {
+  const profile = getDeckAiProfile('white-temple');
+  const archer = unit({
+    id: '101130202',
+    fullName: '南征军的弓兵',
+    color: 'WHITE',
+    damage: 1,
+    power: 1500,
+    playedTurn: 1,
+  });
+  const supportAttacker = unit({
+    id: 'WHITE_LOW_SUPPORT_ATTACKER',
+    fullName: 'White Low Support Attacker',
+    color: 'WHITE',
+    damage: 1,
+    power: 1000,
+    playedTurn: 1,
+  });
+  const readyDefender = unit({
+    id: 'BLUE_READY_TRADE_DEFENDER',
+    fullName: 'Blue Ready Trade Defender',
+    color: 'BLUE',
+    damage: 2,
+    power: 2000,
+    playedTurn: 1,
+  });
+  const state = game(
+    { unitZone: [archer, supportAttacker, null, null, null, null], botDeckProfileId: profile.id },
+    {
+      unitZone: [readyDefender, null, null, null, null, null],
+      deck: deckCards(20, 'P1_ARCHER_PRESSURE_DECK'),
+      erosionBack: erosionCards(8, 'P1_ARCHER_PRESSURE_EROSION'),
+    },
+    { phase: 'BATTLE_DECLARATION', botDeckProfiles: { BOT: profile.id, P1: 'blue-adventurer' } }
+  );
+
+  const score = scoreAttackCandidate(state, state.players.BOT, archer as any, profile);
+  const chosen = chooseAttacker(state, state.players.BOT, profile);
+  return assertScenario(
+    'saint kingdom archer is held into ready defender during loose pressure',
+    score < 0 && chosen?.gamecardId !== archer.gamecardId,
+    `score=${score.toFixed(1)}, chosen=${chosen ? chosen.fullName : 'none'}`
+  );
+}
+
 function testMidrangeLowAttackHeldAtLowPositiveValue(): ScenarioResult {
   const profile = getDeckAiProfile('big-salala');
   const lowAttacker = unit({
@@ -3840,6 +4161,78 @@ function testGoddessModeDeckLethalStillAttacks(): ScenarioResult {
     'goddess mode deck lethal still attacks',
     chosen?.gamecardId === attacker.gamecardId && score > 0,
     `score=${score.toFixed(1)}, chosen=${chosen ? chosen.fullName : 'none'}`
+  );
+}
+
+async function testDefensePlanRequiresClearAttackScoreEvenWhenDesperate(): Promise<ScenarioResult> {
+  const profile = getDeckAiProfile('blue-adventurer');
+  const attacker = unit({
+    id: '104010220',
+    fullName: 'Blue Soul Pressure',
+    color: 'BLUE',
+    damage: 2,
+    power: 3000,
+    playedTurn: 1,
+    godMark: true,
+  });
+  const backup = unit({
+    id: '104020068',
+    fullName: 'Blue Backup Attacker',
+    color: 'BLUE',
+    damage: 1,
+    power: 2500,
+    playedTurn: 1,
+  });
+  const guardA = unit({
+    id: 'P1_DEFENSE_GUARD_A',
+    color: 'GREEN',
+    damage: 3,
+    power: 2800,
+    playedTurn: 1,
+  });
+  const guardB = unit({
+    id: 'P1_DEFENSE_GUARD_B',
+    color: 'GREEN',
+    damage: 3,
+    power: 2500,
+    playedTurn: 1,
+  });
+  const guardC = unit({
+    id: 'P1_DEFENSE_GUARD_C',
+    color: 'GREEN',
+    damage: 2,
+    power: 1800,
+    playedTurn: 1,
+  });
+  const state = game(
+    {
+      unitZone: [attacker, backup, null, null, null, null],
+      deck: deckCards(1, 'BOT_DESPERATE_HOLD_ATTACK_DECK'),
+      erosionBack: erosionCards(4, 'BOT_DESPERATE_HOLD_ATTACK_EROSION'),
+      botDifficulty: 'hard',
+      botDeckProfileId: profile.id,
+    },
+    {
+      unitZone: [guardA, guardB, guardC, null, null, null],
+      deck: deckCards(20, 'P1_DESPERATE_HOLD_ATTACK_DECK'),
+      erosionBack: erosionCards(4, 'P1_DESPERATE_HOLD_ATTACK_EROSION'),
+    },
+    {
+      phase: 'BATTLE_DECLARATION',
+      turnCount: 8,
+      botDifficulty: 'hard',
+      botDeckProfiles: { BOT: profile.id, P1: 'big-salala' },
+    }
+  );
+
+  const score = scoreAttackCandidate(state, state.players.BOT, attacker as any, profile);
+  await ServerGameService.botMoveForPlayer(state, 'BOT');
+  const attacked = state.aiDecisionLogs?.some((log: any) => log.action === 'ATTACK' || log.action === 'COMBO_ALLIANCE_ATTACK');
+  const hold = state.aiDecisionLogs?.find((log: any) => log.action === 'HOLD_ATTACKERS');
+  return assertScenario(
+    'defense plan requires clear attack score even when desperate',
+    score > 0 && score < 30 && !attacked && !!hold,
+    `score=${score.toFixed(1)}, attacked=${!!attacked}, phase=${state.phase}, hold=${hold?.reason || 'none'}`
   );
 }
 
@@ -5001,18 +5394,21 @@ const scenarios: ScenarioRun[] = [
   testWhiteTempleEscortTargetsOpponentFirst,
   testBotDoesNotAlwaysSpendFeijing,
   testEffectPaymentUsesActivationCostNotSourcePlayCost,
+  testEffectCostFunctionPrecheckSkipsUnaffordableActivation,
   testOpeningFirstPlayerPaymentUsesUnitAgainstNonAggro,
   testOpeningFirstPlayerPaymentStillRespectsAggro,
   testPaymentProtectsGodMark,
   testDiscardCostUsesFeijingBeforeProtectionCard,
   testCostAvoidsCurrentBattleUnit,
   testPaymentExhaustUsesLowUnitBeforeClosingAttacker,
+  testBigSalalaPaymentPreservesCradleUnderPressure,
   testNegativeCostProtectsErosionGodmark,
   testDefenseDoesNotThrowGodMarkOnNonLethalHit,
   testDefenseDeclinesLowImpactChumpBlock,
   testMagicSpearDeclinesNonLethalDefenseLoss,
   testDefenseSacrificesLowValueUnitToPreventLethalHit,
   testDefenseHighValueUnitBlocksLethalWhenOnlyOption,
+  testDefensePreservesHighValueIfBlockCannotStopFollowupLethal,
   testDefenseTakesProfitableWinAgainstHighValueAttacker,
   testActiveDeckProfilesProduceTurnPlans,
   testActiveHardAiDeckProfileList,
@@ -5023,6 +5419,7 @@ const scenarios: ScenarioRun[] = [
   testBlockedErosionLineStabilizesUnderIncomingLethal,
   testClosingPlanCommitsAfterOnePrecombatPlay,
   testClosingPlayDoesNotExhaustLethalAttackers,
+  testClosingPlayDoesNotOverdevelopLowImpactUnit,
   testHardAiPlaysTargetedStoryOnlyOnce,
   testRedDikaiCommitsNearKillPressure,
   testRedPursuitUsesAllianceAttackForTrigger,
@@ -5036,9 +5433,12 @@ const scenarios: ScenarioRun[] = [
   testPaymentPreservesClosingAttacker,
   testLowAttackHeldIntoStrongerReadyDefender,
   testHighValueAttackerHeldIntoReadyDefenderWithoutClosing,
+  testAketiHeldIntoReadyDefenderDuringLoosePressure,
+  testSaintKingdomArcherHeldIntoReadyDefenderDuringLoosePressure,
   testMidrangeLowAttackHeldAtLowPositiveValue,
   testGoddessModeDoesNotCreateFalseErosionAttackPressure,
   testGoddessModeDeckLethalStillAttacks,
+  testDefensePlanRequiresClearAttackScoreEvenWhenDesperate,
   testExpendableBaitAttackAllowedForClosingPressure,
   testAllianceMarkedUnitIsNotNormalAttackCandidate,
   testBattleCleanupClearsAllianceMarkersAcrossZones,

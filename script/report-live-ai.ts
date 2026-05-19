@@ -75,6 +75,11 @@ function markdownTable(headers: string[], rows: Array<Array<string | number>>) {
   ].join('\n');
 }
 
+function hasTimingWarningText(text: string) {
+  if (/\bprefers\s+(?:MAIN|BATTLE|BATTLE_FREE|COUNTERING|DEFENSE_DECLARATION|DAMAGE_CALCULATION)\b/i.test(text)) return true;
+  return text.split(/[、,|]/).some(part => /timing\s+[^、,|]*-[0-9]/i.test(part));
+}
+
 function jsonSafeReplacer(_key: string, value: unknown) {
   if (typeof value !== 'bigint') return value;
   const numeric = Number(value);
@@ -387,7 +392,7 @@ function collectSampleIssues(sample: NormalizedSample): IssueFinding[] {
     }
     if (action === 'ACTIVATE_EFFECT') {
       const notes = logDetail(log, 'notes');
-      if (/prefers|timing .*-/i.test(notes)) {
+      if (hasTimingWarningText(notes)) {
         addIssue(findings, sample, 'BAD_EFFECT_TIMING', notes || '效果时点评分为负', log);
       }
     }

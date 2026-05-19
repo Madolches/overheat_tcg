@@ -445,6 +445,32 @@ export const blueAdventurerProfile: DeckAiProfile = {
       if (opponentIs(context, 'engine', 'combo') && (effectHasTag(context, 'tempo') || effectHasTag(context, 'removal'))) score += 3;
       if ((effectHasTag(context, 'tempo') || effectHasTag(context, 'combat')) && (opponentErosion(context) >= 5 || readyAttackers(context) >= 2)) score += 3;
 
+      if (effectId === '304020009_activate') {
+        const deck = context.player?.deck.length || 0;
+        const erosion = context.player
+          ? (context.player.erosionFront || []).filter(Boolean).length +
+            (context.player.erosionBack || []).filter(Boolean).length
+          : 0;
+        const canPressureOpponent =
+          !!context.opponent &&
+          (
+            context.opponent.deck.length <= Math.max(8, deck) ||
+            opponentErosion(context) >= 7
+          );
+        if (deck <= 12 || erosion >= 7) {
+          score -= 34;
+          context.notes.push('balance held at low deck/erosion pressure');
+        }
+        if (deck <= 8) {
+          score -= 28;
+          context.notes.push('balance avoids self draw at critical deck');
+        }
+        if (canPressureOpponent) {
+          score += 8;
+          context.notes.push('balance prefers opponent pressure target');
+        }
+      }
+
       if (BLUE_SWAP_EFFECT_IDS.has(effectId)) {
         const upgrade = estimateBlueErosionUpgrade(context);
         if (!upgrade?.valid) {

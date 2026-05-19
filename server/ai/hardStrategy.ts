@@ -21,6 +21,7 @@ import {
 } from './comboKnowledge';
 
 const getCardCost = (card: Card) => Math.max(0, card.baseAcValue ?? card.acValue ?? 0);
+const HARD_AI_HIGH_VALUE_BOARD_THRESHOLD = 58;
 
 export const countErosion = (player: PlayerState) =>
   player.erosionFront.filter(Boolean).length + player.erosionBack.filter(Boolean).length;
@@ -157,6 +158,7 @@ export interface HardAiTurnPlan {
   opponentErosion: number;
   attackers: number;
   totalAvailableDamage: number;
+  damageThroughLikelyDefenders: number;
   damageToCritical: number;
   lethalWindow: boolean;
   opponentArchetype?: string;
@@ -190,11 +192,13 @@ export function isClosingTurnPlan(plan: Pick<HardAiTurnPlan, 'mode' | 'lethalWin
   if (!plan) return false;
   if (plan.mode === 'defense' || plan.mode === 'stabilize' || plan.tacticalLine === 'stabilize') return false;
   const likelyDefenders = Number((plan as any).likelyDefenders || 0);
+  const damageThroughLikelyDefenders = Math.max(0, Number((plan as any).damageThroughLikelyDefenders || 0));
   return plan.lethalWindow ||
     plan.mode === 'lethal' ||
     plan.tacticalLine === 'lethal' ||
     plan.tacticalLine === 'erosion-lethal' ||
-    (likelyDefenders === 0 && plan.totalAvailableDamage >= Math.max(1, plan.damageToCritical));
+    (likelyDefenders === 0 && plan.totalAvailableDamage >= Math.max(1, plan.damageToCritical)) ||
+    (damageThroughLikelyDefenders >= Math.max(1, plan.damageToCritical));
 }
 
 export function battleDamageDeckImpact(damage: number, defender: PlayerState | null | undefined) {
@@ -686,6 +690,9 @@ export function buildTurnPlan(gameState: GameState, player: PlayerState, profile
   const ownErosion = countErosion(player);
   const opponentErosion = opponent ? countErosion(opponent) : 0;
   const totalAvailableDamage = attackers.reduce((sum, unit) => sum + (unit.damage || 0), 0);
+  const attackerDamage = attackers
+    .map(unit => Math.max(0, unit.damage || 0))
+    .sort((a, b) => b - a);
   const damageToCritical = damageToErosionCritical(opponent);
   const erosionPressureWindow = battleDamageCreatesErosionPressure(totalAvailableDamage, opponent);
   const lethalWindow = opponent ? battleDamageWouldDeckOut(totalAvailableDamage, opponent) : false;
@@ -847,6 +854,8 @@ export function buildTurnPlan(gameState: GameState, player: PlayerState, profile
     opponentErosion,
     attackers: attackers.length,
     totalAvailableDamage,
+    damageThroughLikelyDefenders: Math.max(0, totalAvailableDamage -
+      attackerDamage.slice(0, likelyDefenders).reduce((sum, damage) => sum + damage, 0)),
     likelyDefenders,
     opponentPotentialDamage,
     defendersNeededNextTurn: incomingThreat.defendersNeeded,
@@ -880,6 +889,8 @@ export function buildTurnPlan(gameState: GameState, player: PlayerState, profile
     if (typeof turnAdjustment.avoidSearch === 'boolean') avoidSearch = turnAdjustment.avoidSearch;
     if (turnAdjustment.notes?.length) notes.push(...turnAdjustment.notes);
   }
+  const finalDamageThroughLikelyDefenders = Math.max(0, totalAvailableDamage -
+    attackerDamage.slice(0, likelyDefenders).reduce((sum, damage) => sum + damage, 0));
   if (sequencing.shouldDevelopBeforeAttack && attackBeforeDeveloping) {
     attackBeforeDeveloping = false;
     minMainEffectScore = Math.min(minMainEffectScore, 5.5);
@@ -925,6 +936,7 @@ export function buildTurnPlan(gameState: GameState, player: PlayerState, profile
     opponentErosion,
     attackers: attackers.length,
     totalAvailableDamage,
+    damageThroughLikelyDefenders: finalDamageThroughLikelyDefenders,
     damageToCritical,
     lethalWindow,
     opponentArchetype: opponentDeckProfile?.archetype,
@@ -2202,6 +2214,27 @@ function getTempleHighValueResetOpportunity(
   };
 }
 
+function estimateRemainingDamageAfterCurrentBlock(gameState: GameState, defender: PlayerState, currentBattleDamage: number) {
+  if (!gameState.battleState?.attackers?.length) return 0;
+  const attackerUid = gameState.playerIds.find(uid => uid !== defender.uid);
+  const attacker = attackerUid ? gameState.players[attackerUid] : undefined;
+  if (!attacker) return 0;
+  const currentAttackers = new Set(gameState.battleState?.attackers || []);
+  return attacker.unitZone
+    .filter(unit => unit && !currentAttackers.has(unit.gamecardId) && canUnitAttack(gameState, unit))
+    .reduce((sum, unit) => sum + Math.max(0, unit?.damage || 0), 0);
+}
+
+function battleBlockStopsCurrentHitButStillDies(
+  gameState: GameState,
+  defender: PlayerState,
+  currentBattleDamage: number
+) {
+  if (!battleDamageWouldBeFatal(currentBattleDamage, defender)) return false;
+  const remainingDamage = estimateRemainingDamageAfterCurrentBlock(gameState, defender, currentBattleDamage);
+  return remainingDamage > 0 && battleDamageWouldBeFatal(remainingDamage, defender);
+}
+
 function getTempleMagicSpearBattleResetOpportunity(
   gameState: GameState,
   player: PlayerState,
@@ -2276,6 +2309,9 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
   const totalAvailableDamage = attackers.reduce((sum, unit) => sum + (unit.damage || 0), 0);
   const damage = card.damage || 0;
   const power = card.power || 0;
+  const knowledge = getCardKnowledge(card);
+  const roles = new Set(knowledge?.roles || []);
+  const cardBias = profileCardBias(profile, card);
   const cardValue = scoreCardValue(card, profile, strategyContext);
   const preserveValue = getCardKnowledgeValue(card, 'preserveValue') + cardValue * 0.25;
   const lethalWindow = opponent ? battleDamageWouldDeckOut(totalAvailableDamage, opponent) : false;
@@ -2311,6 +2347,19 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
     preserveValue <= 28 &&
     !card.godMark;
   const clearClosingPurpose = lethalWindow || erosionPressureWindow || attackWouldBeFatal || singleAttackThreat;
+  const profileValueBias = cardBias.preserve + cardBias.preferred;
+  const highValueAttacker =
+    card.godMark ||
+    preserveValue >= 38 ||
+    cardValue >= 55 ||
+    profileValueBias >= 16 ||
+    roles.has('engine') ||
+    roles.has('combo_piece');
+  const otherAttackersKeepClosing = !!opponent && otherAttackDamage > 0 && (
+    battleDamageWouldDeckOut(otherAttackDamage, opponent) ||
+    battleDamageWouldBeFatal(otherAttackDamage, opponent) ||
+    battleDamageCreatesErosionPressure(otherAttackDamage, opponent)
+  );
   const templeResetInstead = (card.effects || [])
     .map(effect => getTempleHighValueResetOpportunity(gameState, player, card, effect, profile))
     .filter(Boolean)
@@ -2381,6 +2430,26 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
     score += 12;
   }
 
+  if (
+    defenderCount > 0 &&
+    highValueAttacker &&
+    !expendableBait &&
+    !templeSpearResetFixesBlock &&
+    !attackWouldBeFatal &&
+    !singleAttackThreat &&
+    strongestDefenderPower >= power
+  ) {
+    const keepsSamePressure = clearClosingPurpose && !otherAttackersKeepClosing ? 0.6 : 1;
+    let highValueRiskPenalty = 24 + Math.min(36, preserveValue * 0.34 + cardValue * 0.12);
+    if (card.godMark) highValueRiskPenalty += 18;
+    if (roles.has('engine') || roles.has('combo_piece')) highValueRiskPenalty += 8;
+    if (profileValueBias >= 16) highValueRiskPenalty += Math.min(14, profileValueBias * 0.35);
+    if (otherAttackersKeepClosing) highValueRiskPenalty += 14;
+    if (strongestDefenderPower > power) highValueRiskPenalty += 10;
+    if (damage <= 1) highValueRiskPenalty += 6;
+    score -= highValueRiskPenalty * keepsSamePressure;
+  }
+
   score += scoreComboCard(gameState, player, card, profile, 'attack');
   score += applyCardScoreHook(profile, 'adjustAttackScore', {
     ...strategyContext,
@@ -2391,7 +2460,6 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
 
   if (defenderCount > 0 && !clearClosingPurpose && !expendableBait && !templeSpearResetFixesBlock) {
     const narrowOrLosingIntoBlock = strongestDefenderPower + 800 >= power;
-    const highValueAttacker = card.godMark || preserveValue >= 38 || cardValue >= 55;
     if (narrowOrLosingIntoBlock) {
       score -= 12 + Math.min(22, strongestDefenderValue * 0.12);
       if (damage <= 1) score -= 8;
@@ -2451,14 +2519,22 @@ function effectTargetControllers(effect: CardEffect) {
 }
 
 function estimateEffectPaymentCost(effect: CardEffect) {
-  const explicitCost = Number(effect.playCost || 0);
+  const explicitCost = Number((effect.cost as any)?.paymentCost || effect.playCost || 0);
   if (Number.isFinite(explicitCost) && explicitCost > 0) return explicitCost;
 
   const text = `${effect.description || ''} ${effect.content || ''}`;
   const match = text.match(/鏀粯\s*(\d+)\s*璐圭敤/) ||
     text.match(/pay\s*(\d+)\s*(?:cost|resource)?/i);
   const parsed = match ? Number(match[1]) : 0;
-  return Number.isFinite(parsed) ? parsed : 0;
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+
+  const looksLikeAccessPayment = /支付|鏀粯|敮浠|费|費|费用|璐|璐圭敤|pay|payment|cost|resource/i.test(text);
+  return effect.cost && looksLikeAccessPayment ? 1 : 0;
+}
+
+function effectPaymentExhaustsSource(effect: CardEffect) {
+  const text = `${effect.description || ''} ${effect.content || ''}`;
+  return /横置|妯疆|exhaust/i.test(text);
 }
 
 function estimateDeckPaymentForEffect(player: PlayerState, sourceCard: Card, effect: CardEffect) {
@@ -2466,6 +2542,7 @@ function estimateDeckPaymentForEffect(player: PlayerState, sourceCard: Card, eff
   if (paymentCost <= 0) return 0;
 
   const sourceColor = sourceCard.color === 'NONE' ? undefined : sourceCard.color;
+  const excludeSourcePayment = effectPaymentExhaustsSource(effect);
   const hasFeijing = player.hand.some(card =>
     card.gamecardId !== sourceCard.gamecardId &&
     card.feijingMark &&
@@ -2473,7 +2550,12 @@ function estimateDeckPaymentForEffect(player: PlayerState, sourceCard: Card, eff
   );
   const feijingReduction = hasFeijing ? 3 : 0;
   const readyUnitPayment = player.unitZone
-    .filter((unit): unit is Card => !!unit && !unit.isExhausted && !(unit as any).data?.cannotExhaustByEffect)
+    .filter((unit): unit is Card =>
+      !!unit &&
+      !unit.isExhausted &&
+      !(unit as any).data?.cannotExhaustByEffect &&
+      (!excludeSourcePayment || unit.gamecardId !== sourceCard.gamecardId)
+    )
     .reduce((total, unit) => {
       const data = (unit as any).data || {};
       const accessMin = Math.max(1, Number(data.accessTapMinValue || 1));
@@ -2960,6 +3042,7 @@ export function chooseDefender(
   const deckPressure = defender.deck.length <= Math.max(deckImpact + 5, lowDeck);
   const incomingThreat = estimateIncomingThreat(gameState, defender, profile);
   const currentHitFatal = battleDamageWouldBeFatal(totalAttackerDamage, defender);
+  const doomedAfterCurrentBlock = battleBlockStopsCurrentHitButStillDies(gameState, defender, totalAttackerDamage);
   const highImpactHit = currentHitFatal || deckCritical || critical || danger || deckPressure || totalAttackerDamage >= 3;
   const attackerCombatValues = attackingUnits.map(unit => {
     const knowledge = getCardKnowledge(unit);
@@ -3097,6 +3180,17 @@ export function chooseDefender(
       if (sacrifice) score -= 18 + Math.min(28, boardPresenceValue * 0.28);
       else if (trades) score -= 10 + Math.min(18, boardPresenceValue * 0.18);
       if (card.godMark) score -= 16;
+    }
+    if (
+      doomedAfterCurrentBlock &&
+      (trades || sacrifice) &&
+      (
+        card.godMark ||
+        boardPresenceValue >= HARD_AI_HIGH_VALUE_BOARD_THRESHOLD ||
+        cardValue >= 55
+      )
+    ) {
+      score -= 420 + Math.min(90, boardPresenceValue * 0.6);
     }
     if (
       profile.id === 'white-temple' &&

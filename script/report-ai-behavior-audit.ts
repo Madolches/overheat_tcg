@@ -189,6 +189,11 @@ function markdownTable(headers: string[], rows: Array<Array<string | number>>) {
   ].join('\n');
 }
 
+function hasTimingWarningText(text: string) {
+  if (/\bprefers\s+(?:MAIN|BATTLE|BATTLE_FREE|COUNTERING|DEFENSE_DECLARATION|DAMAGE_CALCULATION)\b/i.test(text)) return true;
+  return text.split(/[、,|]/).some(part => /timing\s+[^、,|]*-[0-9]/i.test(part));
+}
+
 function stringifyJson(value: unknown) {
   return JSON.stringify(value, null, 2);
 }
@@ -378,10 +383,13 @@ function analyzeTurnWindows(findings: BehaviorFinding[], result: any) {
     const planText = decisionText(plan, ['notes', 'comboNotes', 'tacticalNotes', 'tacticalLine']);
     const totalDamage = numericDetail(plan, 'totalDamage');
     const damageToCritical = numericDetail(plan, 'damageToCritical');
-    const likelyDefenders = numericDetail(plan, 'likelyDefenders');
+    const hasLikelyDefenders = plan.details?.likelyDefenders !== undefined && plan.details?.likelyDefenders !== null;
+    const likelyDefenders = hasLikelyDefenders ? numericDetail(plan, 'likelyDefenders') : Number.POSITIVE_INFINITY;
+    const damageThroughLikelyDefenders = numericDetail(plan, 'damageThroughLikelyDefenders');
     const lethalWindow =
       booleanDetail(plan, 'lethalWindow') ||
-      (likelyDefenders === 0 && damageToCritical > 0 && totalDamage >= damageToCritical && totalDamage > 0);
+      (likelyDefenders === 0 && damageToCritical > 0 && totalDamage >= damageToCritical && totalDamage > 0) ||
+      (damageThroughLikelyDefenders > 0 && damageToCritical > 0 && damageThroughLikelyDefenders >= damageToCritical);
     const attackBeforeDeveloping = booleanDetail(plan, 'attackBeforeDeveloping');
     const comboId = detail(plan, 'comboId');
     const comboReady =
@@ -589,7 +597,7 @@ function analyzeDecisionLogs(findings: BehaviorFinding[], result: any) {
     if (action === 'ACTIVATE_EFFECT') {
       const notes = `${detail(log, 'notes')} ${log.reason || ''}`;
       const hasClearPayoff = /lethal|close|closing|saves|beats|threat|combo|斩杀|保|威胁|magic spear reset/i.test(notes);
-      if (/prefers|timing .*-[0-9]/i.test(notes) && !(hasClearPayoff && score !== undefined && score >= 18)) {
+      if (hasTimingWarningText(notes) && !(hasClearPayoff && score !== undefined && score >= 18)) {
         addFinding(findings, result, 'BAD_EFFECT_TIMING', {
           deck,
           turn: log.turn,

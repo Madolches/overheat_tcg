@@ -1167,8 +1167,9 @@ export const exileByEffect = (gameState: GameState, target: Card, source: Card) 
   gameState.logs.push(`[${source.fullName}] 放逐了 [${target.fullName}]。`);
 };
 
-export const paymentCost = (amount: number, color?: string): CardEffect['cost'] => async (gameState, playerState, instance) => {
-  if (amount <= 0) return true;
+export const paymentCost = (amount: number, color?: string): CardEffect['cost'] => {
+  const cost: CardEffect['cost'] = async (gameState, playerState, instance) => {
+    if (amount <= 0) return true;
   if (!canPayAccessCost(gameState, playerState, amount, color === 'NONE' ? undefined : color, instance)) {
     return false;
   }
@@ -1186,7 +1187,11 @@ export const paymentCost = (amount: number, color?: string): CardEffect['cost'] 
     paymentColor: color || instance.color,
     context: { sourceCardId: instance.gamecardId }
   };
-  return true;
+    return true;
+  };
+  (cost as any).paymentCost = amount;
+  (cost as any).paymentColor = color;
+  return cost;
 };
 
 export const canPayAccessCost = (gameState: GameState, playerState: PlayerState, amount: number, color?: string, sourceCard?: Card) => {
