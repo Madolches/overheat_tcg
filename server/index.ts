@@ -2634,7 +2634,20 @@ app.get('/api/bug-cup/standings', async (_req, res): Promise<void> => {
              LEFT JOIN users u1 ON u1.id = m.player1_id
              LEFT JOIN users u2 ON u2.id = m.player2_id
              WHERE m.edition = ? AND m.phase = 'ELIMINATION'
-             ORDER BY m.round ASC, m.created_at ASC`,
+            ORDER BY m.round ASC, m.created_at ASC`,
+            [BUG_CUP_EDITION]
+        );
+        const spectatableRows = await pool.query(
+            `SELECT m.*,
+                    u1.username AS player1_name,
+                    u2.username AS player2_name
+             FROM bug_cup_matches m
+             LEFT JOIN users u1 ON u1.id = m.player1_id
+             LEFT JOIN users u2 ON u2.id = m.player2_id
+             WHERE m.edition = ?
+               AND m.game_id IS NOT NULL
+               AND m.result_status = 'ACTIVE'
+             ORDER BY m.scheduled_for DESC, m.created_at DESC`,
             [BUG_CUP_EDITION]
         );
         res.json({
@@ -2649,6 +2662,11 @@ app.get('/api/bug-cup/standings', async (_req, res): Promise<void> => {
                     : row.winner_id === row.player2_id
                         ? getBugCupDisplayName(row.winner_id, row.player2_name)
                         : getBugCupDisplayName(row.winner_id, null)
+            })),
+            spectatableMatches: spectatableRows.map((row: any) => ({
+                ...serializeBugCupMatch(row),
+                player1Name: getBugCupDisplayName(row.player1_id, row.player1_name),
+                player2Name: getBugCupDisplayName(row.player2_id, row.player2_name)
             }))
         });
     } catch (err) {
@@ -3424,9 +3442,11 @@ io.on('connection', (socket) => {
                 ServerGameService.hydrateGameState(gameState);
                 if (!gameState.players) gameState.players = {};
                 const isFriendGame = gameState.mode === 'friend';
+                const isBugCupGame = gameState.mode === 'bugCup';
                 if (isFriendGame) normalizeFriendRoomState(gameState);
-                let seat: FriendSeatTarget = isFriendGame ? requestedSeat : 'player';
+                let seat: FriendSeatTarget = (isFriendGame || isBugCupGame) ? requestedSeat : 'player';
                 if (isFriendGame && (gameState.playerIds || []).includes(userIdStr)) seat = 'player';
+                if (isBugCupGame && (gameState.playerIds || []).map((uid: any) => uid?.toString()).includes(userIdStr)) seat = 'player';
 
                 if (isFriendGame) {
                     try {
@@ -3437,6 +3457,13 @@ io.on('connection', (socket) => {
                         socket.emit('error', err.message || '无法加入该席位');
                         socket.emit('gameStateUpdate', gameState);
                         return;
+                    }
+                }
+                if (isBugCupGame && seat === 'spectator') {
+                    if (!Array.isArray(gameState.spectatorIds)) gameState.spectatorIds = [];
+                    if (!gameState.spectatorIds.map((uid: any) => uid?.toString()).includes(userIdStr)) {
+                        gameState.spectatorIds.push(userIdStr);
+                        await syncAndSaveState(gameId, gameState);
                     }
                 }
 
@@ -3728,6 +3755,20 @@ io.on('connection', (socket) => {
                 return;
             } catch (err) {
                 console.error('[Socket] leaveGame friend cleanup error:', err);
+            }
+        }
+        if (userIdStr && gameId.startsWith('bugcup_')) {
+            try {
+                await withGameLock(gameId, async () => {
+                    const rows = await pool.query('SELECT state FROM games WHERE id = ?', [gameId]);
+                    if (!rows.length) return;
+                    const gameState = typeof rows[0].state === 'string' ? JSON.parse(rows[0].state) : rows[0].state;
+                    if (!Array.isArray(gameState.spectatorIds) || !gameState.spectatorIds.map((uid: any) => uid?.toString()).includes(userIdStr)) return;
+                    gameState.spectatorIds = gameState.spectatorIds.filter((uid: any) => uid?.toString() !== userIdStr);
+                    await syncAndSaveState(gameId, gameState);
+                });
+            } catch (err) {
+                console.error('[Socket] leaveGame bug cup spectator cleanup error:', err);
             }
         }
 

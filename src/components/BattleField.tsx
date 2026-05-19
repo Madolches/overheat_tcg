@@ -250,7 +250,11 @@ export const BattleField: React.FC = () => {
   const authUser = useMemo(() => getAuthUser(), []);
   const myUid = useMemo(() => authUser?.uid, [authUser]);
   const deckId = useMemo(() => location.state?.deckId || localStorage.getItem(`deck_${gameId}`), [gameId, location.state?.deckId]);
-  const seat = useMemo<'player' | 'spectator'>(() => location.state?.seat === 'spectator' ? 'spectator' : 'player', [location.state?.seat]);
+  const seat = useMemo<'player' | 'spectator'>(() => (
+    location.state?.seat === 'spectator' || new URLSearchParams(location.search).get('seat') === 'spectator'
+      ? 'spectator'
+      : 'player'
+  ), [location.search, location.state?.seat]);
 
   const [game, setGame] = useState<GameState | null>(null);
   const [isRulebookOpen, setIsRulebookOpen] = useState(false);
