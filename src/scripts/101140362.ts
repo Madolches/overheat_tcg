@@ -27,7 +27,7 @@ const card: Card = {
   basePower: 2000,
   damage: 1,
   baseDamage: 1,
-  godMark: false
+  godMark: false,
   displayState: 'FRONT_UPRIGHT',
   isExhausted: false,
   isrush: false,

@@ -587,6 +587,14 @@ export const ServerGameService = {
       } else if (c.color !== 'NONE') {
         availableColors[c.color] = (availableColors[c.color] || 0) + 1;
       }
+      const extraColors = (c as any).temporaryExtraColors;
+      if (Array.isArray(extraColors)) {
+        extraColors.forEach(color => {
+          if (typeof color === 'string' && color !== c.color && color in availableColors) {
+            availableColors[color] = (availableColors[color] || 0) + 1;
+          }
+        });
+      }
     });
 
     let totalDeficit = 0;
@@ -660,6 +668,7 @@ export const ServerGameService = {
   getForcedAttackUnits(gameState: GameState, playerId: string) {
     const player = gameState.players[playerId];
     if (!player) return [];
+    if (ServerGameService.isPlayerAttackLockedThisTurn(gameState, playerId)) return [];
 
     return player.unitZone.filter((unit): unit is Card => {
       if (!unit) return false;
@@ -674,6 +683,24 @@ export const ServerGameService = {
       const wasPlayedThisTurn = unit.playedTurn === gameState.turnCount;
       return isRush || !wasPlayedThisTurn;
     });
+  },
+
+  isPlayerAttackLockedThisTurn(gameState: GameState, playerUid: string) {
+    const player = gameState.players[playerUid];
+    return !!player && (player as any).cannotDeclareAttackTurn === gameState.turnCount;
+  },
+
+  applyExtraTurnIfQueued(gameState: GameState, currentPlayerId: string) {
+    const player = gameState.players[currentPlayerId];
+    if (!player || (player as any).extraTurnAfterCurrentTurn !== gameState.turnCount) return false;
+
+    delete (player as any).extraTurnAfterCurrentTurn;
+    gameState.currentTurnPlayer = gameState.playerIds.indexOf(currentPlayerId) as 0 | 1;
+    if (gameState.currentTurnPlayer !== 0 && gameState.currentTurnPlayer !== 1) {
+      gameState.currentTurnPlayer = 0;
+    }
+    gameState.logs.push(`[追加回合] ${player.displayName} 获得了一个追加回合。`);
+    return true;
   },
 
   async enterForcedAttackBattleIfNeeded(gameState: GameState, playerId: string, onUpdate?: (state: GameState) => Promise<void>, reason: string = 'FORCED_ATTACK') {
@@ -1044,6 +1071,7 @@ export const ServerGameService = {
     card.temporaryAnnihilation = false;
     card.temporaryHeroic = false;
     card.temporaryCanAttackAny = false;
+    delete (card as any).temporaryExtraColors;
     card.temporaryBuffSources = {};
     card.temporaryBuffDetails = {};
     card.influencingEffects = [];
@@ -3224,6 +3252,25 @@ export const ServerGameService = {
           });
         });
         gameState.logs.push(`[${sourceCard.fullName}] 支付侵蚀${amount}：将 ${amount} 张正面侵蚀卡转为背面。`);
+      } else if (query.context?.costType === 'TOP_DECK_FACE_DOWN_EXILE') {
+        const amount = query.context?.topDeckExileAmount || 1;
+        const player = gameState.players[activationPlayerUid];
+        if (!player || player.deck.length < amount) {
+          gameState.pendingQuery = query;
+          throw new Error(`卡组数量不足，无法将卡组顶${amount}张背面放逐作为费用`);
+        }
+
+        for (let i = 0; i < amount; i += 1) {
+          const topCard = player.deck[player.deck.length - 1];
+          if (!topCard) break;
+          ServerGameService.moveCard(gameState, activationPlayerUid, 'DECK', activationPlayerUid, 'EXILE', topCard.gamecardId, {
+            faceDown: true,
+            isEffect: true,
+            effectSourcePlayerUid: activationPlayerUid,
+            effectSourceCardId: sourceCard.gamecardId
+          });
+        }
+        gameState.logs.push(`[${sourceCard.fullName}] 将卡组顶${amount}张卡背面放逐作为费用。`);
       } else if (query.context?.costType === 'DISCARD_HAND_COST') {
         const amount = query.context?.discardCostAmount || selections.length;
         const player = gameState.players[activationPlayerUid];
@@ -3569,6 +3616,9 @@ export const ServerGameService = {
       gameState.logs.push(`[阶段切换] ${player.displayName} 进入战斗阶段`);
     }
     if (gameState.phase !== 'BATTLE_DECLARATION') throw new Error('Not in battle declaration phase');
+    if (ServerGameService.isPlayerAttackLockedThisTurn(gameState, playerId)) {
+      throw new Error('你本回合不能宣言攻击');
+    }
 
     const attackers: Card[] = [];
 
@@ -4936,6 +4986,7 @@ export const ServerGameService = {
       }
 
       gameState.currentTurnPlayer = gameState.currentTurnPlayer === 0 ? 1 : 0;
+      ServerGameService.applyExtraTurnIfQueued(gameState, currentPlayerId);
       gameState.turnCount += 1;
       gameState.phase = 'START';
       gameState.phaseTimerStart = Date.now();
@@ -4959,6 +5010,10 @@ export const ServerGameService = {
       Object.values(gameState.players).forEach(p => {
         p.hasUnitReturnedThisTurn = false;
         delete (p as any).unitsReturnedToDeckThisTurn;
+        if ((p as any).cannotDeclareAttackTurn !== gameState.turnCount) {
+          delete (p as any).cannotDeclareAttackTurn;
+          delete (p as any).cannotDeclareAttackSourceName;
+        }
         p.hasExhaustedThisTurn = [];
         p.negatedNames = [];
         delete (p as any).windProductionTurn;
@@ -5055,6 +5110,7 @@ export const ServerGameService = {
             u.temporaryAnnihilation = false;
             u.temporaryHeroic = false;
             u.temporaryCanAttackAny = false;
+            delete (u as any).temporaryExtraColors;
             u.temporaryBuffSources = {};
             u.temporaryBuffDetails = {};
             u.isrush = u.baseIsrush;
@@ -6753,15 +6809,13 @@ export const ServerGameService = {
     const attempts = ServerGameService.getBotEffectAttempts(gameState, player);
     const failedEffectIds = ServerGameService.getBotEffectFailedIds(gameState, player);
     const zones: Array<{ location: TriggerLocation; cards: (Card | null)[] }> = [
+      { location: 'HAND', cards: player.hand },
       { location: 'UNIT', cards: player.unitZone },
       { location: 'ITEM', cards: player.itemZone },
       { location: 'EROSION_FRONT', cards: player.erosionFront },
       { location: 'EROSION_BACK', cards: player.erosionBack },
       { location: 'GRAVE', cards: player.grave },
     ];
-    if (gameState.phase === 'COUNTERING') {
-      zones.push({ location: 'HAND', cards: player.hand });
-    }
 
     return zones.flatMap(({ location, cards }) =>
       cards.flatMap(card => {

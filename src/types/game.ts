@@ -323,6 +323,7 @@ export interface Card {
   temporaryAnnihilation?: boolean; // cleared at turn start
   temporaryHeroic?: boolean; // cleared at turn start
   temporaryCanAttackAny?: boolean; // cleared at turn start
+  temporaryExtraColors?: CardColor[]; // cleared at turn start
   effects?: CardEffect[];
   influencingEffects?: { sourceCardName: string; description: string }[];
   inAllianceGroup?: boolean;

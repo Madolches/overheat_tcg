@@ -893,6 +893,15 @@ export class AtomicEffectExecutor {
   static matchesColor(card: Card, targetColor: string): boolean {
     if (card.color === targetColor) return true;
 
+    const extraColors = (card as any).temporaryExtraColors;
+    if (
+      ['UNIT', 'ITEM', 'EROSION_FRONT'].includes(card.cardlocation as string) &&
+      Array.isArray(extraColors) &&
+      extraColors.includes(targetColor)
+    ) {
+      return true;
+    }
+
     // Robust check for 105000481 (string/number safe)
     const isOmni = String(card.id) === '105000481' || (card.effects && card.effects.some(e => e.id === '105000481_omni'));
 
@@ -1078,6 +1087,7 @@ export class AtomicEffectExecutor {
       card.temporaryRush = false;
       card.temporaryHeroic = false;
       card.temporaryCanAttackAny = false;
+      delete (card as any).temporaryExtraColors;
       card.temporaryBuffSources = {};
       card.temporaryBuffDetails = {};
       card.influencingEffects = [];

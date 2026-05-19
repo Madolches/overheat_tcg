@@ -1158,6 +1158,7 @@ export const BattleField: React.FC = () => {
 
   const canUnitAttack = (card: Card) => {
     if (!card || card.isExhausted || card.canAttack === false || (card as any).battleForbiddenByEffect) return false;
+    if ((me as any)?.cannotDeclareAttackTurn === game.turnCount) return false;
     if ((card as any).data?.cannotAttackThisTurn === game.turnCount) return false;
     if ((card as any).data?.cannotAttackOrDefendUntilTurn && (card as any).data.cannotAttackOrDefendUntilTurn >= game.turnCount) return false;
     const isRush = !!card.isrush;
@@ -4074,4 +4075,3 @@ const winReasonMap: Record<string, string> = {
   'SURRENDER': '投降',
   'CARD_EFFECT_SPECIAL_WIN': '由于卡牌效果'
 };
-
