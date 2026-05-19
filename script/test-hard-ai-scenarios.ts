@@ -3967,6 +3967,97 @@ function testHighValueAttackerHeldIntoReadyDefenderWithoutClosing(): ScenarioRes
   );
 }
 
+function testAketiHeldIntoReadyDefenderDuringLoosePressure(): ScenarioResult {
+  const profile = getDeckAiProfile('blue-adventurer');
+  const aketi = unit({
+    id: '104020068',
+    fullName: '九尾天狐【阿克蒂】',
+    color: 'BLUE',
+    damage: 1,
+    power: 2500,
+    playedTurn: 1,
+    godMark: true,
+  });
+  const supportAttacker = unit({
+    id: 'BLUE_LOW_SUPPORT_ATTACKER',
+    fullName: 'Blue Low Support Attacker',
+    color: 'BLUE',
+    damage: 1,
+    power: 1000,
+    playedTurn: 1,
+  });
+  const readyDefender = unit({
+    id: 'GREEN_READY_TRADE_DEFENDER',
+    fullName: 'Green Ready Trade Defender',
+    color: 'GREEN',
+    damage: 2,
+    power: 2500,
+    playedTurn: 1,
+  });
+  const state = game(
+    { unitZone: [aketi, supportAttacker, null, null, null, null], botDeckProfileId: profile.id },
+    {
+      unitZone: [readyDefender, null, null, null, null, null],
+      deck: deckCards(20, 'P1_AKETI_PRESSURE_DECK'),
+      erosionBack: erosionCards(8, 'P1_AKETI_PRESSURE_EROSION'),
+    },
+    { phase: 'BATTLE_DECLARATION', botDeckProfiles: { BOT: profile.id, P1: 'big-salala' } }
+  );
+
+  const score = scoreAttackCandidate(state, state.players.BOT, aketi as any, profile);
+  const chosen = chooseAttacker(state, state.players.BOT, profile);
+  return assertScenario(
+    'aketi is held into ready defender during loose pressure',
+    score < 0 && chosen?.gamecardId !== aketi.gamecardId,
+    `score=${score.toFixed(1)}, chosen=${chosen ? chosen.fullName : 'none'}`
+  );
+}
+
+function testSaintKingdomArcherHeldIntoReadyDefenderDuringLoosePressure(): ScenarioResult {
+  const profile = getDeckAiProfile('white-temple');
+  const archer = unit({
+    id: '101130202',
+    fullName: '南征军的弓兵',
+    color: 'WHITE',
+    damage: 1,
+    power: 1500,
+    playedTurn: 1,
+  });
+  const supportAttacker = unit({
+    id: 'WHITE_LOW_SUPPORT_ATTACKER',
+    fullName: 'White Low Support Attacker',
+    color: 'WHITE',
+    damage: 1,
+    power: 1000,
+    playedTurn: 1,
+  });
+  const readyDefender = unit({
+    id: 'BLUE_READY_TRADE_DEFENDER',
+    fullName: 'Blue Ready Trade Defender',
+    color: 'BLUE',
+    damage: 2,
+    power: 2000,
+    playedTurn: 1,
+  });
+  const state = game(
+    { unitZone: [archer, supportAttacker, null, null, null, null], botDeckProfileId: profile.id },
+    {
+      unitZone: [readyDefender, null, null, null, null, null],
+      deck: deckCards(20, 'P1_ARCHER_PRESSURE_DECK'),
+      erosionBack: erosionCards(8, 'P1_ARCHER_PRESSURE_EROSION'),
+    },
+    { phase: 'BATTLE_DECLARATION', botDeckProfiles: { BOT: profile.id, P1: 'blue-adventurer' } }
+  );
+
+  const score = scoreAttackCandidate(state, state.players.BOT, archer as any, profile);
+  const chosen = chooseAttacker(state, state.players.BOT, profile);
+  return assertScenario(
+    'saint kingdom archer is held into ready defender during loose pressure',
+    score < 0 && chosen?.gamecardId !== archer.gamecardId,
+    `score=${score.toFixed(1)}, chosen=${chosen ? chosen.fullName : 'none'}`
+  );
+}
+
 function testMidrangeLowAttackHeldAtLowPositiveValue(): ScenarioResult {
   const profile = getDeckAiProfile('big-salala');
   const lowAttacker = unit({
@@ -5342,6 +5433,8 @@ const scenarios: ScenarioRun[] = [
   testPaymentPreservesClosingAttacker,
   testLowAttackHeldIntoStrongerReadyDefender,
   testHighValueAttackerHeldIntoReadyDefenderWithoutClosing,
+  testAketiHeldIntoReadyDefenderDuringLoosePressure,
+  testSaintKingdomArcherHeldIntoReadyDefenderDuringLoosePressure,
   testMidrangeLowAttackHeldAtLowPositiveValue,
   testGoddessModeDoesNotCreateFalseErosionAttackPressure,
   testGoddessModeDeckLethalStillAttacks,

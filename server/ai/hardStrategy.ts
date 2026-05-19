@@ -2309,6 +2309,9 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
   const totalAvailableDamage = attackers.reduce((sum, unit) => sum + (unit.damage || 0), 0);
   const damage = card.damage || 0;
   const power = card.power || 0;
+  const knowledge = getCardKnowledge(card);
+  const roles = new Set(knowledge?.roles || []);
+  const cardBias = profileCardBias(profile, card);
   const cardValue = scoreCardValue(card, profile, strategyContext);
   const preserveValue = getCardKnowledgeValue(card, 'preserveValue') + cardValue * 0.25;
   const lethalWindow = opponent ? battleDamageWouldDeckOut(totalAvailableDamage, opponent) : false;
@@ -2344,6 +2347,19 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
     preserveValue <= 28 &&
     !card.godMark;
   const clearClosingPurpose = lethalWindow || erosionPressureWindow || attackWouldBeFatal || singleAttackThreat;
+  const profileValueBias = cardBias.preserve + cardBias.preferred;
+  const highValueAttacker =
+    card.godMark ||
+    preserveValue >= 38 ||
+    cardValue >= 55 ||
+    profileValueBias >= 16 ||
+    roles.has('engine') ||
+    roles.has('combo_piece');
+  const otherAttackersKeepClosing = !!opponent && otherAttackDamage > 0 && (
+    battleDamageWouldDeckOut(otherAttackDamage, opponent) ||
+    battleDamageWouldBeFatal(otherAttackDamage, opponent) ||
+    battleDamageCreatesErosionPressure(otherAttackDamage, opponent)
+  );
   const templeResetInstead = (card.effects || [])
     .map(effect => getTempleHighValueResetOpportunity(gameState, player, card, effect, profile))
     .filter(Boolean)
@@ -2414,6 +2430,26 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
     score += 12;
   }
 
+  if (
+    defenderCount > 0 &&
+    highValueAttacker &&
+    !expendableBait &&
+    !templeSpearResetFixesBlock &&
+    !attackWouldBeFatal &&
+    !singleAttackThreat &&
+    strongestDefenderPower >= power
+  ) {
+    const keepsSamePressure = clearClosingPurpose && !otherAttackersKeepClosing ? 0.6 : 1;
+    let highValueRiskPenalty = 24 + Math.min(36, preserveValue * 0.34 + cardValue * 0.12);
+    if (card.godMark) highValueRiskPenalty += 18;
+    if (roles.has('engine') || roles.has('combo_piece')) highValueRiskPenalty += 8;
+    if (profileValueBias >= 16) highValueRiskPenalty += Math.min(14, profileValueBias * 0.35);
+    if (otherAttackersKeepClosing) highValueRiskPenalty += 14;
+    if (strongestDefenderPower > power) highValueRiskPenalty += 10;
+    if (damage <= 1) highValueRiskPenalty += 6;
+    score -= highValueRiskPenalty * keepsSamePressure;
+  }
+
   score += scoreComboCard(gameState, player, card, profile, 'attack');
   score += applyCardScoreHook(profile, 'adjustAttackScore', {
     ...strategyContext,
@@ -2424,7 +2460,6 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
 
   if (defenderCount > 0 && !clearClosingPurpose && !expendableBait && !templeSpearResetFixesBlock) {
     const narrowOrLosingIntoBlock = strongestDefenderPower + 800 >= power;
-    const highValueAttacker = card.godMark || preserveValue >= 38 || cardValue >= 55;
     if (narrowOrLosingIntoBlock) {
       score -= 12 + Math.min(22, strongestDefenderValue * 0.12);
       if (damage <= 1) score -= 8;
