@@ -594,23 +594,7 @@ export const BattleField: React.FC = () => {
     const onGameStateUpdate = (newState: any) => {
       if (newState.gameId !== gameId) return;
 
-      const receivedAt = performance.now();
       hydrateGameState(newState);
-      const hydrateMs = performance.now() - receivedAt;
-      if (hydrateMs > 32 || import.meta.env.DEV) {
-        const payloadBytes = (() => {
-          try {
-            return new Blob([JSON.stringify(newState)]).size;
-          } catch {
-            return 0;
-          }
-        })();
-        console.debug('[BattleField] gameStateUpdate', {
-          gameId,
-          hydrateMs: Math.round(hydrateMs),
-          payloadBytes
-        });
-      }
       setGame(newState);
 
       // Robust clearing of query-related state
@@ -680,29 +664,6 @@ export const BattleField: React.FC = () => {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [gameId, myUid, seat]);
-
-  useEffect(() => {
-    if (!gameId || gameId === 'undefined') return;
-    if (seat === 'player' && !deckId && !gameId.startsWith('friend_') && !gameId.startsWith('bugcup_')) return;
-
-    const token = localStorage.getItem('token');
-    const performJoin = () => {
-      if (Date.now() - lastJoinEmitRef.current < 400) return;
-      console.log('[BattleField] Socket authenticated, re-joining game:', gameId);
-      lastJoinEmitRef.current = Date.now();
-      socket.emit('joinGame', { gameId, deckId, seat });
-    };
-    const authenticate = () => {
-      if (token) socket.emit('authenticate', token);
-    };
-
-    socket.on('connect', authenticate);
-    socket.on('authenticated', performJoin);
-    return () => {
-      socket.off('connect', authenticate);
-      socket.off('authenticated', performJoin);
-    };
-  }, [gameId, deckId, seat]);
 
   // Join game effect
   useEffect(() => {
@@ -1003,7 +964,6 @@ export const BattleField: React.FC = () => {
     // options already come from the server-side script.
     if (pendingQuery.callbackKey !== 'DECLARE_EFFECT_TARGETS') return rawPendingQueryOptions;
     const context = pendingQuery.context || {};
-    if (context.runtimeTargetSpec || context.capturedContext) return rawPendingQueryOptions;
     const sourceCardId = context.sourceCardId;
     const effectIndex = context.effectIndex;
     if (!sourceCardId || effectIndex === undefined || effectIndex === null) return rawPendingQueryOptions;

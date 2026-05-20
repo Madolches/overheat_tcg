@@ -1,4 +1,4 @@
-import { Card, CardEffect, GameState } from '../types/game';
+import { Card, GameState } from '../types/game';
 import { grantedTotemReviveFromGrave } from '../scripts/BaseUtil';
 
 // use import.meta.glob to load all scripts from ../scripts
@@ -22,11 +22,6 @@ Object.keys(modules).forEach((path) => {
 export function hydrateCard(card: Card | null) {
   if (!card || !card.id) return;
   const masterCard = CARD_LIBRARY[card.id];
-  const serializedEffects = Array.isArray(card.effects) ? card.effects : [];
-  const runtimeEffectOffset = typeof (card as any).runtimeEffectOffset === 'number'
-    ? (card as any).runtimeEffectOffset
-    : undefined;
-  const runtimeEffectOverrides = (card as any).runtimeEffectOverrides || {};
   if (!card.baseColorReq) {
     card.baseColorReq = { ...(masterCard?.colorReq || card.colorReq || {}) };
   }
@@ -43,13 +38,9 @@ export function hydrateCard(card: Card | null) {
     if (card.godMark === undefined) card.godMark = !!card.baseGodMark;
   }
   if (masterCard && masterCard.effects) {
-    const masterEffectCount = masterCard.effects.length;
-    const dynamicEffects = runtimeEffectOffset !== undefined
-      ? serializedEffects
-      : serializedEffects.slice(masterEffectCount);
     // Re-assign effects to restore functions lost during JSON serialization
-    const hydratedEffects: CardEffect[] = masterCard.effects.map((originalEffect, idx) => {
-      const runtimeEffect = runtimeEffectOffset === undefined ? serializedEffects[idx] : runtimeEffectOverrides[idx];
+    card.effects = masterCard.effects.map((originalEffect, idx) => {
+      const runtimeEffect = card.effects ? card.effects[idx] : null;
       return {
         ...(runtimeEffect || originalEffect),
         condition: originalEffect.condition,
@@ -62,20 +53,6 @@ export function hydrateCard(card: Card | null) {
         removeContinuous: originalEffect.removeContinuous
       };
     });
-    dynamicEffects.forEach((runtimeEffect, idx) => {
-      if (!runtimeEffect) return;
-      const effectIndex = runtimeEffectOffset !== undefined
-        ? runtimeEffectOffset + idx
-        : masterEffectCount + idx;
-      if (effectIndex < hydratedEffects.length) {
-        hydratedEffects[effectIndex] = { ...hydratedEffects[effectIndex], ...runtimeEffect };
-      } else {
-        hydratedEffects.push(runtimeEffect);
-      }
-    });
-    card.effects = hydratedEffects;
-    delete (card as any).runtimeEffectOffset;
-    delete (card as any).runtimeEffectOverrides;
   }
   if (
     card.type === 'UNIT' &&
@@ -114,13 +91,4 @@ export function hydrateGameState(gameState: GameState) {
       if (opt.card) hydrateCard(opt.card);
     });
   }
-  if (gameState.currentProcessingItem?.card) {
-    hydrateCard(gameState.currentProcessingItem.card);
-  }
-  if (gameState.publicReveal?.cards) {
-    gameState.publicReveal.cards.forEach(card => hydrateCard(card));
-  }
-  Object.values(gameState.players).forEach(player => {
-    player.mulliganReveal?.cards?.forEach(card => hydrateCard(card));
-  });
 }

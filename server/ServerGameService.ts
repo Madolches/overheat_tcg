@@ -803,11 +803,6 @@ export const ServerGameService = {
   hydrateCard(card: Card | null) {
     if (!card || (!card.id && !card.uniqueId)) return;
     const masterCard = SERVER_CARD_LIBRARY[card.uniqueId] || SERVER_CARD_LIBRARY[card.id];
-    const serializedEffects = Array.isArray(card.effects) ? card.effects : [];
-    const runtimeEffectOffset = typeof (card as any).runtimeEffectOffset === 'number'
-      ? (card as any).runtimeEffectOffset
-      : undefined;
-    const runtimeEffectOverrides = (card as any).runtimeEffectOverrides || {};
     if (!card.baseColorReq) {
       card.baseColorReq = { ...(masterCard?.colorReq || card.colorReq || {}) };
     }
@@ -824,13 +819,9 @@ export const ServerGameService = {
       if (card.godMark === undefined) card.godMark = !!card.baseGodMark;
     }
     if (masterCard && masterCard.effects) {
-      const masterEffectCount = masterCard.effects.length;
-      const dynamicEffects = runtimeEffectOffset !== undefined
-        ? serializedEffects
-        : serializedEffects.slice(masterEffectCount);
       // Re-assign effects to restore functions lost during JSON serialization
-      const hydratedEffects: CardEffect[] = masterCard.effects.map((originalEffect, idx) => {
-        const runtimeEffect = runtimeEffectOffset === undefined ? serializedEffects[idx] : runtimeEffectOverrides[idx];
+      card.effects = masterCard.effects.map((originalEffect, idx) => {
+        const runtimeEffect = card.effects ? card.effects[idx] : null;
         return {
           ...(runtimeEffect || originalEffect),
           condition: originalEffect.condition,
@@ -842,20 +833,6 @@ export const ServerGameService = {
           removeContinuous: originalEffect.removeContinuous
         };
       });
-      dynamicEffects.forEach((runtimeEffect, idx) => {
-        if (!runtimeEffect) return;
-        const effectIndex = runtimeEffectOffset !== undefined
-          ? runtimeEffectOffset + idx
-          : masterEffectCount + idx;
-        if (effectIndex < hydratedEffects.length) {
-          hydratedEffects[effectIndex] = { ...hydratedEffects[effectIndex], ...runtimeEffect };
-        } else {
-          hydratedEffects.push(runtimeEffect);
-        }
-      });
-      card.effects = hydratedEffects;
-      delete (card as any).runtimeEffectOffset;
-      delete (card as any).runtimeEffectOverrides;
     }
     if (
       card.type === 'UNIT' &&

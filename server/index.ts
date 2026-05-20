@@ -51,234 +51,12 @@ const gameLocks = new Map<string, Promise<any>>();
 // In-memory match log history (not persisted to DB 'state' blob)
 const matchLogHistory = new Map<string, BattleLogEntry[]>();
 const lastSyncedLogIndex = new Map<string, number>();
-const activeGameStates = new Map<string, GameState>();
-const pendingGameSaves = new Map<string, NodeJS.Timeout>();
-const lastGameSaveDuration = new Map<string, number>();
 const botMovingGames = new Set<string>();
 const lastTimerBroadcast = new Map<string, number>();
 const STARTER_COINS = 100000;
 const STARTER_CARD_CRYSTALS = 100000;
 const TIMER_BROADCAST_INTERVAL_MS = Number(process.env.TIMER_BROADCAST_INTERVAL_MS || 1000);
-const GAME_STATE_SAVE_DEBOUNCE_MS = Number(process.env.GAME_STATE_SAVE_DEBOUNCE_MS || 500);
-const CLIENT_LOG_LIMIT = Number(process.env.CLIENT_LOG_LIMIT || 250);
-const PERF_LOG_THRESHOLD_MS = Number(process.env.PERF_LOG_THRESHOLD_MS || 120);
-const PERF_LOG_ENABLED = process.env.PERF_LOG === 'true';
 const FORCE_LOGOUT_REASON = '账号已在其他设备登录';
-
-type SyncOptions = {
-    immediateSave?: boolean;
-    skipBroadcast?: boolean;
-};
-
-const nowMs = () => Number(process.hrtime.bigint() / 1000000n);
-
-const timed = <T>(fn: () => T): { value: T; ms: number } => {
-    const start = nowMs();
-    const value = fn();
-    return { value, ms: nowMs() - start };
-};
-
-const shouldLogPerf = (totalMs: number) => PERF_LOG_ENABLED || totalMs >= PERF_LOG_THRESHOLD_MS;
-const jsonSizeBytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), 'utf8');
-const clonePlain = <T>(value: T): T => JSON.parse(JSON.stringify(value));
-
-function summarizeStatePerf(gameId: string, label: string, timings: Record<string, number | undefined>) {
-    const totalMs = Object.entries(timings)
-        .filter(([key]) => key !== 'bytes')
-        .reduce((sum, [, value]) => sum + (value || 0), 0);
-    if (!shouldLogPerf(totalMs)) return;
-    const details = Object.entries(timings)
-        .filter(([, value]) => value !== undefined)
-        .map(([key, value]) => key === 'bytes' ? `${key}=${value}` : `${key}=${value}ms`)
-        .join(' ');
-    console.log(`[Perf] ${label} game=${gameId} ${details}`);
-}
-
-function sanitizeEffectForClient(effect: any) {
-    if (!effect) return undefined;
-    const sanitized: any = {
-        id: effect.id,
-        type: effect.type,
-        description: effect.description,
-        limitCount: effect.limitCount,
-        limitNowCount: effect.limitNowCount,
-        limitGlobal: effect.limitGlobal,
-        limitNameType: effect.limitNameType,
-        triggerLocation: effect.triggerLocation,
-        playCost: effect.playCost,
-        playColorReq: effect.playColorReq,
-        erosionFrontLimit: effect.erosionFrontLimit,
-        erosionBackLimit: effect.erosionBackLimit,
-        erosionTotalLimit: effect.erosionTotalLimit,
-        atomicEffects: effect.atomicEffects,
-        targetSpec: effect.targetSpec,
-        substitutionFilter: effect.substitutionFilter,
-        movementReplacementDestination: effect.movementReplacementDestination,
-        erosionKeepReplacement: effect.erosionKeepReplacement,
-        limitGodmarkCount: effect.limitGodmarkCount,
-        factionReq: effect.factionReq,
-        godUnitReq: effect.godUnitReq,
-        targetcost: effect.targetcost,
-        content: effect.content
-    };
-    Object.keys(sanitized).forEach(key => sanitized[key] === undefined && delete sanitized[key]);
-    return sanitized;
-}
-
-function sanitizeCardForClient(card: any) {
-    if (!card || typeof card !== 'object') return;
-    const masterCard = SERVER_CARD_LIBRARY[card.uniqueId] || SERVER_CARD_LIBRARY[card.id];
-    const masterCount = masterCard?.effects?.length || 0;
-    if (!Array.isArray(card.effects)) return;
-    const runtimeEffects: any[] = [];
-    const runtimeEffectOverrides: Record<string, any> = {};
-    card.effects.forEach((effect: any, index: number) => {
-        const sanitized = sanitizeEffectForClient(effect);
-        if (!sanitized) return;
-        if (index < masterCount) {
-            const masterSanitized = sanitizeEffectForClient(masterCard?.effects?.[index]);
-            if (JSON.stringify(sanitized) !== JSON.stringify(masterSanitized)) {
-                runtimeEffectOverrides[index] = sanitized;
-            }
-        } else {
-            runtimeEffects.push(sanitized);
-        }
-    });
-    if (runtimeEffects.length > 0) {
-        card.effects = runtimeEffects;
-        card.runtimeEffectOffset = masterCount;
-    } else {
-        delete card.effects;
-        delete card.runtimeEffectOffset;
-    }
-    if (Object.keys(runtimeEffectOverrides).length > 0) {
-        card.runtimeEffectOverrides = runtimeEffectOverrides;
-    } else {
-        delete card.runtimeEffectOverrides;
-    }
-}
-
-function sanitizeStateForClient(gameState: GameState) {
-    const snapshot = clonePlain(gameState) as any;
-    snapshot.logs = Array.isArray(snapshot.logs) ? snapshot.logs.slice(-CLIENT_LOG_LIMIT) : [];
-    delete snapshot.triggeredEffectsQueue;
-    delete snapshot.pendingResolutions;
-    delete snapshot.aiDecisionLogs;
-    delete snapshot.activeContinuousEffectLogKeys;
-
-    Object.values(snapshot.players || {}).forEach((player: any) => {
-        [
-            player.hand,
-            player.deck,
-            player.grave,
-            player.exile,
-            player.playZone,
-            player.unitZone,
-            player.itemZone,
-            player.erosionFront,
-            player.erosionBack,
-            player.mulliganReveal?.cards
-        ].forEach((zone: any) => {
-            if (Array.isArray(zone)) zone.forEach(sanitizeCardForClient);
-        });
-    });
-    (snapshot.counterStack || []).forEach((item: any) => {
-        if (item?.card) sanitizeCardForClient(item.card);
-    });
-    if (snapshot.currentProcessingItem?.card) sanitizeCardForClient(snapshot.currentProcessingItem.card);
-    (snapshot.pendingQuery?.options || []).forEach((option: any) => {
-        if (option?.card) sanitizeCardForClient(option.card);
-    });
-    if (snapshot.pendingQuery) delete snapshot.pendingQuery.afterSelectionEffects;
-    (snapshot.publicReveal?.cards || []).forEach(sanitizeCardForClient);
-    return snapshot;
-}
-
-async function flushAllGameStateSaves() {
-    await Promise.all([...pendingGameSaves.keys()].map(gameId => flushGameStateSave(gameId)));
-}
-
-function registerShutdownFlush() {
-    let shuttingDown = false;
-    const shutdown = async (signal: string) => {
-        if (shuttingDown) return;
-        shuttingDown = true;
-        console.log(`[GameStateCache] ${signal} received, flushing pending game states...`);
-        try {
-            await flushAllGameStateSaves();
-        } catch (err) {
-            console.error('[GameStateCache] Failed to flush pending states during shutdown:', err);
-        } finally {
-            process.exit(signal === 'SIGINT' ? 130 : 143);
-        }
-    };
-    process.once('SIGINT', () => void shutdown('SIGINT'));
-    process.once('SIGTERM', () => void shutdown('SIGTERM'));
-}
-
-function emitGameStateUpdate(gameId: string, gameState: GameState) {
-    const { value: snapshot, ms: sanitizeMs } = timed(() => sanitizeStateForClient(gameState));
-    const { value: payloadBytes, ms: sizeMs } = timed(() => jsonSizeBytes(snapshot));
-    io.to(gameId).emit('gameStateUpdate', snapshot);
-    summarizeStatePerf(gameId, 'broadcast', { sanitize: sanitizeMs, size: sizeMs, bytes: payloadBytes });
-}
-
-function emitGameStateToSocket(socket: any, gameId: string, gameState: GameState) {
-    const { value: snapshot, ms: sanitizeMs } = timed(() => sanitizeStateForClient(gameState));
-    const { value: payloadBytes, ms: sizeMs } = timed(() => jsonSizeBytes(snapshot));
-    socket.emit('gameStateUpdate', snapshot);
-    summarizeStatePerf(gameId, 'socketSnapshot', { sanitize: sanitizeMs, size: sizeMs, bytes: payloadBytes });
-}
-
-async function persistGameState(gameId: string, gameState: GameState) {
-    const start = nowMs();
-    await pool.query('UPDATE games SET state = ? WHERE id = ?', [JSON.stringify(gameState), gameId]);
-    const duration = nowMs() - start;
-    lastGameSaveDuration.set(gameId, duration);
-    if (shouldLogPerf(duration)) console.log(`[Perf] dbSave game=${gameId} ms=${duration}`);
-}
-
-function scheduleGameStateSave(gameId: string, gameState: GameState, immediate = false) {
-    activeGameStates.set(gameId, gameState);
-    const existing = pendingGameSaves.get(gameId);
-    if (existing) {
-        clearTimeout(existing);
-        pendingGameSaves.delete(gameId);
-    }
-    if (immediate || gameState.gameStatus === 2) {
-        return persistGameState(gameId, gameState);
-    }
-    const timeout = setTimeout(() => {
-        pendingGameSaves.delete(gameId);
-        const latestState = activeGameStates.get(gameId) || gameState;
-        persistGameState(gameId, latestState).catch(err => {
-            console.error(`[GameStateCache] Failed to persist ${gameId}:`, err);
-        });
-    }, GAME_STATE_SAVE_DEBOUNCE_MS);
-    pendingGameSaves.set(gameId, timeout);
-    return Promise.resolve();
-}
-
-async function flushGameStateSave(gameId: string) {
-    const existing = pendingGameSaves.get(gameId);
-    if (existing) {
-        clearTimeout(existing);
-        pendingGameSaves.delete(gameId);
-    }
-    const gameState = activeGameStates.get(gameId);
-    if (gameState) await persistGameState(gameId, gameState);
-}
-
-async function loadGameState(gameId: string, options?: { hydrate?: boolean }) {
-    const cached = activeGameStates.get(gameId);
-    if (cached) return cached;
-    const rows = await pool.query('SELECT state FROM games WHERE id = ?', [gameId]);
-    if (rows.length === 0) return null;
-    const gameState = typeof rows[0].state === 'string' ? JSON.parse(rows[0].state) : rows[0].state;
-    if (options?.hydrate !== false) ServerGameService.hydrateGameState(gameState);
-    activeGameStates.set(gameId, gameState);
-    return gameState;
-}
 
 function getDefaultTurnTime(gameState: any) {
     return gameState.turnTimerLimit ? gameState.turnTimerLimit * 1000 : 300000;
@@ -447,11 +225,13 @@ async function handleBotMove(gameState: any, gameId: string) {
             await withGameLock(gameId, async () => {
                 try {
                     // Re-fetch state inside the lock to get the most recent version
-                    const currentGameState = await loadGameState(gameId);
-                    if (!currentGameState) {
+                    const stateRows = await pool.query('SELECT state FROM games WHERE id = ?', [gameId]);
+                    if (stateRows.length === 0) {
                         botMovingGames.delete(gameId);
                         return;
                     }
+                    const currentGameState = typeof stateRows[0].state === 'string' ? JSON.parse(stateRows[0].state) : stateRows[0].state;
+                    ServerGameService.hydrateGameState(currentGameState);
 
                     const syncCallback = async (state: any) => {
                         await syncAndSaveState(gameId, state);
@@ -485,8 +265,9 @@ async function handleBotMove(gameState: any, gameId: string) {
                 } catch (err: any) {
                     console.error('[Bot] handleBotMove inner error:', err);
                     try {
-                        const failedState = await loadGameState(gameId);
-                        if (failedState) {
+                        const stateRows = await pool.query('SELECT state FROM games WHERE id = ?', [gameId]);
+                        if (stateRows.length > 0) {
+                            const failedState = typeof stateRows[0].state === 'string' ? JSON.parse(stateRows[0].state) : stateRows[0].state;
                             const query = failedState?.pendingQuery;
                             if (query?.playerUid === 'BOT_PLAYER') {
                                 failedState.logs = failedState.logs || [];
@@ -538,15 +319,8 @@ function getUserDisplayLabel(user: any) {
 }
 
 function clearGameRuntime(gameId: string) {
-    const pendingSave = pendingGameSaves.get(gameId);
-    if (pendingSave) {
-        clearTimeout(pendingSave);
-        pendingGameSaves.delete(gameId);
-    }
     matchLogHistory.delete(gameId);
     lastSyncedLogIndex.delete(gameId);
-    activeGameStates.delete(gameId);
-    lastGameSaveDuration.delete(gameId);
     lastTimerBroadcast.delete(gameId);
     botMovingGames.delete(gameId);
     gameLocks.delete(gameId);
@@ -766,13 +540,14 @@ function isFriendRoomEmpty(gameState: any) {
 async function removeFriendParticipantAndCloseIfEmpty(gameId: string, userId: string) {
     let closed = false;
     await withGameLock(gameId, async () => {
-        const gameState = await loadGameState(gameId);
-        if (!gameState) return;
+        const rows = await pool.query('SELECT state FROM games WHERE id = ?', [gameId]);
+        if (rows.length === 0) return;
+
+        const gameState = typeof rows[0].state === 'string' ? JSON.parse(rows[0].state) : rows[0].state;
         if (gameState?.mode !== 'friend') return;
 
         removeFriendParticipant(gameState, userId);
         if (isFriendRoomEmpty(gameState)) {
-            await flushGameStateSave(gameId);
             await pool.query('DELETE FROM games WHERE id = ?', [gameId]);
             io.to(gameId).emit('friendRoomClosed', { gameId });
             io.to(gameId).emit('gameError', { message: '房间已关闭' });
@@ -991,8 +766,11 @@ function decideFirstPlayerChoiceTimeout(gameState: any) {
 async function finishMulliganAfterReveal(gameId: string, expectedStartedAt: number) {
     setTimeout(async () => {
         await withGameLock(gameId, async () => {
-            const gameState = await loadGameState(gameId);
-            if (!gameState) return;
+            const rows = await pool.query('SELECT state FROM games WHERE id = ?', [gameId]);
+            if (rows.length === 0) return;
+
+            const gameState = typeof rows[0].state === 'string' ? JSON.parse(rows[0].state) : rows[0].state;
+            ServerGameService.hydrateGameState(gameState);
 
             if (
                 gameState.phase !== 'MULLIGAN' ||
@@ -1081,13 +859,12 @@ async function saveMatchLog(gameState: any, gameId?: string): Promise<boolean> {
     }
 
     gameState.logs = history;
-    await persistGameState(matchNumber, gameState);
+    await pool.query('UPDATE games SET state = ? WHERE id = ?', [JSON.stringify(gameState), matchNumber]);
     return false;
 }
 
-async function syncAndSaveState(gameId: string, gameState: any, options: SyncOptions = {}) {
+async function syncAndSaveState(gameId: string, gameState: any) {
     if (!gameState) return;
-    const syncStart = nowMs();
 
     // Ensure gameId is always set for client identification
     gameState.gameId = gameId;
@@ -1095,12 +872,8 @@ async function syncAndSaveState(gameId: string, gameState: any, options: SyncOpt
     // Ensure logs exist
     if (!gameState.logs) gameState.logs = [];
 
-    const recalcStart = nowMs();
     EventEngine.recalculateContinuousEffects(gameState);
-    const recalcMs = nowMs() - recalcStart;
-    const normalizeStart = nowMs();
     normalizeBattleLogs(gameState);
-    const normalizeMs = nowMs() - normalizeStart;
 
     // 1. Get or create history for this match
     let history = matchLogHistory.get(gameId) || [];
@@ -1114,15 +887,8 @@ async function syncAndSaveState(gameId: string, gameState: any, options: SyncOpt
         lastSyncedLogIndex.set(gameId, history.length);
     }
 
-    activeGameStates.set(gameId, gameState);
-
-    // 3. Emit a trimmed client snapshot to keep realtime updates light.
-    let broadcastMs = 0;
-    if (!options.skipBroadcast) {
-        const broadcastStart = nowMs();
-        emitGameStateUpdate(gameId, gameState);
-        broadcastMs = nowMs() - broadcastStart;
-    }
+    // 3. Emit full state to clients (they need logs for display)
+    io.to(gameId).emit('gameStateUpdate', gameState);
 
     // 4. Prune logs in gameState to keep the DB 'state' blob small
     // satisfies "It should not be pushed to the backend (DB)"
@@ -1149,9 +915,7 @@ async function syncAndSaveState(gameId: string, gameState: any, options: SyncOpt
     }
 
     // 5. Persist the pruned state to MariaDB
-    const saveStart = nowMs();
-    await scheduleGameStateSave(gameId, gameState, !!options.immediateSave || gameState.gameStatus === 2);
-    const saveMs = nowMs() - saveStart;
+    await pool.query('UPDATE games SET state = ? WHERE id = ?', [JSON.stringify(gameState), gameId]);
 
     // 6. If game ended, write full history to file
     if (gameState.gameStatus === 2) {
@@ -1160,15 +924,6 @@ async function syncAndSaveState(gameId: string, gameState: any, options: SyncOpt
             clearGameRuntime(gameId);
         }
     }
-
-    summarizeStatePerf(gameId, 'sync', {
-        recalc: recalcMs,
-        normalize: normalizeMs,
-        broadcast: broadcastMs,
-        saveSchedule: saveMs,
-        lastDbSave: lastGameSaveDuration.get(gameId),
-        total: nowMs() - syncStart
-    });
 }
 
 function emitTimerUpdate(gameId: string, gameState: any) {
@@ -1187,20 +942,14 @@ function emitTimerUpdate(gameId: string, gameState: any) {
 async function advancePhase(gameState: any, gameId: string, playerId?: string, socket?: any, action?: any) {
     try {
         // console.log(`[Socket] advancePhase for game ${gameId}, action: ${action}, playerId: ${playerId}`);
-        let intermediateSynced = false;
         await ServerGameService.advancePhase(gameState, action, playerId, async (state) => {
-            intermediateSynced = true;
-            await syncAndSaveState(gameId, state, { skipBroadcast: true });
+            await syncAndSaveState(gameId, state);
         });
         await ServerGameService.applyConfrontationStrategy(gameState, async (state) => {
-            intermediateSynced = true;
-            await syncAndSaveState(gameId, state, { skipBroadcast: true });
+            await syncAndSaveState(gameId, state);
         });
 
         await syncAndSaveState(gameId, gameState);
-        if (intermediateSynced) {
-            summarizeStatePerf(gameId, 'advancePhase', { intermediate: 1 });
-        }
 
         triggerBotIfNeeded(gameState, gameId);
     } catch (err: any) {
@@ -1226,9 +975,13 @@ setInterval(async () => {
             const gameId = row.id;
 
             await withGameLock(gameId, async () => {
-                const gameState = await loadGameState(gameId);
+                const stateRows = await pool.query('SELECT state FROM games WHERE id = ?', [gameId]);
+                if (stateRows.length === 0) return;
+
+                const gameState = typeof stateRows[0].state === 'string' ? JSON.parse(stateRows[0].state) : stateRows[0].state;
                 if (!gameState || gameState.gameStatus === 2) return;
                 if (gameState.mode === 'friend' && !isFriendGameStarted(gameState)) return;
+                ServerGameService.hydrateGameState(gameState);
 
                 const now = Date.now();
                 // Identify active player(s) for the timer
@@ -1567,7 +1320,6 @@ app.post('/api/games/practice', async (req, res): Promise<void> => {
         ServerGameService.applyHardAiSoftOpeningCompensation(gameState, 'BOT_PLAYER');
 
         await pool.query('INSERT INTO games (id, state, status) VALUES (?, ?, 0)', [gameId, JSON.stringify(gameState)]);
-        activeGameStates.set(gameId, gameState);
         res.json({ gameId, botDeckProfileId: aiOpponentDeck?.profileId, botDeckName: aiOpponentDeck?.displayName });
     } catch (err) {
         console.error('Create practice game error:', err);
@@ -1610,7 +1362,6 @@ app.post('/api/games/friend', async (req, res): Promise<void> => {
         };
 
         await pool.query('INSERT INTO games (id, state, status) VALUES (?, ?, 0)', [gameId, JSON.stringify(initialState)]);
-        activeGameStates.set(gameId, initialState as any);
         res.json(buildFriendLobbyResponse(gameId, initialState, userIdStr));
     } catch (err) {
         console.error('Create friend game error:', err);
@@ -1658,11 +1409,12 @@ app.post('/api/games/friend/join', async (req, res): Promise<void> => {
 
     try {
         const gameId = 'friend_' + roomCode;
-        const gameState = await loadGameState(gameId);
-        if (!gameState) {
+        const rows = await pool.query('SELECT state FROM games WHERE id = ?', [gameId]);
+        if (rows.length === 0) {
             res.status(404).json({ error: '未找到该房间' });
             return;
         }
+        const gameState = typeof rows[0].state === 'string' ? JSON.parse(rows[0].state) : rows[0].state;
         const userIdStr = user.userId.toString();
         ensureFriendParticipant(gameState, userIdStr);
         rememberFriendParticipantName(gameState, userIdStr, getUserUsernameLabel(user));
@@ -1691,12 +1443,13 @@ app.get('/api/games/friend/:gameId/status', async (req, res): Promise<void> => {
             return;
         }
 
-        const gameState = await loadGameState(gameId);
-        if (!gameState) {
+        const rows = await pool.query('SELECT state FROM games WHERE id = ?', [gameId]);
+        if (rows.length === 0) {
             res.status(404).json({ error: 'Game not found' });
             return;
         }
 
+        const gameState = typeof rows[0].state === 'string' ? JSON.parse(rows[0].state) : rows[0].state;
         normalizeFriendRoomState(gameState);
         const playerIds = Array.isArray(gameState.playerIds) ? gameState.playerIds : [];
         const spectatorIds = Array.isArray(gameState.spectatorIds) ? gameState.spectatorIds : [];
@@ -1729,8 +1482,9 @@ app.post('/api/games/friend/:gameId/seat', async (req, res): Promise<void> => {
 
     try {
         await withGameLock(gameId, async () => {
-            const gameState = await loadGameState(gameId);
-            if (!gameState) { res.status(404).json({ error: '未找到该房间' }); return; }
+            const rows = await pool.query('SELECT state FROM games WHERE id = ?', [gameId]);
+            if (rows.length === 0) { res.status(404).json({ error: '未找到该房间' }); return; }
+            const gameState = typeof rows[0].state === 'string' ? JSON.parse(rows[0].state) : rows[0].state;
             rememberFriendParticipantName(gameState, user.userId.toString(), getUserUsernameLabel(user));
             setFriendSeat(gameState, user.userId.toString(), seat);
             await syncAndSaveState(gameId, gameState);
@@ -1750,8 +1504,9 @@ app.post('/api/games/friend/:gameId/timer', async (req, res): Promise<void> => {
 
     try {
         await withGameLock(gameId, async () => {
-            const gameState = await loadGameState(gameId);
-            if (!gameState) { res.status(404).json({ error: '未找到该房间' }); return; }
+            const rows = await pool.query('SELECT state FROM games WHERE id = ?', [gameId]);
+            if (rows.length === 0) { res.status(404).json({ error: '未找到该房间' }); return; }
+            const gameState = typeof rows[0].state === 'string' ? JSON.parse(rows[0].state) : rows[0].state;
             normalizeFriendRoomState(gameState);
             if (isFriendGameStarted(gameState)) { res.status(400).json({ error: '对局已开始，无法修改时间' }); return; }
             if (gameState.hostUid?.toString() !== user.userId.toString()) { res.status(403).json({ error: '只有房主可以修改时间' }); return; }
@@ -1776,8 +1531,9 @@ app.post('/api/games/friend/:gameId/deck', async (req, res): Promise<void> => {
 
     try {
         await withGameLock(gameId, async () => {
-            const gameState = await loadGameState(gameId);
-            if (!gameState) { res.status(404).json({ error: '未找到该房间' }); return; }
+            const rows = await pool.query('SELECT state FROM games WHERE id = ?', [gameId]);
+            if (rows.length === 0) { res.status(404).json({ error: '未找到该房间' }); return; }
+            const gameState = typeof rows[0].state === 'string' ? JSON.parse(rows[0].state) : rows[0].state;
             if (isFriendGameStarted(gameState)) { res.status(400).json({ error: '对局已开始' }); return; }
 
             const userIdStr = user.userId.toString();
@@ -1807,8 +1563,9 @@ app.post('/api/games/friend/:gameId/ready', async (req, res): Promise<void> => {
 
     try {
         await withGameLock(gameId, async () => {
-            const gameState = await loadGameState(gameId);
-            if (!gameState) { res.status(404).json({ error: '未找到该房间' }); return; }
+            const rows = await pool.query('SELECT state FROM games WHERE id = ?', [gameId]);
+            if (rows.length === 0) { res.status(404).json({ error: '未找到该房间' }); return; }
+            const gameState = typeof rows[0].state === 'string' ? JSON.parse(rows[0].state) : rows[0].state;
             if (isFriendGameStarted(gameState)) { res.json(buildFriendLobbyResponse(gameId, gameState, user.userId.toString())); return; }
 
             normalizeFriendRoomState(gameState);
@@ -2178,8 +1935,9 @@ app.post('/api/games/friend/:gameId/visibility', async (req, res): Promise<void>
 
     try {
         await withGameLock(gameId, async () => {
-            const gameState = await loadGameState(gameId);
-            if (!gameState) { res.status(404).json({ error: '未找到该房间' }); return; }
+            const rows = await pool.query('SELECT state FROM games WHERE id = ?', [gameId]);
+            if (rows.length === 0) { res.status(404).json({ error: '未找到该房间' }); return; }
+            const gameState = typeof rows[0].state === 'string' ? JSON.parse(rows[0].state) : rows[0].state;
             normalizeFriendRoomState(gameState);
             if (isFriendGameStarted(gameState)) { res.status(400).json({ error: '对局已开始，无法修改公开状态' }); return; }
             if (gameState.hostUid?.toString() !== user.userId.toString()) { res.status(403).json({ error: '只有房主可以修改公开状态' }); return; }
@@ -3655,12 +3413,15 @@ io.on('connection', (socket) => {
 
         try {
             await withGameLock(gameId, async () => {
-                const gameState = await loadGameState(gameId);
-                if (!gameState) {
+                const rows = await pool.query('SELECT state FROM games WHERE id = ?', [gameId]);
+                if (rows.length === 0) {
                     console.error(`[Socket] joinGame failed: Game ${gameId} not found`);
                     socket.emit('error', '未找到游戏战场');
                     return;
                 }
+
+                const gameState = typeof rows[0].state === 'string' ? JSON.parse(rows[0].state) : rows[0].state;
+                ServerGameService.hydrateGameState(gameState);
                 if (!gameState.players) gameState.players = {};
                 const isFriendGame = gameState.mode === 'friend';
                 if (isFriendGame) normalizeFriendRoomState(gameState);
@@ -3674,7 +3435,7 @@ io.on('connection', (socket) => {
                         }
                     } catch (err: any) {
                         socket.emit('error', err.message || '无法加入该席位');
-                        emitGameStateToSocket(socket, gameId, gameState);
+                        socket.emit('gameStateUpdate', gameState);
                         return;
                     }
                 }
@@ -3753,7 +3514,7 @@ io.on('connection', (socket) => {
                 }
 
                 // Always emit current state to the joining socket so they don't get stuck on "Syncing Battlefield"
-                emitGameStateToSocket(socket, gameId, gameState);
+                socket.emit('gameStateUpdate', gameState);
             });
         } catch (err) {
             console.error('[Socket] joinGame exception:', err);
@@ -3768,16 +3529,14 @@ io.on('connection', (socket) => {
         const { gameId, action, payload } = data;
         // console.log(`[Socket] received gameAction: ${action} for game ${gameId}`, payload);
 
-        const actionReceivedAt = nowMs();
         await withGameLock(gameId, async () => {
             try {
-                const lockWaitMs = nowMs() - actionReceivedAt;
-                const loadStart = nowMs();
-                let gameState = await loadGameState(gameId);
-                const loadMs = nowMs() - loadStart;
-                if (!gameState) return;
+                const rows = await pool.query('SELECT state FROM games WHERE id = ?', [gameId]);
+                if (rows.length === 0) return;
+
+                let gameState = typeof rows[0].state === 'string' ? JSON.parse(rows[0].state) : rows[0].state;
+                ServerGameService.hydrateGameState(gameState);
                 const myUid = user.userId.toString();
-                const actionStart = nowMs();
 
                 if (action === 'CHAT_MESSAGE') {
                     if (!canUserChatInGame(gameState, myUid)) {
@@ -3801,12 +3560,6 @@ io.on('connection', (socket) => {
                         metadata: { content }
                     });
                     await syncAndSaveState(gameId, gameState);
-                    summarizeStatePerf(gameId, `action:${action}`, {
-                        lockWait: lockWaitMs,
-                        load: loadMs,
-                        action: nowMs() - actionStart,
-                        total: nowMs() - actionReceivedAt
-                    });
                     return;
                 }
 
@@ -3816,10 +3569,8 @@ io.on('connection', (socket) => {
                     return;
                 }
 
-                let intermediateSynced = false;
                 const syncCallback = async (state: GameState) => {
-                    intermediateSynced = true;
-                    await syncAndSaveState(gameId, state, { skipBroadcast: true });
+                    await syncAndSaveState(gameId, state);
                 };
 
                 if (action === 'RPS_CHOICE') {
@@ -3881,12 +3632,6 @@ io.on('connection', (socket) => {
 
                         await syncAndSaveState(gameId, gameState);
                         finishMulliganAfterReveal(gameId, startedAt);
-                        summarizeStatePerf(gameId, `action:${action}`, {
-                            lockWait: lockWaitMs,
-                            load: loadMs,
-                            action: nowMs() - actionStart,
-                            total: nowMs() - actionReceivedAt
-                        });
                         return;
                     }
                 } else if (action === 'PLAY_CARD') {
@@ -3942,13 +3687,6 @@ io.on('connection', (socket) => {
                         if (gameState.gameStatus !== 2) {
                             triggerBotIfNeeded(gameState, gameId);
                         }
-                        summarizeStatePerf(gameId, `action:${action}`, {
-                            lockWait: lockWaitMs,
-                            load: loadMs,
-                            action: nowMs() - actionStart,
-                            intermediate: intermediateSynced ? 1 : 0,
-                            total: nowMs() - actionReceivedAt
-                        });
                         return; // advancePhase already calls syncAndSaveState
                     }
                 } else if (action === 'SURRENDER') {
@@ -3972,13 +3710,6 @@ io.on('connection', (socket) => {
                 if (gameState.gameStatus !== 2) {
                     triggerBotIfNeeded(gameState, gameId);
                 }
-                summarizeStatePerf(gameId, `action:${action}`, {
-                    lockWait: lockWaitMs,
-                    load: loadMs,
-                    action: nowMs() - actionStart,
-                    intermediate: intermediateSynced ? 1 : 0,
-                    total: nowMs() - actionReceivedAt
-                });
             } catch (err: any) {
                 console.error('[Socket] Game action error:', err);
                 socket.emit('error', { message: err.message || 'Unknown game error' });
@@ -4060,5 +3791,4 @@ const start = async () => {
     }
 };
 
-registerShutdownFlush();
 start();
