@@ -80,7 +80,7 @@ const card: Card = {
   effects: [effect_103000274_declare_color],
   rarity: 'R',
   availableRarities: ['R'],
-  cardPackage: 'BT06',
+  cardPackage: 'SP02',
   uniqueId: null as any,
 };
 

@@ -1,8 +1,24 @@
 import type { Card, CardType } from '../types/game';
 
-export const SEARCHABLE_CARD_PACKAGES = ['BT01', 'BT02', 'BT03', 'BT04', 'BT05', 'BT06', 'BT07', 'BT08'] as const;
+export const SEARCHABLE_CARD_PACKAGES = [
+  'BT01',
+  'BT02',
+  'BT03',
+  'BT04',
+  'BT05',
+  'BT06',
+  'BT07',
+  'BT08',
+  'SP01',
+  'SP02',
+  'SP03',
+  'PR'
+] as const;
 export type SearchableCardPackage = typeof SEARCHABLE_CARD_PACKAGES[number];
 export type CardTypeFilter = 'ALL' | CardType;
+
+const isSupportedSpCardPackageToken = (token: string) =>
+  ['SP01', 'SP02', 'SP03'].some(cardPackage => token.startsWith(cardPackage));
 
 export const tokenizeCardPackage = (value?: string | null) =>
   (value || '')
@@ -21,7 +37,7 @@ export const getBtPackageNumbers = (cardPackage?: string | null) =>
 
 export const isCardVisibleInCatalog = (card: Pick<Card, 'cardPackage'>) => {
   const tokens = tokenizeCardPackage(card.cardPackage);
-  return !tokens.some(token => token.startsWith('SP'));
+  return !tokens.some(token => /^SP\d+/.test(token) && !isSupportedSpCardPackageToken(token));
 };
 
 export const matchesCardPackageFilter = (cardPackage: string | undefined, selectedPackage: string) => {

@@ -62,7 +62,7 @@ const card: Card = {
   effects: [effect_205000149_chocolate],
   rarity: 'R',
   availableRarities: ['R'],
-  cardPackage: 'BT06',
+  cardPackage: 'SP01',
   uniqueId: null as any,
 };
 

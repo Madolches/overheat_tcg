@@ -153,7 +153,7 @@ const card: Card = {
   effects: [effect_101000282_leave_recover, effect_101000282_blink],
   rarity: 'SR',
   availableRarities: ['SR'],
-  cardPackage: 'BT06',
+  cardPackage: 'SP02',
   uniqueId: null as any,
 };
 

@@ -179,7 +179,7 @@ const card: Card = {
   effects: [effect_101000501_turn_end, effect_101000501_battle_exile_return, effect_101000501_return_after_battle],
   rarity: 'C',
   availableRarities: ['C'],
-  cardPackage: 'BT05',
+  cardPackage: 'SP01',
   uniqueId: null as any,
 };
 

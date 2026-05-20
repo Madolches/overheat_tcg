@@ -76,7 +76,7 @@ const card: Card = {
   effects: [effect_101000283_enter_recover],
   rarity: 'R',
   availableRarities: ['R'],
-  cardPackage: 'BT07',
+  cardPackage: 'SP02',
   uniqueId: null as any,
 };
 

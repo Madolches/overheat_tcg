@@ -161,7 +161,7 @@ const card: Card = {
   effects: [effect_103000275_irodori_enter, effect_103000275_white_heroic, effect_103000275_attack_tap],
   rarity: 'SR',
   availableRarities: ['SR'],
-  cardPackage: 'BT06',
+  cardPackage: 'SP02',
   uniqueId: null as any,
 };
 

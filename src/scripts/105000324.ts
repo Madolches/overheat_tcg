@@ -63,7 +63,7 @@ const card: Card = {
   effects: [effect_105000324_boost_colors],
   rarity: 'R',
   availableRarities: ['R'],
-  cardPackage: 'BT06',
+  cardPackage: 'SP02',
   uniqueId: null as any,
 };
 

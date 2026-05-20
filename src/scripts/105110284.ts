@@ -114,7 +114,7 @@ const card: Card = {
   effects: [effect_105110284_creation_scar],
   rarity: 'SR',
   availableRarities: ['SR'],
-  cardPackage: 'BT06',
+  cardPackage: 'SP02',
   uniqueId: null as any,
 };
 
