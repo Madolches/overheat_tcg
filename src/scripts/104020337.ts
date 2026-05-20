@@ -24,7 +24,7 @@ const cardEffects: CardEffect[] = [
     description: '财富3以上，对手宣言使用非神蚀卡时，舍弃3张手牌：反击那张卡。之后，将那张卡加入你的手牌；被送去墓地时回到持有者墓地。',
     condition: (gameState, playerState) =>
       gameState.phase === 'COUNTERING' &&
-      wealthCount(playerState) >= 3 &&
+      wealthCount(playerState, gameState) >= 3 &&
       playerState.hand.length >= 3 &&
       !!findOpponentNonGodPlay(gameState, playerState.uid),
     cost: discardHandCost(3),

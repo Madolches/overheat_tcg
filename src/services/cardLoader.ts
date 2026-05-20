@@ -50,7 +50,8 @@ export function hydrateCard(card: Card | null) {
         resolve: originalEffect.resolve,
         targetSpec: originalEffect.targetSpec,
         applyContinuous: originalEffect.applyContinuous,
-        removeContinuous: originalEffect.removeContinuous
+        removeContinuous: originalEffect.removeContinuous,
+        wealthValue: originalEffect.wealthValue ?? runtimeEffect?.wealthValue
       };
     });
   }

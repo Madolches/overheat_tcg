@@ -2,6 +2,7 @@ import { Card, CardEffect, GameEvent, GameState, PlayerState, TriggerLocation } 
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 export { AtomicEffectExecutor };
 import { EventEngine } from '../services/EventEngine';
+import { getCardWealthValue, getPlayerWealthCount } from '../lib/wealth';
 
 const VIRTUAL_GOD_MARK_IDS = new Set(['105000472', '105000473']);
 
@@ -864,21 +865,15 @@ export const isOtherworldBat = (card: Card) =>
   card.fullName.includes('异界狂蝠') ||
   !!(card as any).data?.extraNameContainsOtherworldBatBy;
 
-export const getCardWealthValue = (card: Card) => {
-  const dataValue = Number((card as any).data?.wealthValue || 0);
-  const textValue = Math.max(0, ...((card.effects || [])
-    .map(effect => effect.description.match(/财富\s*(\d+)/)?.[1])
-    .filter(Boolean)
-    .map(Number)));
-  return Math.max(dataValue, textValue);
-};
+export { getCardWealthValue };
 
-export const wealthCount = (player: PlayerState) =>
-  ownUnits(player).reduce((total, unit) => total + getCardWealthValue(unit), 0);
+export const wealthCount = (player: PlayerState, gameState?: GameState) =>
+  getPlayerWealthCount(player, { turnCount: gameState?.turnCount });
 
 export const wealthContinuous = (id: string, value: number): CardEffect => ({
   id,
   type: 'CONTINUOUS',
+  wealthValue: value,
   description: `财富${value}（只要这个单位在战场上，你获得${value}个财富指示物）。`
 });
 

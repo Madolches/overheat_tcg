@@ -1,6 +1,7 @@
 import { ServerGameService } from '../server/ServerGameService';
 import { EventEngine } from '../src/services/EventEngine';
 import { Card, TriggerLocation } from '../src/types/game';
+import { getCardWealthValue, getPlayerWealthCount } from '../src/lib/wealth';
 import { moveCardAsCost } from '../src/scripts/BaseUtil';
 import bt06W01 from '../src/scripts/101100342';
 import bt06W02 from '../src/scripts/101140343';
@@ -12,6 +13,7 @@ import bt06W08 from '../src/scripts/201140100';
 import bt06W09 from '../src/scripts/201140101';
 import bt06W11 from '../src/scripts/101140347';
 import bt06B01 from '../src/scripts/104020335';
+import bt06B02 from '../src/scripts/104020336';
 import bt06B03 from '../src/scripts/104020337';
 import bt06B04 from '../src/scripts/104020338';
 import bt06B05 from '../src/scripts/104020339';
@@ -745,6 +747,31 @@ async function testBlueWealthCounterAndLogistics(): Promise<ScenarioResult> {
   return counteredToHand && costPaid && recruitedLive
     ? pass(name, `counteredToHand=${counteredToHand}, recruited=${recruitedLive}`)
     : fail(name, `countered=${counteredToHand}, costPaid=${costPaid}, recruited=${recruitedLive}`);
+}
+
+async function testBlueWealthCountUsesContinuousOnly(): Promise<ScenarioResult> {
+  const name = 'BT06-B wealth counter counts only Wealth continuous effects';
+  const logistics = cloneScriptCard(bt06B01 as Card, 'UNIT');
+  const rolys = cloneScriptCard(bt06B03 as Card, 'UNIT');
+  const caravan = cloneScriptCard(bt06B04 as Card, 'UNIT');
+  const aketi = cloneScriptCard(bt06B05 as Card, 'UNIT');
+  const tradeExpert = cloneScriptCard(bt06B02 as Card, 'UNIT');
+  const silencedLogistics = cloneScriptCard(bt06B01 as Card, 'UNIT');
+  const state = game({
+    unitZone: [logistics, rolys, caravan, aketi, tradeExpert, null],
+  });
+  const silencedState = game({
+    unitZone: [silencedLogistics, null, null, null, null, null],
+  });
+  (silencedLogistics as any).data = { fullEffectSilencedTurn: silencedState.turnCount };
+
+  const totalWealth = getPlayerWealthCount(state.players.BOT);
+  const tradeExpertWealth = getCardWealthValue(tradeExpert);
+  const silencedWealth = getPlayerWealthCount(silencedState.players.BOT, { turnCount: silencedState.turnCount });
+
+  return totalWealth === 5 && tradeExpertWealth === 0 && silencedWealth === 0
+    ? pass(name, `wealth=${totalWealth}, tradeExpert=${tradeExpertWealth}, silenced=${silencedWealth}`)
+    : fail(name, `wealth=${totalWealth}, tradeExpert=${tradeExpertWealth}, silenced=${silencedWealth}`);
 }
 
 async function testBlueAketiTeteruAndRecord(): Promise<ScenarioResult> {
@@ -1817,6 +1844,7 @@ const scenarios: ScenarioRun[] = [
   testPrayerSearchesKeyUnit,
   testLivianLeaveAndCounterWhenShingiPlaced,
   testBlueWealthCounterAndLogistics,
+  testBlueWealthCountUsesContinuousOnly,
   testBlueAketiTeteruAndRecord,
   testBlueCheckLetsOpponentPayOrCounters,
   testBlueSheathAndFuka,

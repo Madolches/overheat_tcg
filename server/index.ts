@@ -3040,7 +3040,8 @@ function serializeCatalogCard(card: Card, includeEffects: boolean): Card {
             ? card.effects?.map(effect => ({
                 type: effect.type,
                 description: effect.description,
-                content: effect.content
+                content: effect.content,
+                wealthValue: effect.wealthValue
             }))
             : undefined,
         imageUrl: card.imageUrl,

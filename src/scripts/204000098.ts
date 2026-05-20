@@ -25,7 +25,7 @@ const cardEffects: CardEffect[] = [{
   triggerLocation: ['PLAY'],
   description: '财富3以上，选择1项：恢复2后抽2；或将侵蚀区1张非神蚀卡放置到战场；或对手抽3后舍弃3。直到下一次你的回合开始失去那项效果。',
   condition: (gameState, playerState, instance) =>
-    wealthCount(playerState) >= 3 &&
+    wealthCount(playerState, gameState) >= 3 &&
     (
       (modeEnabled(instance, gameState, 'RECOVER_DRAW') && playerState.deck.length >= 2) ||
       (modeEnabled(instance, gameState, 'PUT_EROSION') && erosionPutTargets(playerState).length > 0) ||
