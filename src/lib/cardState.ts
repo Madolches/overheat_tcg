@@ -3,16 +3,24 @@ import type { Card, TriggerLocation } from '../types/game';
 const FIELD_ZONES = new Set<TriggerLocation>(['UNIT', 'ITEM']);
 
 const FIELD_LEAVE_DATA_PREFIXES_TO_KEEP = [
-  'returnFromExileAfterBattle'
+  'returnFromExileAfterBattle',
+  'permanentEffectSilenced',
+  'pendingKuriLeaveRevive',
+  'fullEffectSilencedUntilOwnStart'
 ];
 
 export const isFieldZone = (zone?: TriggerLocation) => !!zone && FIELD_ZONES.has(zone);
 
-const getPreservedFieldLeaveData = (data: any) => {
+const getPreservedFieldLeaveData = (card: Card, data: any) => {
   if (!data) return undefined;
+  const prefixes = [...FIELD_LEAVE_DATA_PREFIXES_TO_KEEP];
+  if (card.id === '101140347') {
+    prefixes.push('placedByShingiEffect');
+    prefixes.push('pendingLivianShingiLeave');
+  }
   const preserved: Record<string, any> = {};
   Object.keys(data).forEach(key => {
-    if (FIELD_LEAVE_DATA_PREFIXES_TO_KEEP.some(prefix => key.startsWith(prefix))) {
+    if (prefixes.some(prefix => key.startsWith(prefix))) {
       preserved[key] = data[key];
     }
   });
@@ -20,7 +28,7 @@ const getPreservedFieldLeaveData = (data: any) => {
 };
 
 export const clearBattlefieldState = (card: Card) => {
-  const preservedData = getPreservedFieldLeaveData((card as any).data);
+  const preservedData = getPreservedFieldLeaveData(card, (card as any).data);
   if (preservedData) (card as any).data = preservedData;
   else delete (card as any).data;
 
@@ -28,6 +36,13 @@ export const clearBattlefieldState = (card: Card) => {
   delete (card as any).battleForbiddenByEffect;
   delete (card as any).cannotBeAttackTargetByEffect;
   delete (card as any).cannotBeEffectTargetByEffect;
+  if ((card as any).data?.cannotBeEffectTargetColors !== undefined) {
+    delete (card as any).data.cannotBeEffectTargetColors;
+  }
+  if ((card as any).data?.cannotBeEffectTargetByOpponent !== undefined) {
+    delete (card as any).data.cannotBeEffectTargetByOpponent;
+    delete (card as any).data.cannotBeEffectTargetByOpponentSourceName;
+  }
   delete (card as any).battleImmuneByEffect;
 
   card.declaredTargetMarkers = [];

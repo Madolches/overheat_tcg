@@ -42,6 +42,7 @@ export type GameEventType =
   | 'GODDESS_EXIT'
   | 'EFFECT_COUNTERED'
   | 'CARD_SELECTED_TARGET'
+  | 'CARD_EQUIPPED'
   | 'CARD_EXILED'
   | 'CARD_LEFT_FIELD'
   | 'CARD_DISCARDED'

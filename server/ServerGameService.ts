@@ -7,7 +7,7 @@ import { getCardIdentity, getLocationLabel } from '../src/lib/utils';
 import { addBattleLog, cardToBattleLogRef, describeBattleLogTarget } from '../src/lib/battleLog';
 import { SERVER_CARD_LIBRARY } from './card_loader';
 import { GameService } from '../src/services/gameService';
-import { grantedTotemReviveFromGrave, standardizeChoiceOptions } from '../src/scripts/BaseUtil';
+import { grantedTotemReviveFromGrave, isOpponentAcAtMost, standardizeChoiceOptions } from '../src/scripts/BaseUtil';
 import { BotDifficulty, DeckAiProfile } from './ai/types';
 import { getDeckAiProfile } from './ai/deckProfiles';
 import { inferPlayerDeckProfile } from './ai/playerDeckProfile';
@@ -78,6 +78,8 @@ export const ServerGameService = {
 
   isFullEffectSilencedThisTurn(gameState: GameState, card: Card) {
     const data = (card as any).data;
+    if (data?.permanentEffectSilenced) return true;
+    if (data?.fullEffectSilencedUntilOwnStartUid) return true;
     if (data?.fullEffectSilencedTurn !== gameState.turnCount) return false;
     const zones = data.fullEffectSilencedZones as TriggerLocation[] | undefined;
     return !zones || zones.includes(card.cardlocation as TriggerLocation);
@@ -267,12 +269,43 @@ export const ServerGameService = {
       gameState.logs.push(`[${target.fullName}] 不受对手宣言颜色的卡牌效果影响。`);
       return true;
     }
+    if (
+      data.unaffectedByOpponentAcLe !== undefined &&
+      isOpponentAcAtMost(gameState, target, source, Number(data.unaffectedByOpponentAcLe), effectSourceOwnerUid)
+    ) {
+      gameState.logs.push(`[${target.fullName}] is unaffected by opponent ACCESS ${data.unaffectedByOpponentAcLe} or less card effects.`);
+      return true;
+    }
     return false;
   },
 
   isLegalDeclaredTarget(gameState: GameState, sourceCard: Card, target: Card) {
     if (target.gamecardId === sourceCard.gamecardId) return true;
-    if (target.cardlocation === 'UNIT' && (target as any).cannotBeEffectTargetByEffect) return false;
+    const isFieldCard = target.cardlocation === 'UNIT' || target.cardlocation === 'ITEM';
+    const data = (target as any).data || {};
+    if (isFieldCard && (target as any).cannotBeEffectTargetByEffect) return false;
+    if (
+      isFieldCard &&
+      data.cannotBeEffectTargetByOpponent
+    ) {
+      const sourceOwnerUid = ServerGameService.findCardLocation(gameState, sourceCard.gamecardId)?.ownerUid;
+      const targetOwnerUid = ServerGameService.findCardLocation(gameState, target.gamecardId)?.ownerUid;
+      if (sourceOwnerUid && targetOwnerUid && sourceOwnerUid !== targetOwnerUid) return false;
+    }
+    if (
+      isFieldCard &&
+      Array.isArray(data.cannotBeEffectTargetColors) &&
+      data.cannotBeEffectTargetColors.includes(sourceCard.color)
+    ) {
+      return false;
+    }
+    if (
+      isFieldCard &&
+      data.cannotBeEffectTargetByOpponentAcLe !== undefined &&
+      isOpponentAcAtMost(gameState, target, sourceCard, Number(data.cannotBeEffectTargetByOpponentAcLe))
+    ) {
+      return false;
+    }
     return true;
   },
 
@@ -936,10 +969,14 @@ export const ServerGameService = {
     return { valid: true };
   },
 
-  exhaustCard(card: Card) {
-    if (card) {
-      card.isExhausted = true;
+  exhaustCard(card: Card, gameState?: GameState) {
+    if (!card) return false;
+    const untilTurn = (card as any).data?.cannotExhaustUntilTurn;
+    if (untilTurn !== undefined && (!gameState || untilTurn >= gameState.turnCount)) {
+      return false;
     }
+    card.isExhausted = true;
+    return true;
   },
 
   readyCard(card: Card) {
@@ -989,7 +1026,7 @@ export const ServerGameService = {
       return;
     }
 
-    target.isExhausted = true;
+    if (!ServerGameService.exhaustCard(target, gameState)) return;
     gameState.battleState.unitTargetId = target.gamecardId;
     gameState.battleState.defender = target.gamecardId;
     gameState.battleState.defenseLockedToTargetId = target.gamecardId;
@@ -1022,13 +1059,14 @@ export const ServerGameService = {
     const candidates = defenderPlayer.unitZone.filter((unit): unit is Card =>
       !!unit &&
       unit.id === '104020246' &&
-      !unit.isExhausted
+      !unit.isExhausted &&
+      !((unit as any).data?.cannotExhaustUntilTurn !== undefined && (unit as any).data.cannotExhaustUntilTurn >= gameState.turnCount)
     );
 
     if (candidates.length !== 1) return false;
 
     const target = candidates[0];
-    target.isExhausted = true;
+    if (!ServerGameService.exhaustCard(target, gameState)) return false;
     gameState.battleState.unitTargetId = target.gamecardId;
     gameState.battleState.defender = target.gamecardId;
     gameState.battleState.defenseLockedToTargetId = target.gamecardId;
@@ -1283,6 +1321,34 @@ export const ServerGameService = {
           return false;
         }
       }
+      if (
+        options?.isEffect &&
+        (sourceZone === 'UNIT' || sourceZone === 'ITEM') &&
+        !['UNIT', 'ITEM'].includes(targetZone) &&
+        options.effectSourcePlayerUid &&
+        options.effectSourcePlayerUid !== sourcePlayerId &&
+        (card as any).data?.cannotLeaveFieldByOpponentEffectTurn === gameState.turnCount
+      ) {
+        const sourceName = (card as any).data?.cannotLeaveFieldByOpponentEffectSourceName || '卡牌效果';
+        gameState.logs.push(`[${sourceName}] 防止了 [${card.fullName}] 因对手效果从战场离开。`);
+        return false;
+      }
+      if (
+        options?.isEffect &&
+        (sourceZone === 'UNIT' || sourceZone === 'ITEM') &&
+        !['UNIT', 'ITEM'].includes(targetZone) &&
+        options.effectSourceCardId
+      ) {
+        const sourceCard = ServerGameService.findCardById(gameState, options.effectSourceCardId);
+        if (
+          sourceCard &&
+          (card as any).data?.cannotLeaveFieldByOpponentAcLe !== undefined &&
+          isOpponentAcAtMost(gameState, card, sourceCard, Number((card as any).data.cannotLeaveFieldByOpponentAcLe), options.effectSourcePlayerUid)
+        ) {
+          gameState.logs.push(`[${card.fullName}] cannot leave the field by opponent ACCESS ${(card as any).data.cannotLeaveFieldByOpponentAcLe} or less card effects.`);
+          return false;
+        }
+      }
       previousSourceCardIdForMove = card.gamecardId;
       if (sourceZone === 'UNIT' || sourceZone === 'ITEM' || sourceZone === 'EROSION_FRONT' || sourceZone === 'EROSION_BACK') {
         sourceArray[index] = null;
@@ -1301,6 +1367,16 @@ export const ServerGameService = {
     if (targetZone === 'GRAVE' && (card.id === '201000140' || card.id === '201000040' || card.fullName === '解放之光')) {
       targetZone = 'EXILE';
       gameState.logs.push(`[替换效果] [${card.fullName}] 将要被送入墓地，改为放逐。`);
+    }
+
+    if (
+      (sourceZone === 'UNIT' || sourceZone === 'ITEM') &&
+      targetZone !== 'EXILE' &&
+      !['UNIT', 'ITEM'].includes(targetZone) &&
+      (card as any).data?.exileWhenLeavesFieldSourceName
+    ) {
+      targetZone = 'EXILE';
+      gameState.logs.push(`[替换效果] [${card.fullName}] 离开战场时改为放逐。`);
     }
 
     if (
@@ -1837,7 +1913,12 @@ export const ServerGameService = {
             if (reservedDeckCard) player.deck.push(reservedDeckCard);
             return { success: false, reason: '不能横置本次宣言的单位来支付该费用' };
           }
-          const card = [...player.unitZone].find(c => c?.gamecardId === uid && !c.isExhausted && !(c as any).data?.cannotExhaustByEffect);
+          const card = [...player.unitZone].find(c =>
+            c?.gamecardId === uid &&
+            !c.isExhausted &&
+            !(c as any).data?.cannotExhaustByEffect &&
+            !((c as any).data?.cannotExhaustUntilTurn !== undefined && (c as any).data.cannotExhaustUntilTurn >= gameState.turnCount)
+          );
           if (card) {
             cardsToExhaust.push(card);
           } else {
@@ -1862,7 +1943,7 @@ export const ServerGameService = {
       remainingCost = selectedAccessMax >= remainingCost ? 0 : remainingCost - selectedAccessMax;
 
       // Actually exhaust them
-      cardsToExhaust.forEach(c => ServerGameService.exhaustCard(c));
+      cardsToExhaust.forEach(c => ServerGameService.exhaustCard(c, gameState));
       const exhaustedUnits = cardsToExhaust.map(card => ({ id: card.gamecardId, name: card.fullName }));
       const erosionCostCards: { id: string; name: string }[] = [];
       let feijingSummary: PaymentSummary['feijingCard'];
@@ -2178,10 +2259,24 @@ export const ServerGameService = {
       if (card) location = 'HAND';
     }
 
+    let cardControllerId = playerId;
+    if (!card) {
+      const opponentId = gameState.playerIds.find(id => id !== playerId);
+      const opponent = opponentId ? gameState.players[opponentId] : undefined;
+      if (opponent) {
+        findInZones([opponent.unitZone], 'UNIT');
+        if (!card) findInZones([opponent.itemZone], 'ITEM');
+        if (card) cardControllerId = opponentId!;
+      }
+    }
+
     if (!card) throw new Error('Card not found');
 
     const effect = card.effects?.[effectIndex];
     if (!effect) throw new Error('Effect not found');
+    if (cardControllerId !== playerId && !(effect as any).canBeActivatedByOpponent) {
+      throw new Error('不能发动对手卡牌的效果');
+    }
     const loc = location || (card.cardlocation as TriggerLocation);
     const result = ServerGameService.checkEffectLimitsAndReqs(gameState, playerId, card, effect, loc);
     if (!result.valid) {
@@ -2453,23 +2548,25 @@ export const ServerGameService = {
               }
             }
             const liveStory = owner.playZone.find(c => c?.gamecardId === card.gamecardId);
-            const replaceToExile = liveStory?.effects?.some(effect =>
-              effect.type === 'CONTINUOUS' &&
-              effect.content === 'EXILE_WHEN_LEAVES_PLAY_TO_GRAVE'
-            );
-            ServerGameService.moveCard(
-              gameState,
-              stackItem.ownerUid,
-              'PLAY',
-              stackItem.ownerUid,
-              replaceToExile ? 'EXILE' : 'GRAVE',
-              card.gamecardId,
-              replaceToExile ? {
-                isEffect: true,
-                effectSourcePlayerUid: stackItem.ownerUid,
-                effectSourceCardId: card.gamecardId
-              } : undefined
-            );
+            if (liveStory) {
+              const replaceToExile = liveStory.effects?.some(effect =>
+                effect.type === 'CONTINUOUS' &&
+                effect.content === 'EXILE_WHEN_LEAVES_PLAY_TO_GRAVE'
+              );
+              ServerGameService.moveCard(
+                gameState,
+                stackItem.ownerUid,
+                'PLAY',
+                stackItem.ownerUid,
+                replaceToExile ? 'EXILE' : 'GRAVE',
+                card.gamecardId,
+                replaceToExile ? {
+                  isEffect: true,
+                  effectSourcePlayerUid: stackItem.ownerUid,
+                  effectSourceCardId: card.gamecardId
+                } : undefined
+              );
+            }
           }
           const identity = getCardIdentity(gameState, stackItem.ownerUid, card);
           ServerGameService.clearDeclaredTargetMarkers(gameState, stackItem.declaredTargets);
@@ -3292,7 +3389,10 @@ export const ServerGameService = {
         });
         gameState.logs.push(`[${sourceCard.fullName}] 舍弃 ${amount} 张手牌作为费用。`);
         if (query.context?.exhaustSourceAsCost) {
-          sourceCard.isExhausted = true;
+          if (!ServerGameService.exhaustCard(sourceCard, gameState)) {
+            gameState.pendingQuery = query;
+            throw new Error(`[${sourceCard.fullName}] 不能横置自身支付费用`);
+          }
           EventEngine.dispatchEvent(gameState, {
             type: 'CARD_ROTATED',
             sourceCard,
@@ -3483,7 +3583,7 @@ export const ServerGameService = {
       // Exhaust remaining units
       attackingUnits.forEach(u => {
         const unit = attacker.unitZone.find(uz => uz?.gamecardId === u.gamecardId);
-        if (unit) unit.isExhausted = true;
+        if (unit) ServerGameService.exhaustCard(unit, gameState);
       });
 
       // Annihilation for survivor
@@ -3768,6 +3868,9 @@ export const ServerGameService = {
       if ((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount) {
         throw new Error(`单位 [${unit.fullName}] 由于 [${(unit as any).data.cannotAttackOrDefendSourceName || '卡牌效果'}] 不能宣言攻击`);
       }
+      if ((unit as any).data?.cannotExhaustUntilTurn !== undefined && (unit as any).data.cannotExhaustUntilTurn >= gameState.turnCount) {
+        throw new Error(`单位 [${unit.fullName}] 由于 [${(unit as any).data.cannotExhaustSourceName || '卡牌效果'}] 不能横置`);
+      }
       if (isAlliance && (unit as any).data?.cannotAllianceByEffect) {
         throw new Error(`单位 [${unit.fullName}] 由于效果不能组成联军`);
       }
@@ -3860,7 +3963,7 @@ export const ServerGameService = {
 
     // Exhaust attackers
     for (const unit of attackers) {
-      ServerGameService.exhaustCard(unit);
+      ServerGameService.exhaustCard(unit, gameState);
       if ((player as any).snowstormTurn === gameState.turnCount) {
         unit.temporaryDamageBuff = (unit.temporaryDamageBuff || 0) - 1;
         unit.temporaryPowerBuff = (unit.temporaryPowerBuff || 0) - 1000;
@@ -3933,6 +4036,9 @@ export const ServerGameService = {
       if ((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount) {
         throw new Error(`单位 [${unit.fullName}] 由于 [${(unit as any).data.cannotAttackOrDefendSourceName || '卡牌效果'}] 不能宣言防御`);
       }
+      if ((unit as any).data?.cannotExhaustUntilTurn !== undefined && (unit as any).data.cannotExhaustUntilTurn >= gameState.turnCount) {
+        throw new Error(`单位 [${unit.fullName}] 由于 [${(unit as any).data.cannotExhaustSourceName || '卡牌效果'}] 不能横置`);
+      }
 
       const lockedTargetId = gameState.battleState.defenseLockedToTargetId;
       if (lockedTargetId && defenderId !== lockedTargetId) {
@@ -3978,7 +4084,7 @@ export const ServerGameService = {
         return gameState;
       }
 
-      ServerGameService.exhaustCard(unit);
+      ServerGameService.exhaustCard(unit, gameState);
       if ((player as any).snowstormTurn === gameState.turnCount) {
         unit.temporaryDamageBuff = (unit.temporaryDamageBuff || 0) - 1;
         unit.temporaryPowerBuff = (unit.temporaryPowerBuff || 0) - 1000;
@@ -4341,7 +4447,7 @@ export const ServerGameService = {
       const keepResetUnitIds = new Set(gameState.battleState.keepResetUnitIds || []);
       attackingUnits.forEach(u => {
         const unit = attacker.unitZone.find(uz => uz?.gamecardId === u.gamecardId);
-        if (unit && !keepResetUnitIds.has(unit.gamecardId)) unit.isExhausted = true;
+        if (unit && !keepResetUnitIds.has(unit.gamecardId)) ServerGameService.exhaustCard(unit, gameState);
       });
     }
 
@@ -4710,6 +4816,19 @@ export const ServerGameService = {
       }
     }
 
+    if (
+      isEffect &&
+      sourcePlayerId &&
+      sourcePlayerId !== playerId &&
+      (unit as any).data?.unaffectedByOpponentAcLe !== undefined
+    ) {
+      const sourceCard = gameState.currentProcessingItem?.card;
+      if (sourceCard && isOpponentAcAtMost(gameState, unit, sourceCard, Number((unit as any).data.unaffectedByOpponentAcLe), sourcePlayerId)) {
+        gameState.logs.push(`[${unit.fullName}] is unaffected by opponent ACCESS ${(unit as any).data.unaffectedByOpponentAcLe} or less card effects.`);
+        return false;
+      }
+    }
+
     if ((unit as any).data?.returnToHandOnDestroyTurn === gameState.turnCount) {
       ServerGameService.moveCard(gameState, playerId, zone, playerId, 'HAND', gamecardId, {
         isEffect: true,
@@ -4719,6 +4838,28 @@ export const ServerGameService = {
       gameState.logs.push(`[替换效果] ${unit.fullName} 本回合被破坏时改为返回手牌。`);
       await ServerGameService.checkTriggeredEffects(gameState);
       return false;
+    }
+
+    if (!skipSubstitution && (unit as any).data?.betisCanDestroyBatInstead) {
+      const bat = player.unitZone.find(candidate =>
+        candidate &&
+        candidate.gamecardId !== unit.gamecardId &&
+        (
+          candidate.id === '102070357' ||
+          candidate.fullName.includes('异界狂蝠') ||
+          !!(candidate as any).data?.extraNameContainsOtherworldBatBy
+        )
+      );
+      if (bat) {
+        ServerGameService.moveCard(gameState, playerId, 'UNIT', playerId, 'GRAVE', bat.gamecardId, {
+          isEffect: true,
+          effectSourcePlayerUid: playerId,
+          effectSourceCardId: unit.gamecardId
+        });
+        gameState.logs.push(`[${unit.fullName}] destroyed [${bat.fullName}] instead of being destroyed.`);
+        await ServerGameService.checkTriggeredEffects(gameState);
+        return false;
+      }
     }
 
     if (!isEffect && !skipSubstitution && !skip102050091BattleSave) {
@@ -5057,6 +5198,10 @@ export const ServerGameService = {
           if ((card as any).data?.cannotAttackOrDefendUntilTurn !== undefined && (card as any).data.cannotAttackOrDefendUntilTurn < gameState.turnCount) {
             delete (card as any).data.cannotAttackOrDefendUntilTurn;
             delete (card as any).data.cannotAttackOrDefendSourceName;
+          }
+          if ((card as any).data?.cannotExhaustUntilTurn !== undefined && (card as any).data.cannotExhaustUntilTurn < gameState.turnCount) {
+            delete (card as any).data.cannotExhaustUntilTurn;
+            delete (card as any).data.cannotExhaustSourceName;
           }
           if ((card as any).data?.cannotActivateUntilTurn !== undefined && (card as any).data.cannotActivateUntilTurn < gameState.turnCount) {
             delete (card as any).data.cannotActivateUntilTurn;
@@ -5615,6 +5760,10 @@ export const ServerGameService = {
           }
           if ((c as any).data?.fullEffectSilencedTurn !== undefined) {
             delete (c as any).data.fullEffectSilencedTurn;
+            delete (c as any).data.fullEffectSilenceSource;
+          }
+          if ((c as any).data?.fullEffectSilencedUntilOwnStartUid === player.uid) {
+            delete (c as any).data.fullEffectSilencedUntilOwnStartUid;
             delete (c as any).data.fullEffectSilenceSource;
           }
           if ((c as any).data?.combatImmuneUntilOwnNextTurnStartUid === player.uid) {

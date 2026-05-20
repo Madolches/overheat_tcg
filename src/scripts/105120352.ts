@@ -1,18 +1,80 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import {
+  AtomicEffectExecutor,
+  canPutCardOntoBattlefieldByEffect,
+  createSelectCardQuery,
+  moveCard,
+  putCardOntoField,
+  silenceAllNonKeywordEffectsUntilOwnStart
+} from './BaseUtil';
 
-/**
- * Auto-generated from Card.xlsx + Card2.xlsx.
- * Source CardID: 105120352
- * Card2 Row: 486
- * Card Row: 419
- * Source CardNo: BT06-Y05
- * Package: BT06(SR)
- * ID Source: card-xlsx
- * Keywords: N/A
- * Card Detail:
- * 【诱】{你的回合结束时，选择你战场上的2张以上的卡}：你可以将被选择的卡送去墓地。之后，将你卡组中的1张非神蚀卡放置到战场上，那张卡的所有效果直到下一次你的回合开始为止无效（不包括关键词效果）。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
- */
+const ownFieldCards = (playerState: any) =>
+  [...playerState.unitZone, ...playerState.itemZone].filter((card): card is Card => !!card);
+
+const deckCandidates = (playerState: any) =>
+  playerState.deck.filter((card: Card) =>
+    !card.godMark &&
+    (card.type === 'UNIT' || card.type === 'ITEM') &&
+    canPutCardOntoBattlefieldByEffect(playerState, card)
+  );
+
+const effect_105120352_end_alchemy: CardEffect = {
+  id: '105120352_end_alchemy',
+  type: 'TRIGGER',
+  triggerLocation: ['UNIT'],
+  triggerEvent: 'TURN_END' as any,
+  description: '你的回合结束时，选择你的战场2张以上卡，可将其送墓。之后将卡组1张非神蚀卡放置到战场，其所有非关键词效果直到下个你的回合开始无效。',
+  condition: (_gameState, playerState) =>
+    playerState.isTurn &&
+    ownFieldCards(playerState).length >= 2 &&
+    deckCandidates(playerState).length > 0,
+  execute: async (instance, gameState, playerState) => {
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      ownFieldCards(playerState),
+      '选择炼金素材',
+      '选择你的战场上的2张以上卡送入墓地。',
+      2,
+      ownFieldCards(playerState).length,
+      { sourceCardId: instance.gamecardId, effectId: '105120352_end_alchemy', step: 'SEND_FIELD' }
+    );
+  },
+  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step === 'SEND_FIELD') {
+      selections.forEach(cardId => {
+        const target = AtomicEffectExecutor.findCardById(gameState, cardId);
+        const ownerUid = target ? AtomicEffectExecutor.findCardOwnerKey(gameState, target.gamecardId) : undefined;
+        if (target && ownerUid === playerState.uid && (target.cardlocation === 'UNIT' || target.cardlocation === 'ITEM')) {
+          moveCard(gameState, playerState.uid, target, 'GRAVE', instance);
+        }
+      });
+      const candidates = deckCandidates(playerState);
+      if (candidates.length === 0) return;
+      createSelectCardQuery(
+        gameState,
+        playerState.uid,
+        candidates,
+        '选择放置卡',
+        '从你的卡组选择1张非神蚀卡放置到战场。',
+        1,
+        1,
+        { sourceCardId: instance.gamecardId, effectId: '105120352_end_alchemy', step: 'PUT_CARD' },
+        () => 'DECK'
+      );
+      return;
+    }
+
+    if (context?.step !== 'PUT_CARD') return;
+    const selected = AtomicEffectExecutor.findCardById(gameState, selections[0]);
+    if (!selected || selected.cardlocation !== 'DECK' || selected.godMark) return;
+    if (!putCardOntoField(gameState, playerState.uid, selected, instance)) return;
+    const live = AtomicEffectExecutor.findCardById(gameState, selected.gamecardId);
+    if (live) silenceAllNonKeywordEffectsUntilOwnStart(live, instance, playerState.uid);
+    await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'SHUFFLE_DECK' }, instance);
+  }
+};
+
 const card: Card = {
   id: '105120352',
   fullName: '憧憬的炼金「伊丽瑟薇」',
@@ -21,20 +83,23 @@ const card: Card = {
   color: 'YELLOW',
   gamecardId: null as any,
   colorReq: { YELLOW: 1 },
+  baseColorReq: { YELLOW: 1 },
   faction: '永生之乡',
   acValue: 3,
+  baseAcValue: 3,
   power: 1500,
   basePower: 1500,
   damage: 1,
   baseDamage: 1,
   godMark: false,
+  baseGodMark: false,
   displayState: 'FRONT_UPRIGHT',
   isExhausted: false,
   isrush: false,
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: [effect_105120352_end_alchemy],
   rarity: 'SR',
   availableRarities: ['SR'],
   cardPackage: 'BT06',

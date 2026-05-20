@@ -7,6 +7,8 @@ import { addBattleLog, cardToBattleLogRef } from '../lib/battleLog';
 export class EventEngine {
   private static isFullEffectSilenced(gameState: GameState, card: Card) {
     const data = (card as any).data;
+    if (data?.permanentEffectSilenced) return true;
+    if (data?.fullEffectSilencedUntilOwnStartUid) return true;
     if (data?.fullEffectSilencedTurn !== gameState.turnCount) return false;
     const zones = data.fullEffectSilencedZones as TriggerLocation[] | undefined;
     return !zones || zones.includes(card.cardlocation as TriggerLocation);
@@ -212,6 +214,13 @@ export class EventEngine {
           delete (card as any).cannotBeAttackTargetByEffect;
           delete (card as any).cannotBeEffectTargetByEffect;
           delete (card as any).battleImmuneByEffect;
+          if ((card as any).data?.cannotBeEffectTargetColors !== undefined) {
+            delete (card as any).data.cannotBeEffectTargetColors;
+          }
+          if ((card as any).data?.cannotBeEffectTargetByOpponent !== undefined) {
+            delete (card as any).data.cannotBeEffectTargetByOpponent;
+            delete (card as any).data.cannotBeEffectTargetByOpponentSourceName;
+          }
           if ((card as any).data?.cannotAllianceByEffect !== undefined) {
             delete (card as any).data.cannotAllianceByEffect;
           }
@@ -269,6 +278,16 @@ export class EventEngine {
             card.isShenyi = true;
           }
           if ((card as any).data) {
+            if ((card as any).data.cannotExhaustContinuous) {
+              delete (card as any).data.cannotExhaustContinuous;
+              delete (card as any).data.cannotExhaustUntilTurn;
+              delete (card as any).data.cannotExhaustSourceName;
+            }
+            if ((card as any).data.cannotAttackOrDefendContinuous) {
+              delete (card as any).data.cannotAttackOrDefendContinuous;
+              delete (card as any).data.cannotAttackOrDefendUntilTurn;
+              delete (card as any).data.cannotAttackOrDefendSourceName;
+            }
             if ((card as any).data.grantedTotemReviveBy103080184) {
               delete (card as any).data.grantedTotemReviveBy103080184;
               delete (card as any).data.grantedTotemReviveSourceName;
@@ -391,8 +410,8 @@ export class EventEngine {
         if (card && this.isFullEffectSilenced(gameState, card)) {
           if (!card.influencingEffects) card.influencingEffects = [];
           card.influencingEffects.push({
-            sourceCardName: (card as any).data?.fullEffectSilenceSource || '系统状态',
-            description: '本回合失去所有效果'
+            sourceCardName: (card as any).data?.permanentEffectSilenceSource || (card as any).data?.fullEffectSilenceSource || '系统状态',
+            description: (card as any).data?.permanentEffectSilenced ? '失去所有非关键词效果' : '本回合失去所有效果'
           });
         }
         if (card && (card as any).data?.combatImmuneUntilOwnNextTurnStartUid) {
@@ -491,6 +510,13 @@ export class EventEngine {
             card.influencingEffects.push({
               sourceCardName: (card as any).data.cannotActivateSourceName || '效果',
               description: '不能发动能力'
+            });
+          }
+          if (card && (card as any).data?.cannotExhaustUntilTurn !== undefined && (card as any).data.cannotExhaustUntilTurn >= gameState.turnCount) {
+            if (!card.influencingEffects) card.influencingEffects = [];
+            card.influencingEffects.push({
+              sourceCardName: (card as any).data.cannotExhaustSourceName || '效果',
+              description: '不能横置'
             });
           }
           if (card && (card as any).data?.freezeUntilTurn !== undefined && (card as any).data.freezeUntilTurn >= gameState.turnCount) {

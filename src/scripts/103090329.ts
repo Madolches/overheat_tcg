@@ -11,7 +11,6 @@ import { Card } from '../types/game';
  * Keywords: N/A
  * Card Detail:
  * 【菲晶】（为同色卡支付使用费用时，可以将手牌中的这张卡舍弃，尽可能代替支付+3。）
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '103090329',

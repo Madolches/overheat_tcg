@@ -1,18 +1,47 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import { createSelectCardQuery, getOpponentUid, isNonGodUnit, markCanAttackAnyUnit, moveCard, ownUnits } from './BaseUtil';
 
-/**
- * Auto-generated from Card.xlsx + Card2.xlsx.
- * Source CardID: 202000104
- * Card2 Row: 500
- * Card Row: 430
- * Source CardNo: BT06-R08
- * Package: BT06(C)
- * ID Source: card-xlsx
- * Keywords: N/A
- * Card Detail:
- * 〖同名1回合1次〗{你的主要阶段，选择对手战场上的1个非神蚀单位}：本回合中，你的战场上的单位可以攻击被选择的单位。将这张卡放逐。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
- */
+const opponentNonGodUnits = (gameState: any, playerUid: string) =>
+  gameState.players[getOpponentUid(gameState, playerUid)].unitZone
+    .filter((unit: Card | null): unit is Card => !!unit && isNonGodUnit(unit));
+
+const cardEffects: CardEffect[] = [{
+  id: '202000104_track_attack_target',
+  type: 'ACTIVATE',
+  triggerLocation: ['PLAY'],
+  limitCount: 1,
+  limitNameType: true,
+  description: '同名1回合1次：你的主要阶段，选择对手战场上的1个非神蚀单位。本回合中，你战场上的单位可以攻击被选择的单位。将这张卡放逐。',
+  condition: (gameState, playerState) =>
+    playerState.isTurn &&
+    gameState.phase === 'MAIN' &&
+    opponentNonGodUnits(gameState, playerState.uid).length > 0,
+  execute: async (instance, gameState, playerState) => {
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      opponentNonGodUnits(gameState, playerState.uid),
+      '选择攻击目标',
+      '选择对手战场上的1个非神蚀单位。本回合中，你的单位可以攻击该单位。',
+      1,
+      1,
+      { sourceCardId: instance.gamecardId, effectId: '202000104_track_attack_target' },
+      () => 'UNIT'
+    );
+  },
+  onQueryResolve: async (instance, gameState, playerState, selections) => {
+    const target = opponentNonGodUnits(gameState, playerState.uid).find(unit => unit.gamecardId === selections[0]);
+    if (!target) return;
+    ownUnits(playerState).forEach(unit => markCanAttackAnyUnit(unit, instance));
+    playerState.markedUnitAttackTarget = target.gamecardId;
+    const liveStory = AtomicEffectExecutor.findCardById(gameState, instance.gamecardId);
+    if (liveStory?.cardlocation === 'PLAY' || liveStory?.cardlocation === 'GRAVE') {
+      moveCard(gameState, playerState.uid, liveStory, 'EXILE', instance);
+    }
+  }
+}];
+
 const card: Card = {
   id: '202000104',
   fullName: '追迹',
@@ -27,7 +56,7 @@ const card: Card = {
   displayState: 'FRONT_UPRIGHT',
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'C',
   availableRarities: ['C'],
   cardPackage: 'BT06',

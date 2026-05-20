@@ -8,7 +8,11 @@ import { GameState, Card, CardEffect, TriggerLocation, GameEvent, PlayerState } 
 
 const isFullEffectSilencedThisTurn = (gameState: GameState | null, card: Card) =>
   !!gameState &&
-  (card as any).data?.fullEffectSilencedTurn === gameState.turnCount &&
+  (
+    (card as any).data?.permanentEffectSilenced ||
+    (card as any).data?.fullEffectSilencedUntilOwnStartUid ||
+    (card as any).data?.fullEffectSilencedTurn === gameState.turnCount
+  ) &&
   (
     !(card as any).data?.fullEffectSilencedZones ||
     (card as any).data.fullEffectSilencedZones.includes(card.cardlocation as TriggerLocation)

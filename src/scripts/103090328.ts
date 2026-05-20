@@ -1,4 +1,40 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { addTempDamage, addTempPower, allUnitsOnField, createSelectCardQuery, getResonanceExiledCard, isResonanceExileEvent, isSilverInstrumentCard, resonanceEffect } from './BaseUtil';
+
+const cardEffects: CardEffect[] = [
+  resonanceEffect('103090328_resonance'),
+  {
+    id: '103090328_boost',
+    type: 'TRIGGER',
+    triggerEvent: 'CARD_EXILED',
+    triggerLocation: ['UNIT'],
+    description: '这个单位的共鸣能力将卡名含有《银乐器》的卡放逐时，选择战场上1个非神蚀单位，本回合中伤害+1、力量+1500。',
+    condition: (_gameState, _playerState, instance, event) => {
+      const exiled = getResonanceExiledCard(event);
+      return isResonanceExileEvent(event, instance) && !!exiled && isSilverInstrumentCard(exiled);
+    },
+    execute: async (instance, gameState, playerState) => {
+      const candidates = allUnitsOnField(gameState).filter(unit => !unit.godMark);
+      createSelectCardQuery(
+        gameState,
+        playerState.uid,
+        candidates,
+        '选择强化单位',
+        '选择战场上1个非神蚀单位，本回合中伤害+1、力量+1500。',
+        1,
+        1,
+        { sourceCardId: instance.gamecardId, effectId: '103090328_boost' },
+        card => card.cardlocation as any
+      );
+    },
+    onQueryResolve: async (instance, gameState, _playerState, selections) => {
+      const target = allUnitsOnField(gameState).find(unit => unit.gamecardId === selections[0] && !unit.godMark);
+      if (!target) return;
+      addTempDamage(target, instance, 1);
+      addTempPower(target, instance, 1500);
+    }
+  }
+];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -12,7 +48,6 @@ import { Card } from '../types/game';
  * Card Detail:
  * 【启】共鸣（〖1回合1次〗｛你的主要阶段，选择你的墓地中的1张卡｝：将被选择的卡放逐）。
  * 【诱】｛这个单位的共鸣能力将卡名含有《银乐器》的卡放逐时，选择战场上1个非神蚀单位｝：被选择的单位本回合中〖伤害+1〗〖力量+1500〗。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '103090328',
@@ -35,7 +70,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'C',
   availableRarities: ['C'],
   cardPackage: 'BT06',

@@ -1,4 +1,4 @@
-import { Card, CardEffect, GameState, PlayerState, TriggerLocation } from '../types/game';
+import { Card, CardEffect, GameEvent, GameState, PlayerState, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 export { AtomicEffectExecutor };
 import { EventEngine } from '../services/EventEngine';
@@ -129,6 +129,73 @@ export const enteredFromHand = (instance: Card, event?: any) =>
 export const nameContains = (card: Card, text: string) =>
   card.fullName.includes(text) || !!card.specialName?.includes(text);
 
+export const addTemporaryColor = (card: Card, color: string) => {
+  (card as any).temporaryExtraColors = Array.from(new Set([
+    ...((card as any).temporaryExtraColors || []),
+    color
+  ]));
+};
+
+export const isSilverInstrumentCard = (card: Card) => card.fullName.includes('银乐器');
+
+export const hasResonanceAbility = (card: Card) =>
+  card.type === 'UNIT' &&
+  (card.effects || []).some(effect =>
+    /resonance/i.test(effect.id || '') ||
+    (effect.description || '').includes('共鸣')
+  );
+
+export const getResonanceExiledCard = (event?: GameEvent) =>
+  event?.type === 'CARD_EXILED' &&
+  event.data?.sourceZone === 'GRAVE' &&
+  event.data?.targetZone === 'EXILE' &&
+  (event.sourceCard as Card | undefined);
+
+export const isResonanceExileEvent = (event?: GameEvent, sourceCard?: Card) => {
+  const exiled = getResonanceExiledCard(event);
+  if (!exiled) return false;
+  const data = (exiled as any).data || {};
+  if (sourceCard) return data.resonanceSourceCardId === sourceCard.gamecardId;
+  return !!data.resonanceSourceCardId;
+};
+
+export const resonanceEffect = (id: string): CardEffect => ({
+  id,
+  type: 'ACTIVATE',
+  triggerLocation: ['UNIT'],
+  limitCount: 1,
+  description: '共鸣：1回合1次，你的主要阶段，选择你的墓地中的1张卡，将其放逐。',
+  condition: (gameState, playerState, instance) =>
+    instance.cardlocation === 'UNIT' &&
+    playerState.isTurn &&
+    gameState.phase === 'MAIN' &&
+    playerState.grave.length > 0,
+  execute: async (instance, gameState, playerState) => {
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      playerState.grave,
+      '选择共鸣放逐',
+      '选择你的墓地中的1张卡，将其放逐。',
+      1,
+      1,
+      { sourceCardId: instance.gamecardId, effectId: id, step: 'RESONANCE' },
+      () => 'GRAVE'
+    );
+  },
+  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step !== 'RESONANCE') return;
+    const target = playerState.grave.find(card => card.gamecardId === selections[0]);
+    if (!target) return;
+    const data = ensureData(target);
+    data.resonanceSourceCardId = instance.gamecardId;
+    data.resonanceSourceName = instance.fullName;
+    data.resonanceSourceEffectId = id;
+    data.resonanceTurn = gameState.turnCount;
+    moveCard(gameState, playerState.uid, target, 'EXILE', instance);
+  }
+});
+
 export const readyByEffect = (gameState: GameState, target: Card, source: Card) => {
   target.isExhausted = false;
   target.hasAttackedThisTurn = false;
@@ -166,6 +233,19 @@ export const addContinuousKeyword = (target: Card, source: Card, keyword: 'rush'
 export const markCannotBeEffectTarget = (target: Card, source: Card) => {
   (target as any).cannotBeEffectTargetByEffect = true;
   addInfluence(target, source, '不能成为效果对象');
+};
+
+export const markCannotBeEffectTargetColors = (target: Card, source: Card, colors: Card['color'][]) => {
+  const data = ensureData(target);
+  data.cannotBeEffectTargetColors = colors;
+  addInfluence(target, source, `不能成为${colors.join('/')}卡的效果对象`);
+};
+
+export const markCannotBeOpponentEffectTarget = (target: Card, source: Card) => {
+  const data = ensureData(target);
+  data.cannotBeEffectTargetByOpponent = true;
+  data.cannotBeEffectTargetByOpponentSourceName = source.fullName;
+  addInfluence(target, source, 'Cannot be chosen as a target by opponent card effects');
 };
 
 export const markCanAttackExhaustedUnit = (target: Card, source: Card) => {
@@ -211,11 +291,34 @@ export const cardsInZones = (player: PlayerState, zones: TriggerLocation[]) => {
   return entries;
 };
 
-export const cannotBeChosenAsEffectTarget = (card: Card, sourceCard?: Card) =>
-  !!sourceCard &&
-  card.cardlocation === 'UNIT' &&
-  card.gamecardId !== sourceCard.gamecardId &&
-  !!(card as any).cannotBeEffectTargetByEffect;
+export const cannotBeChosenAsEffectTarget = (card: Card, sourceCard?: Card, gameState?: GameState) => {
+  if (!sourceCard || card.gamecardId === sourceCard.gamecardId) return false;
+  const isFieldCard = card.cardlocation === 'UNIT' || card.cardlocation === 'ITEM';
+  const data = (card as any).data || {};
+  const sourceOwnerUid = gameState ? ownerUidOf(gameState, sourceCard) : undefined;
+  const targetOwnerUid = gameState ? ownerUidOf(gameState, card) : undefined;
+  const isOpponentSource = !!sourceOwnerUid && !!targetOwnerUid && sourceOwnerUid !== targetOwnerUid;
+  return isFieldCard && (
+    !!(card as any).cannotBeEffectTargetByEffect ||
+    (data.cannotBeEffectTargetByOpponent && isOpponentSource) ||
+    (Array.isArray(data.cannotBeEffectTargetColors) && data.cannotBeEffectTargetColors.includes(sourceCard.color))
+  );
+};
+
+export const isOpponentAcAtMost = (
+  gameState: GameState,
+  target: Card,
+  source: Card,
+  maxAc: number,
+  sourceUid?: string
+) => {
+  const targetUid = ownerUidOf(gameState, target);
+  const effectSourceUid = sourceUid || ownerUidOf(gameState, source);
+  return !!targetUid &&
+    !!effectSourceUid &&
+    targetUid !== effectSourceUid &&
+    Number(source.acValue || 0) <= maxAc;
+};
 
 export const isUnaffectedByCardEffect = (
   gameState: GameState,
@@ -246,6 +349,13 @@ export const isUnaffectedByCardEffect = (
     gameState.logs.push(`[${target.fullName}] 不受对手宣言颜色的卡牌效果影响。`);
     return true;
   }
+  if (
+    data.unaffectedByOpponentAcLe !== undefined &&
+    isOpponentAcAtMost(gameState, target, source, Number(data.unaffectedByOpponentAcLe), effectSourceUid)
+  ) {
+    gameState.logs.push(`[${target.fullName}] is unaffected by opponent ACCESS ${data.unaffectedByOpponentAcLe} or less card effects.`);
+    return true;
+  }
   return false;
 };
 
@@ -261,7 +371,7 @@ export const createSelectCardQuery = (
   sourceResolver?: (card: Card) => TriggerLocation
 ) => {
   const sourceCard = context?.sourceCardId ? AtomicEffectExecutor.findCardById(gameState, context.sourceCardId) : undefined;
-  const selectableCards = cards.filter(card => !cannotBeChosenAsEffectTarget(card, sourceCard));
+  const selectableCards = cards.filter(card => !cannotBeChosenAsEffectTarget(card, sourceCard, gameState));
   if (selectableCards.length < minSelections) return;
   gameState.pendingQuery = {
     id: Math.random().toString(36).substring(7),
@@ -661,6 +771,17 @@ export const universalEquipEffect: CardEffect = {
     if (!target) return;
 
     card.equipTargetId = target.gamecardId;
+    EventEngine.dispatchEvent(gameState, {
+      type: 'CARD_EQUIPPED',
+      playerUid: playerState.uid,
+      sourceCard: card,
+      sourceCardId: card.gamecardId,
+      targetCardId: target.gamecardId,
+      data: {
+        itemId: card.gamecardId,
+        unitId: target.gamecardId
+      }
+    });
     EventEngine.recalculateContinuousEffects(gameState);
   }
 };
@@ -731,6 +852,28 @@ export const isNonGodUnit = (card: Card) => card.type === 'UNIT' && !card.godMar
 export const isNonGodFieldCard = (card: Card) => !card.godMark && (card.type === 'UNIT' || card.type === 'ITEM' || card.isEquip);
 export const isFeijingCard = (card: Card) => !!card.feijingMark;
 export const isFeijingUnit = (card: Card) => card.type === 'UNIT' && !!card.feijingMark;
+export const isOtherworldBat = (card: Card) =>
+  card.id === '102070357' ||
+  card.fullName.includes('异界狂蝠') ||
+  !!(card as any).data?.extraNameContainsOtherworldBatBy;
+
+export const getCardWealthValue = (card: Card) => {
+  const dataValue = Number((card as any).data?.wealthValue || 0);
+  const textValue = Math.max(0, ...((card.effects || [])
+    .map(effect => effect.description.match(/财富\s*(\d+)/)?.[1])
+    .filter(Boolean)
+    .map(Number)));
+  return Math.max(dataValue, textValue);
+};
+
+export const wealthCount = (player: PlayerState) =>
+  ownUnits(player).reduce((total, unit) => total + getCardWealthValue(unit), 0);
+
+export const wealthContinuous = (id: string, value: number): CardEffect => ({
+  id,
+  type: 'CONTINUOUS',
+  description: `财富${value}（只要这个单位在战场上，你获得${value}个财富指示物）。`
+});
 
 export const ensureData = (card: Card) => {
   (card as any).data = (card as any).data || {};
@@ -769,6 +912,7 @@ export const putUnitOntoField = (
 ) => {
   const toPlayerUid = options?.toPlayerUid || ownerUid;
   if (!canPutUnitOntoBattlefield(gameState.players[toPlayerUid], card)) return false;
+  const fromZone = card.cardlocation;
   moveCard(gameState, ownerUid, card, 'UNIT', source, { toPlayerUid });
   const moved = AtomicEffectExecutor.findCardById(gameState, card.gamecardId);
   if (moved) {
@@ -776,8 +920,44 @@ export const putUnitOntoField = (
     moved.displayState = 'FRONT_UPRIGHT';
     moved.playedTurn = gameState.turnCount;
     moved.hasAttackedThisTurn = false;
+    if (fromZone === 'GRAVE') {
+      const data = ensureData(moved);
+      data.enteredFromGraveTurn = gameState.turnCount;
+      data.enteredFromGraveSourceName = source.fullName;
+    }
   }
   return true;
+};
+
+export const putItemOntoField = (
+  gameState: GameState,
+  ownerUid: string,
+  card: Card,
+  source: Card,
+  options?: { toPlayerUid?: string }
+) => {
+  const toPlayerUid = options?.toPlayerUid || ownerUid;
+  if (!canPutItemOntoBattlefield(gameState.players[toPlayerUid], card)) return false;
+  moveCard(gameState, ownerUid, card, 'ITEM', source, { toPlayerUid });
+  const moved = AtomicEffectExecutor.findCardById(gameState, card.gamecardId);
+  if (moved) {
+    moved.isExhausted = false;
+    moved.displayState = 'FRONT_UPRIGHT';
+    moved.playedTurn = gameState.turnCount;
+  }
+  return true;
+};
+
+export const putCardOntoField = (
+  gameState: GameState,
+  ownerUid: string,
+  card: Card,
+  source: Card,
+  options?: { exhausted?: boolean; toPlayerUid?: string }
+) => {
+  if (card.type === 'UNIT') return putUnitOntoField(gameState, ownerUid, card, source, options);
+  if (card.type === 'ITEM' || card.isEquip) return putItemOntoField(gameState, ownerUid, card, source, options);
+  return false;
 };
 
 export const addContinuousPower = (target: Card, source: Card, amount: number) => {
@@ -909,6 +1089,19 @@ export const markCannotResetNextStart = (target: Card, source: Card) => {
   addInfluence(target, source, '下个重置阶段不能重置');
 };
 
+export const markCannotExhaustUntil = (target: Card, source: Card, untilTurn: number) => {
+  const data = ensureData(target);
+  data.cannotExhaustUntilTurn = untilTurn;
+  data.cannotExhaustSourceName = source.fullName;
+  addInfluence(target, source, '不能横置');
+};
+
+export const markCannotExhaustContinuous = (target: Card, source: Card) => {
+  const data = ensureData(target);
+  data.cannotExhaustContinuous = true;
+  markCannotExhaustUntil(target, source, Number.MAX_SAFE_INTEGER);
+};
+
 export const silenceAllEffectsUntil = (target: Card, source: Card, untilTurn: number, zones?: TriggerLocation[]) => {
   const data = ensureData(target);
   data.fullEffectSilencedTurn = untilTurn;
@@ -918,11 +1111,37 @@ export const silenceAllEffectsUntil = (target: Card, source: Card, untilTurn: nu
   addInfluence(target, source, '失去所有效果');
 };
 
+export const silenceAllNonKeywordEffectsUntilOwnStart = (target: Card, source: Card, ownerUid: string) => {
+  const data = ensureData(target);
+  data.fullEffectSilencedUntilOwnStartUid = ownerUid;
+  data.fullEffectSilenceSource = source.fullName;
+  addInfluence(target, source, 'Loses all non-keyword effects until its controller next turn starts');
+};
+
+export const silenceAllNonKeywordEffectsPermanently = (target: Card, source: Card) => {
+  const data = ensureData(target);
+  data.permanentEffectSilenced = true;
+  data.permanentEffectSilenceSource = source.fullName;
+  addInfluence(target, source, 'Loses all non-keyword effects');
+};
+
+export const markExileWhenLeavesField = (target: Card, source: Card) => {
+  const data = ensureData(target);
+  data.exileWhenLeavesFieldSourceName = source.fullName;
+  addInfluence(target, source, 'Exile when it leaves the field');
+};
+
 export const forbidAttackAndDefenseUntil = (target: Card, source: Card, untilTurn: number) => {
   const data = ensureData(target);
   data.cannotAttackOrDefendUntilTurn = untilTurn;
   data.cannotAttackOrDefendSourceName = source.fullName;
   addInfluence(target, source, '不能宣言攻击和防御');
+};
+
+export const forbidAttackAndDefenseContinuous = (target: Card, source: Card) => {
+  const data = ensureData(target);
+  data.cannotAttackOrDefendContinuous = true;
+  forbidAttackAndDefenseUntil(target, source, Number.MAX_SAFE_INTEGER);
 };
 
 export const freezeUntil = (target: Card, source: Card, untilTurn: number) => {
@@ -1233,8 +1452,9 @@ export const canPayAccessCost = (gameState: GameState, playerState: PlayerState,
   return playerState.deck.length >= remaining;
 };
 
-export const exhaustCost: CardEffect['cost'] = async (_gameState, _playerState, instance) => {
+export const exhaustCost: CardEffect['cost'] = async (gameState, _playerState, instance) => {
   if (instance.isExhausted) return false;
+  if ((instance as any).data?.cannotExhaustUntilTurn >= gameState.turnCount) return false;
   instance.isExhausted = true;
   return true;
 };
