@@ -74,7 +74,7 @@ const card: Card = {
   effects: [effect_102000279_cost_mill],
   rarity: 'R',
   availableRarities: ['R'],
-  cardPackage: 'BT07',
+  cardPackage: 'SP02',
   uniqueId: null as any,
 };
 

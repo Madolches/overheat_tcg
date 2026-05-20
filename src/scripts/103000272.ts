@@ -166,7 +166,7 @@ const card: Card = {
   effects: [effect_103000272_enter_search, effect_103000272_grave_color],
   rarity: 'R',
   availableRarities: ['R'],
-  cardPackage: 'BT07',
+  cardPackage: 'SP02',
   uniqueId: null as any,
 };
 

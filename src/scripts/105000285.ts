@@ -88,7 +88,7 @@ const card: Card = {
   effects: [effect_105000285_non_battle_grave],
   rarity: 'R',
   availableRarities: ['R'],
-  cardPackage: 'BT06',
+  cardPackage: 'SP02',
   uniqueId: null as any,
 };
 

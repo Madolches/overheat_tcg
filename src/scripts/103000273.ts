@@ -180,7 +180,7 @@ const card: Card = {
   effects: [effect_103000273_enter_boost, effect_103000273_ready_victoria],
   rarity: 'R',
   availableRarities: ['R'],
-  cardPackage: 'BT07',
+  cardPackage: 'SP02',
   uniqueId: null as any,
 };
 

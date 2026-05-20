@@ -167,7 +167,7 @@ const card: Card = {
   effects: [effect_105000325_hand_entry, effect_105000325_enter_reset_game],
   rarity: 'UR',
   availableRarities: ['UR'],
-  cardPackage: 'BT07',
+  cardPackage: 'SP02',
   uniqueId: null as any,
 };
 
