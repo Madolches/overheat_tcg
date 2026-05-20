@@ -18,6 +18,9 @@ const getPreservedFieldLeaveData = (card: Card, data: any) => {
     prefixes.push('placedByShingiEffect');
     prefixes.push('pendingLivianShingiLeave');
   }
+  if (card.id === '101000379') {
+    prefixes.push('placedByShingiEffect');
+  }
   const preserved: Record<string, any> = {};
   Object.keys(data).forEach(key => {
     if (prefixes.some(prefix => key.startsWith(prefix))) {

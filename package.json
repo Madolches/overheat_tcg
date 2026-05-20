@@ -13,6 +13,7 @@
     "scripts:audit-progress": "tsx script/audit-card-script-progress.ts",
     "scripts:test-sp02": "tsx script/test-sp02-scenarios.ts",
     "scripts:test-bt06": "tsx script/test-bt06-scenarios.ts",
+    "scripts:test-bt07": "tsx script/test-bt07-scenarios.ts",
     "ai:evaluate": "tsx script/evaluate-ai.ts",
     "ai:audit-effects": "tsx script/audit-hard-ai-effects.ts",
     "ai:behavior-audit": "tsx script/report-ai-behavior-audit.ts",

@@ -1396,10 +1396,6 @@ export const ServerGameService = {
       targetPlayer.unitFromGraveToFieldTurn = gameState.turnCount;
     }
 
-    if ((targetZone === 'HAND' || targetZone === 'DECK') && sourceZone !== 'HAND' && sourceZone !== 'DECK') {
-      ServerGameService.refreshCardAsNewInstance(card);
-    }
-
     // Movement Replacement logic (e.g. 104010484)
     if (options?.isEffect && (targetZone === 'HAND' || targetZone === 'DECK' || targetZone === 'EROSION_FRONT' || targetZone === 'EROSION_BACK')) {
       if (card.effects) {
@@ -1429,6 +1425,10 @@ export const ServerGameService = {
         onlyLeftFieldEvent: true
       });
       clearBattlefieldState(card);
+    }
+
+    if ((targetZone === 'HAND' || targetZone === 'DECK') && sourceZone !== 'HAND' && sourceZone !== 'DECK') {
+      ServerGameService.refreshCardAsNewInstance(card);
     }
 
     if (!(card as any).data) {
@@ -2739,7 +2739,10 @@ export const ServerGameService = {
     if (gameState.triggeredEffectsQueue && gameState.triggeredEffectsQueue.length > 0) {
       const trigger = gameState.triggeredEffectsQueue.shift()!;
       let { card, effect, effectIndex, playerUid, event } = trigger;
-      const liveSource = ServerGameService.findCardLocation(gameState, card.gamecardId);
+      let liveSource = ServerGameService.findCardLocation(gameState, card.gamecardId);
+      if (!liveSource && event?.sourceCardId === card.gamecardId) {
+        liveSource = ServerGameService.findCardLocation(gameState, event.data?.previousSourceCardId);
+      }
       if (!liveSource) {
         await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
         return;
@@ -4743,6 +4746,32 @@ export const ServerGameService = {
       return false;
     }
 
+    if (
+      !isEffect &&
+      (unit as any).data?.preventNextBattleDestroy &&
+      (
+        (unit as any).data.preventNextBattleDestroyUntilTurn === undefined ||
+        (unit as any).data.preventNextBattleDestroyUntilTurn >= gameState.turnCount
+      )
+    ) {
+      const sourceName = (unit as any).data?.preventNextBattleDestroySourceName || '战斗破坏防止';
+      delete (unit as any).data.preventNextBattleDestroy;
+      delete (unit as any).data.preventNextBattleDestroySourceName;
+      delete (unit as any).data.preventNextBattleDestroyUntilTurn;
+      gameState.logs.push(`[${sourceName}] 防止了 [${unit.fullName}] 将要被战斗破坏。`);
+      return false;
+    }
+
+    if (
+      !isEffect &&
+      (unit as any).data?.preventFirstBattleDestroyEachTurnSourceName &&
+      (unit as any).data.preventFirstBattleDestroyEachTurnUsedTurn !== gameState.turnCount
+    ) {
+      (unit as any).data.preventFirstBattleDestroyEachTurnUsedTurn = gameState.turnCount;
+      gameState.logs.push(`[${(unit as any).data.preventFirstBattleDestroyEachTurnSourceName}] 防止了 [${unit.fullName}] 本回合第一次将被战斗破坏。`);
+      return false;
+    }
+
     if ((unit as any).data?.indestructibleByEffect) {
       gameState.logs.push(`[${unit.fullName}] 因效果不会被破坏。`);
       return false;
@@ -5212,6 +5241,11 @@ export const ServerGameService = {
             delete (card as any).data.preventNextDestroySourceName;
             delete (card as any).data.preventNextDestroyUntilTurn;
           }
+          if ((card as any).data?.preventNextBattleDestroyUntilTurn !== undefined && (card as any).data.preventNextBattleDestroyUntilTurn < gameState.turnCount) {
+            delete (card as any).data.preventNextBattleDestroy;
+            delete (card as any).data.preventNextBattleDestroySourceName;
+            delete (card as any).data.preventNextBattleDestroyUntilTurn;
+          }
           if ((card as any).data?.forbiddenAlchemyBanishTurn !== undefined && (card as any).data.forbiddenAlchemyBanishTurn < gameState.turnCount) {
             delete (card as any).data.forbiddenAlchemyBanishTurn;
             delete (card as any).data.forbiddenAlchemySourceName;
@@ -5402,7 +5436,10 @@ export const ServerGameService = {
   ) {
     const { card, effectIndex, event, skipCost } = trigger;
     const effect = trigger.effect || card.effects?.[effectIndex];
-    const liveSource = ServerGameService.findCardLocation(gameState, card.gamecardId);
+    let liveSource = ServerGameService.findCardLocation(gameState, card.gamecardId);
+    if (!liveSource && event?.sourceCardId === card.gamecardId) {
+      liveSource = ServerGameService.findCardLocation(gameState, event.data?.previousSourceCardId);
+    }
 
     if (!effect || !liveSource) {
       await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
@@ -6645,7 +6682,13 @@ export const ServerGameService = {
     gameState: GameState,
     playerUid: string,
     payment: { feijingCardId?: string; exhaustUnitIds?: string[]; erosionFrontIds?: string[] },
-    options: { paymentCost?: number; paymentColor?: string; sourceCard?: Card; addedReadyDefenders?: number } = {}
+    options: {
+      paymentCost?: number;
+      paymentColor?: string;
+      sourceCard?: Card;
+      addedReadyDefenders?: number;
+      additionalExhaustUnitIds?: string[];
+    } = {}
   ) {
     const player = gameState.players[playerUid];
     if (!player || ServerGameService.getBotDifficulty(gameState, playerUid) !== 'hard') {
@@ -6683,9 +6726,15 @@ export const ServerGameService = {
       !(unit as any).battleForbiddenByEffect &&
       !((unit as any).data?.cannotDefendTurn === gameState.turnCount) &&
       !((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount);
-    const exhaustedUnits = (payment.exhaustUnitIds || [])
+    const paymentExhaustedUnitIds = new Set(payment.exhaustUnitIds || []);
+    const paymentExhaustedUnits = Array.from(paymentExhaustedUnitIds)
       .map(id => ServerGameService.findCardById(gameState, id))
       .filter((card): card is Card => !!card);
+    const additionalExhaustedUnits = (options.additionalExhaustUnitIds || [])
+      .filter(id => !paymentExhaustedUnitIds.has(id))
+      .map(id => ServerGameService.findCardById(gameState, id))
+      .filter((card): card is Card => !!card);
+    const exhaustedUnits = [...paymentExhaustedUnits, ...additionalExhaustedUnits];
     const exhaustedReadyDefenders = exhaustedUnits.filter(canDefendSoon).length;
     const readyDefendersBefore = player.unitZone.filter(canDefendSoon).length + (options.addedReadyDefenders || 0);
     const readyDefendersAfter = Math.max(0, readyDefendersBefore - exhaustedReadyDefenders);
@@ -6735,7 +6784,7 @@ export const ServerGameService = {
           ? paymentCost
           : 3
         : 0;
-      const unitPayment = exhaustedUnits.reduce((total, unit) => {
+      const unitPayment = paymentExhaustedUnits.reduce((total, unit) => {
         const data = (unit as any).data || {};
         const accessMin = Math.max(1, Number(data.accessTapMinValue || 1));
         const accessMax = data.accessTapColor && data.accessTapColor !== paymentColor
@@ -6981,6 +7030,7 @@ export const ServerGameService = {
           const paymentOptions = ServerGameService.botEffectPaymentExhaustsSource(effect)
             ? { excludeExhaustUnitIds: [card.gamecardId] }
             : undefined;
+          const sourceExhaustUnitIds = paymentOptions?.excludeExhaustUnitIds || [];
           if (paymentCost > 0 && !ServerGameService.canBotPayPositiveCost(gameState, player, paymentCost, card.color, card, {
             excludeUnitIds: paymentOptions?.excludeExhaustUnitIds,
           })) {
@@ -6998,11 +7048,12 @@ export const ServerGameService = {
               },
             })
             : {};
-          const paymentRisk = paymentCost > 0
+          const paymentRisk = paymentCost > 0 || sourceExhaustUnitIds.length > 0
             ? ServerGameService.scoreBotPaymentSelectionRisk(gameState, playerUid, projectedPayment, {
               paymentCost,
               paymentColor: card.color,
               sourceCard: card,
+              additionalExhaustUnitIds: sourceExhaustUnitIds,
             })
             : { penalty: 0, notes: [] as string[], estimatedDeckPayment: 0, readyDefendersAfter: undefined };
           const targetCount = ServerGameService.getEffectTargetCount(gameState, playerUid, card, effect);
