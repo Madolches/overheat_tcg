@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { allCardsOnField, createSelectCardQuery, destroyByEffect, getOpponentUid, getResonanceExiledCard, isNonGodUnit, markCanAttackAnyUnit, moveCardAsCost, ownUnits } from './BaseUtil';
+import { allCardsOnField, createSelectCardQuery, destroyByEffect, getOpponentUid, isNonGodUnit, markCanAttackAnyUnit, moveCardAsCost, ownUnits } from './BaseUtil';
 
 const nonGodItemsOnField = (gameState: any) =>
   allCardsOnField(gameState).filter(card => card.type === 'ITEM' && !card.godMark);
@@ -9,6 +9,13 @@ const godmarkGraveCards = (playerState: any) =>
 
 const opponentNonGodUnits = (gameState: any, playerUid: string) =>
   gameState.players[getOpponentUid(gameState, playerUid)].unitZone.filter((card: Card | null): card is Card => !!card && isNonGodUnit(card));
+
+const isMainPhaseContext = (gameState: any) =>
+  gameState.phase === 'MAIN' || gameState.previousPhase === 'MAIN';
+
+const SERNOBU_FACTION = '\u745f\u8bfa\u5e03';
+
+const isSernobuUnit = (card: Card) => card.faction === SERNOBU_FACTION;
 
 const cardEffects: CardEffect[] = [{
   id: '203000095_destroy_item',
@@ -62,12 +69,13 @@ const cardEffects: CardEffect[] = [{
   type: 'TRIGGER',
   triggerEvent: 'CARD_EXILED',
   triggerLocation: ['EXILE'],
-  description: '你的主要阶段，墓地中的这张卡被共鸣放逐时，选择对手战场上1个非神蚀单位。本回合中，你的<瑟诺布>单位可以攻击被选择的单位。',
+  description: '你的主要阶段，墓地中的这张卡被放逐时，选择对手战场上1个非神蚀单位。本回合中，你的<瑟诺布>单位可以攻击被选择的单位。',
   condition: (gameState, playerState, instance, event) =>
     playerState.isTurn &&
-    gameState.phase === 'MAIN' &&
+    isMainPhaseContext(gameState) &&
     event?.sourceCardId === instance.gamecardId &&
-    !!getResonanceExiledCard(event) &&
+    event.data?.sourceZone === 'GRAVE' &&
+    event.data?.targetZone === 'EXILE' &&
     opponentNonGodUnits(gameState, playerState.uid).length > 0,
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
@@ -86,7 +94,7 @@ const cardEffects: CardEffect[] = [{
     const target = opponentNonGodUnits(gameState, playerState.uid).find(card => card.gamecardId === selections[0]);
     if (!target) return;
     ownUnits(playerState)
-      .filter(unit => unit.faction === '瑟诺布')
+      .filter(isSernobuUnit)
       .forEach(unit => {
         markCanAttackAnyUnit(unit, instance);
         const data = (unit as any).data || {};

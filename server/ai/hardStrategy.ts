@@ -1949,6 +1949,7 @@ export function applyOpeningHandSoftCompensation(
 
 export function canUnitAttack(gameState: GameState, unit: Card | null | undefined) {
   if (!unit || unit.isExhausted || unit.canAttack === false) return false;
+  if ((unit as any).data?.cannotExhaustUntilTurn !== undefined && (unit as any).data.cannotExhaustUntilTurn >= gameState.turnCount) return false;
   const ownerUid = findCardOwnerUid(gameState, unit);
   const owner = ownerUid ? gameState.players[ownerUid] : undefined;
   if (owner && (owner as any).cannotDeclareAttackTurn === gameState.turnCount) return false;

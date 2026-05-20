@@ -1158,6 +1158,7 @@ export const BattleField: React.FC = () => {
 
   const canUnitAttack = (card: Card) => {
     if (!card || card.isExhausted || card.canAttack === false || (card as any).battleForbiddenByEffect) return false;
+    if ((card as any).data?.cannotExhaustUntilTurn !== undefined && (card as any).data.cannotExhaustUntilTurn >= game.turnCount) return false;
     if ((me as any)?.cannotDeclareAttackTurn === game.turnCount) return false;
     if ((card as any).data?.cannotAttackThisTurn === game.turnCount) return false;
     if ((card as any).data?.cannotAttackOrDefendUntilTurn && (card as any).data.cannotAttackOrDefendUntilTurn >= game.turnCount) return false;
@@ -1168,6 +1169,11 @@ export const BattleField: React.FC = () => {
 
   const canUnitDefend = (card: Card | null) =>
     canCardDefendInCurrentBattle(card);
+
+  const canCardBeExhausted = (card: Card | null | undefined) =>
+    !!card &&
+    !card.isExhausted &&
+    !((card as any).data?.cannotExhaustUntilTurn !== undefined && (card as any).data.cannotExhaustUntilTurn >= game.turnCount);
 
   const getForcedAttackIds = () => {
     const ids = new Set<string>();
@@ -1229,6 +1235,7 @@ export const BattleField: React.FC = () => {
   function canCardDefendInCurrentBattle(card: Card | null | undefined, state: GameState | null = game) {
     if (!card || !state?.battleState) return false;
     if (card.isExhausted) return false;
+    if ((card as any).data?.cannotExhaustUntilTurn !== undefined && (card as any).data.cannotExhaustUntilTurn >= state.turnCount) return false;
     if ((card as any).battleForbiddenByEffect) return false;
     if ((card as any).data?.cannotDefendTurn === state.turnCount) return false;
     if ((card as any).data?.cannotAttackOrDefendUntilTurn && (card as any).data.cannotAttackOrDefendUntilTurn >= state.turnCount) return false;
@@ -3433,14 +3440,14 @@ export const BattleField: React.FC = () => {
             )}
 
             {/* Exhaust Section */}
-            {(game.pendingQuery!.paymentCost || 0) > 0 && me.unitZone.some(c => c && !c.isExhausted && !getPaymentExcludedExhaustIds().includes(c.gamecardId)) && (
+            {(game.pendingQuery!.paymentCost || 0) > 0 && me.unitZone.some(c => canCardBeExhausted(c) && !getPaymentExcludedExhaustIds().includes(c.gamecardId)) && (
               <div className="flex flex-col gap-3">
                 <div className="flex items-center gap-2 text-green-400 font-black uppercase italic tracking-widest text-sm">
                   <Sword className="w-4 h-4" />
                   横置支付（按单位ACCESS值）
                 </div>
                 <div className="grid grid-cols-2 gap-3 pb-2 pt-2 justify-items-center">
-                  {me.unitZone.filter(c => c && !c.isExhausted && !getPaymentExcludedExhaustIds().includes(c.gamecardId)).map((card, i) => {
+                  {me.unitZone.filter(c => canCardBeExhausted(c) && !getPaymentExcludedExhaustIds().includes(c!.gamecardId)).map((card, i) => {
                     const isSelected = paymentSelection.exhaustIds.includes(card!.gamecardId);
                     const accessValue = getAccessPaymentLabel(card, game.pendingQuery?.paymentColor);
                     return (

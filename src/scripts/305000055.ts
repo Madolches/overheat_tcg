@@ -11,9 +11,14 @@ import {
 const faceDownExile = (playerState: any) =>
   playerState.exile.filter((card: Card) => card.displayState === 'FRONT_FACEDOWN');
 
+const BLUEPRINT_TARGET_CARD_IDS = new Set(['105110348', '105110351']);
+
 const isBlueprintTarget = (card: Card) =>
   card.type === 'UNIT' &&
-  (card.fullName.includes('钢兵') || card.fullName.includes('瓦尔基里'));
+  (BLUEPRINT_TARGET_CARD_IDS.has(card.id) ||
+    card.fullName.includes('钢兵') ||
+    card.fullName.includes('瓦尔基里') ||
+    card.specialName === '瓦尔基里');
 
 const deckCandidates = (playerState: any) =>
   playerState.deck.filter((card: Card) =>
@@ -25,10 +30,13 @@ const effect_305000055_start_exile: CardEffect = {
   id: '305000055_start_exile',
   type: 'TRIGGER',
   triggerLocation: ['ITEM'],
-  triggerEvent: 'TURN_START' as any,
+  triggerEvent: 'PHASE_CHANGED',
   description: '你的回合开始时，可将卡组顶1张卡背面放逐。',
-  condition: (_gameState, playerState) =>
+  condition: (_gameState, playerState, instance, event) =>
     playerState.isTurn &&
+    instance.cardlocation === 'ITEM' &&
+    event?.type === 'PHASE_CHANGED' &&
+    event.data?.phase === 'START' &&
     playerState.deck.length > 0,
   execute: async (instance, gameState, playerState) => {
     const top = playerState.deck[playerState.deck.length - 1];

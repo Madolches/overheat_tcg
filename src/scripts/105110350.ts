@@ -95,7 +95,7 @@ const card: Card = {
   isExhausted: false,
   isrush: false,
   canAttack: true,
-  feijingMark: true,
+  feijingMark: false,
   canResetCount: 0,
   effects: [effect_105110350_protect_feijing, effect_105110350_put_feijing],
   rarity: 'SER',

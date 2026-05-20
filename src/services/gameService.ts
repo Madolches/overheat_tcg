@@ -344,7 +344,10 @@ export const GameService = {
       } else if (cardInZone.color !== 'NONE') {
         availableColors[cardInZone.color] = (availableColors[cardInZone.color] || 0) + 1;
       }
-      const extraColors = (cardInZone as any).temporaryExtraColors;
+      const extraColors = [
+        ...((cardInZone as any).temporaryExtraColors || []),
+        ...((cardInZone as any).persistentExtraColors || [])
+      ];
       if (Array.isArray(extraColors)) {
         extraColors.forEach(color => {
           if (typeof color === 'string' && color !== cardInZone.color && color in availableColors) {

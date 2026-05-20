@@ -326,6 +326,7 @@ export interface Card {
   temporaryHeroic?: boolean; // cleared at turn start
   temporaryCanAttackAny?: boolean; // cleared at turn start
   temporaryExtraColors?: CardColor[]; // cleared at turn start
+  persistentExtraColors?: CardColor[]; // kept while this instance remains on field
   effects?: CardEffect[];
   influencingEffects?: { sourceCardName: string; description: string }[];
   inAllianceGroup?: boolean;
