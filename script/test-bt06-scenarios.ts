@@ -54,6 +54,9 @@ import bt06Y08 from '../src/scripts/205000106';
 import bt06Y09 from '../src/scripts/205000103';
 import bt06Y10 from '../src/scripts/305000055';
 import bt06Y11 from '../src/scripts/105110355';
+import academyFeijingMerchant from '../src/scripts/105110223';
+import greatAlchemist from '../src/scripts/105120167';
+import divineAlchemy from '../src/scripts/205000136';
 import chocolate from '../src/scripts/205000149';
 import devotion from '../src/scripts/201100099';
 import prayer from '../src/scripts/201000102';
@@ -772,6 +775,61 @@ async function testBlueWealthCountUsesContinuousOnly(): Promise<ScenarioResult> 
   return totalWealth === 5 && tradeExpertWealth === 0 && silencedWealth === 0
     ? pass(name, `wealth=${totalWealth}, tradeExpert=${tradeExpertWealth}, silenced=${silencedWealth}`)
     : fail(name, `wealth=${totalWealth}, tradeExpert=${tradeExpertWealth}, silenced=${silencedWealth}`);
+}
+
+async function testTradeExpertPreventsThisBattleDestroy(): Promise<ScenarioResult> {
+  const name = 'BT06-B02 Trade Expert prevents battle destruction for this battle';
+  const logistics = cloneScriptCard(bt06B01 as Card, 'UNIT');
+  const rolys = cloneScriptCard(bt06B03 as Card, 'UNIT');
+  const caravan = cloneScriptCard(bt06B04 as Card, 'UNIT');
+  const tradeExpert = cloneScriptCard(bt06B02 as Card, 'UNIT');
+  const attacker = testCard({
+    id: 'B02_ATTACKER',
+    fullName: 'B02 Attacker',
+    type: 'UNIT',
+    color: 'BLUE',
+    cardlocation: 'UNIT',
+    power: 1000,
+    basePower: 1000,
+  });
+  const defender = testCard({
+    id: 'B02_DEFENDER',
+    fullName: 'B02 Defender',
+    type: 'UNIT',
+    color: 'RED',
+    cardlocation: 'UNIT',
+    power: 3000,
+    basePower: 3000,
+  });
+  const handCosts = [0, 1].map(index => testCard({ id: `B02_COST_${index}`, color: 'BLUE', cardlocation: 'HAND' }));
+  const state = game({
+    hand: handCosts,
+    unitZone: [logistics, rolys, caravan, tradeExpert, attacker, null],
+  }, {
+    unitZone: [defender, null, null, null, null, null],
+  }, {
+    phase: 'BATTLE_FREE',
+    previousPhase: 'BATTLE_FREE',
+    battleState: {
+      attackers: [attacker.gamecardId],
+      defender: defender.gamecardId,
+      isAlliance: false,
+      resolvedUnitIds: [],
+      battleId: 'B02_TEST_BATTLE',
+    },
+  });
+
+  await activateAndResolveByOpponentPass(state, 'BOT', tradeExpert, 0);
+  state.phase = 'DAMAGE_CALCULATION';
+  await ServerGameService.resolveDamage(state);
+
+  const attackerLive = state.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === attacker.gamecardId);
+  const attackerDestroyed = state.players.BOT.grave.some((card: Card) => card.gamecardId === attacker.gamecardId);
+  const costsPaid = handCosts.every(cost => state.players.BOT.grave.some((card: Card) => card.gamecardId === cost.gamecardId));
+
+  return attackerLive && !attackerDestroyed && costsPaid
+    ? pass(name, `attackerLive=${attackerLive}, costsPaid=${costsPaid}`)
+    : fail(name, `attackerLive=${attackerLive}, destroyed=${attackerDestroyed}, costsPaid=${costsPaid}`);
 }
 
 async function testBlueAketiTeteruAndRecord(): Promise<ScenarioResult> {
@@ -1684,6 +1742,95 @@ async function testYellowHighAlchemyChipAndGiant(): Promise<ScenarioResult> {
     : fail(name, `chip=${chipPowered}, cost=${chipCostExiled}, copy=${chipCopyExhausted}, story=${storyResolved}, giant=${giantBoosted}`);
 }
 
+async function testAcademyFeijingMerchantLeaveTrigger(): Promise<ScenarioResult> {
+  const name = 'BT05-Y01 Academy Feijing Merchant triggers when leaving field';
+  const merchant = cloneScriptCard(academyFeijingMerchant as Card, 'UNIT');
+  const target = cloneScriptCard(bt06Y01 as Card, 'DECK', { godMark: false, baseGodMark: false });
+  const state = game({
+    deck: [target, ...deckCards(3, 'Y01_LEAVE_FILL', 'YELLOW')],
+    unitZone: [merchant, null, null, null, null, null],
+  });
+
+  ServerGameService.moveCard(state, 'BOT', 'UNIT', 'BOT', 'GRAVE', merchant.gamecardId, {
+    isEffect: true,
+    effectSourcePlayerUid: 'BOT',
+    effectSourceCardId: merchant.gamecardId,
+  });
+  await ServerGameService.checkTriggeredEffects(state);
+  if (state.pendingQuery?.callbackKey === 'TRIGGER_CHOICE') {
+    await answerPendingQuery(state, 'BOT', ['YES']);
+  }
+  if (state.pendingQuery?.context?.effectId === '105110223_enter_leave_search') {
+    await answerPendingQuery(state, 'BOT', [target.gamecardId]);
+  }
+
+  const searched = state.players.BOT.hand.some((card: Card) => card.gamecardId === target.gamecardId);
+  return searched
+    ? pass(name, `searched=${searched}`)
+    : fail(name, `searched=${searched}, pending=${state.pendingQuery?.context?.effectId || state.pendingQuery?.callbackKey || 'none'}`);
+}
+
+async function testDivineAlchemyDamageAndEndsTurn(): Promise<ScenarioResult> {
+  const name = 'BT04 Divine Alchemy deals AC damage then ends turn';
+  const story = cloneScriptCard(divineAlchemy as Card, 'HAND', { colorReq: {}, baseColorReq: {}, acValue: 0, baseAcValue: 0 });
+  const target = testCard({
+    id: 'DIVINE_ALCHEMY_TARGET',
+    fullName: 'Divine Alchemy Target',
+    type: 'UNIT',
+    color: 'YELLOW',
+    cardlocation: 'DECK',
+    colorReq: {},
+    baseColorReq: {},
+    acValue: 3,
+    baseAcValue: 3,
+  });
+  const damageCards = deckCards(5, 'DIVINE_ALCHEMY_DAMAGE', 'YELLOW');
+  const state = game({
+    hand: [story],
+    deck: [...damageCards, target],
+    erosionBack: [testCard({ id: 'DIVINE_ALCHEMY_EB', cardlocation: 'EROSION_BACK' })],
+  });
+
+  await playStoryAndResolve(state, 'BOT', story);
+  if (state.pendingQuery?.context?.effectId === '205000136_activate') {
+    await answerPendingQuery(state, 'BOT', [target.gamecardId]);
+  }
+
+  const targetLive = state.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === target.gamecardId);
+  const damageTaken = state.players.BOT.erosionFront.filter((card: Card | null) => !!card).length;
+  const turnEnded = state.turnCount === 7 && state.currentTurnPlayer === 1 && state.players.P1.isTurn;
+  const storyInGrave = state.players.BOT.grave.some((card: Card) => card.gamecardId === story.gamecardId);
+
+  return targetLive && damageTaken === 3 && turnEnded && storyInGrave
+    ? pass(name, `damage=${damageTaken}, turn=${state.turnCount}/${state.phase}`)
+    : fail(name, `targetLive=${targetLive}, damage=${damageTaken}, turnEnded=${turnEnded}, storyInGrave=${storyInGrave}, phase=${state.phase}, turn=${state.turnCount}, current=${state.currentTurnPlayer}`);
+}
+
+async function testGreatAlchemistLoseAtEndOfTurn(): Promise<ScenarioResult> {
+  const name = 'BT02 Great Alchemist loses at end of turn';
+  const alchemist = cloneScriptCard(greatAlchemist as Card, 'UNIT');
+  const graveCards = deckCards(2, 'GREAT_ALCHEMIST_GRAVE', 'YELLOW').map(card => ({ ...card, cardlocation: 'GRAVE' as TriggerLocation }));
+  const erosion = deckCards(10, 'GREAT_ALCHEMIST_EROSION', 'YELLOW').map(card => ({ ...card, cardlocation: 'EROSION_FRONT' as TriggerLocation }));
+  const state = game({
+    deck: deckCards(5, 'GREAT_ALCHEMIST_DECK', 'YELLOW'),
+    grave: graveCards,
+    unitZone: [alchemist, null, null, null, null, null],
+    erosionFront: erosion,
+    isGoddessMode: true,
+  });
+
+  await activateAndResolveByOpponentPass(state, 'BOT', alchemist, 1);
+  const markerSet = (state.players.BOT as any).loseAtEndOfTurn === state.turnCount;
+  await ServerGameService.executeEndPhase(state, state.players.BOT);
+
+  const lost = state.gameStatus === 2 && state.winnerId === 'P1';
+  const graveBottomed = graveCards.every(card => state.players.BOT.deck.some((deckCard: Card) => deckCard.gamecardId === card.gamecardId));
+
+  return markerSet && lost && graveBottomed
+    ? pass(name, `lost=${lost}, graveBottomed=${graveBottomed}`)
+    : fail(name, `marker=${markerSet}, lost=${lost}, winner=${state.winnerId || 'none'}, graveBottomed=${graveBottomed}`);
+}
+
 async function testYellowDailyBlueprintTruthAndIly(): Promise<ScenarioResult> {
   const name = 'BT06-Y05/Y08/Y10/Y11 silence bodies, blueprint and Truth';
   const daily = cloneScriptCard(bt06Y08 as Card, 'HAND');
@@ -1845,6 +1992,7 @@ const scenarios: ScenarioRun[] = [
   testLivianLeaveAndCounterWhenShingiPlaced,
   testBlueWealthCounterAndLogistics,
   testBlueWealthCountUsesContinuousOnly,
+  testTradeExpertPreventsThisBattleDestroy,
   testBlueAketiTeteruAndRecord,
   testBlueCheckLetsOpponentPayOrCounters,
   testBlueSheathAndFuka,
@@ -1857,6 +2005,9 @@ const scenarios: ScenarioRun[] = [
   testRedTrainerLockAndCelia,
   testYellowPartsHickAndValkyrie,
   testYellowHighAlchemyChipAndGiant,
+  testAcademyFeijingMerchantLeaveTrigger,
+  testDivineAlchemyDamageAndEndsTurn,
+  testGreatAlchemistLoseAtEndOfTurn,
   testYellowDailyBlueprintTruthAndIly,
   testYellowChocolate,
 ];

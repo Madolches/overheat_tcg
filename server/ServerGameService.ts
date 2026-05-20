@@ -721,6 +721,31 @@ export const ServerGameService = {
     });
   },
 
+  canUnitDefendInCurrentBattle(gameState: GameState, unit: Card | null | undefined) {
+    if (!unit || !gameState.battleState) return false;
+    if (unit.isExhausted) return false;
+    if ((unit as any).battleForbiddenByEffect) return false;
+    if ((unit as any).data?.cannotDefendTurn === gameState.turnCount) return false;
+    if ((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount) return false;
+    if (!ServerGameService.canExhaustForDeclaration(unit, gameState)) return false;
+
+    const lockedTargetId = gameState.battleState.defenseLockedToTargetId;
+    if (lockedTargetId && unit.gamecardId !== lockedTargetId) return false;
+
+    const minPower = gameState.battleState.defensePowerRestriction || 0;
+    if (minPower > 0 && (unit.power || 0) < minPower) return false;
+
+    const maxPower = gameState.battleState.defenseMaxPowerRestriction;
+    if (maxPower !== undefined && (unit.power || 0) >= maxPower) return false;
+
+    const turnPlayerId = gameState.playerIds[gameState.currentTurnPlayer];
+    const attackers = (gameState.battleState.attackers || [])
+      .map(id => gameState.players[turnPlayerId]?.unitZone.find(attacker => attacker?.gamecardId === id))
+      .filter((attacker): attacker is Card => !!attacker);
+    const minExclusive = Math.max(0, ...attackers.map(attacker => (attacker as any).data?.defenseMinPower || 0));
+    return minExclusive <= 0 || (unit.power || 0) > minExclusive;
+  },
+
   isPlayerAttackLockedThisTurn(gameState: GameState, playerUid: string) {
     const player = gameState.players[playerUid];
     return !!player && (player as any).cannotDeclareAttackTurn === gameState.turnCount;
@@ -737,6 +762,15 @@ export const ServerGameService = {
     }
     gameState.logs.push(`[追加回合] ${player.displayName} 获得了一个追加回合。`);
     return true;
+  },
+
+  ensureBattleInstanceId(gameState: GameState) {
+    if (!gameState.battleState) return undefined;
+    const battleState = gameState.battleState as any;
+    if (!battleState.battleId) {
+      battleState.battleId = `battle_${gameState.turnCount}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    }
+    return battleState.battleId as string;
   },
 
   async enterForcedAttackBattleIfNeeded(gameState: GameState, playerId: string, onUpdate?: (state: GameState) => Promise<void>, reason: string = 'FORCED_ATTACK') {
@@ -2637,6 +2671,7 @@ export const ServerGameService = {
             attackers: stackItem.attackerIds || [],
             isAlliance: !!stackItem.isAlliance
           };
+          ServerGameService.ensureBattleInstanceId(gameState);
           gameState.phase = stackItem.skipDefense ? 'BATTLE_FREE' : 'DEFENSE_DECLARATION';
           gameState.logs.push(`[攻击宣言] 连锁结算完成，进入${stackItem.skipDefense ? '战斗自由' : '防御宣言'}阶段`);
           // Clear previous phase so we don't return to MAIN
@@ -2825,6 +2860,18 @@ export const ServerGameService = {
       if (!gameState.pendingQuery && gameState.phase === 'MAIN') {
         const currentPlayerId = gameState.playerIds[gameState.currentTurnPlayer];
         await ServerGameService.enterForcedAttackBattleIfNeeded(gameState, currentPlayerId, onUpdate, 'FORCED_ATTACK_CONTINUE');
+      }
+
+      const currentPlayerId = gameState.playerIds[gameState.currentTurnPlayer];
+      const currentPlayer = gameState.players[currentPlayerId];
+      if (
+        currentPlayer &&
+        !gameState.pendingQuery &&
+        (currentPlayer as any).forceEndTurnRequested === gameState.turnCount &&
+        currentPlayer.isTurn
+      ) {
+        delete (currentPlayer as any).forceEndTurnRequested;
+        await ServerGameService.executeEndPhase(gameState, currentPlayer);
       }
     }
   },
@@ -3997,7 +4044,8 @@ export const ServerGameService = {
       attackers: attackerIds,
       isAlliance,
       unitTargetId: targetId === 'NO_PROMPT' ? undefined : targetId,
-      defensePowerRestriction: 0
+      defensePowerRestriction: 0,
+      battleId: `battle_${gameState.turnCount}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     };
     EventEngine.recalculateContinuousEffects(gameState);
 
@@ -4135,11 +4183,7 @@ export const ServerGameService = {
         .filter((unit): unit is Card => !!unit);
       const mustDefend = attackingUnits.some(unit => (unit as any).data?.mustBeDefendedTurn === gameState.turnCount);
       const hasAvailableDefender = player.unitZone.some(unit =>
-        unit &&
-        ServerGameService.canExhaustForDeclaration(unit, gameState) &&
-        !(unit as any).battleForbiddenByEffect &&
-        !((unit as any).data?.cannotDefendTurn === gameState.turnCount) &&
-        !((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount)
+        ServerGameService.canUnitDefendInCurrentBattle(gameState, unit)
       );
       if (mustDefend && hasAvailableDefender) {
         throw new Error('由于效果限制，必须选择1个单位宣言防御');
@@ -4753,6 +4797,19 @@ export const ServerGameService = {
     }
 
     const unit = zone === 'UNIT' ? player.unitZone[unitIdx]! : player.itemZone[unitIdx]!;
+    const battleId = ServerGameService.ensureBattleInstanceId(gameState);
+
+    if (
+      !isEffect &&
+      zone === 'UNIT' &&
+      !!battleId &&
+      (unit as any).data?.preventBattleDestroyForBattleTurn === gameState.turnCount &&
+      (unit as any).data.preventBattleDestroyForBattleId === battleId
+    ) {
+      const sourceName = (unit as any).data.preventBattleDestroyForBattleSourceName || '战斗破坏防止';
+      gameState.logs.push(`[${sourceName}] 防止了 [${unit.fullName}] 这次战斗中将被战斗破坏。`);
+      return false;
+    }
 
     if (!isEffect && (unit as any).data?.combatImmuneUntilOwnNextTurnStartUid === playerId) {
       gameState.logs.push(`[${unit.fullName}] 不会被战斗破坏，本次破坏无效。`);
@@ -5173,6 +5230,15 @@ export const ServerGameService = {
         }
       }
 
+      if ((currentPlayer as any).loseAtEndOfTurn === gameState.turnCount) {
+        gameState.gameStatus = 2;
+        gameState.winReason = 'CARD_EFFECT_SPECIAL_WIN';
+        gameState.winnerId = gameState.playerIds.find(id => id !== currentPlayerId);
+        gameState.winSourceCardName = (currentPlayer as any).loseAtEndOfTurnSourceName || '鍗＄墝鏁堟灉';
+        gameState.logs.push(`[Game End] ${currentPlayer.displayName} loses at end of turn due to [${gameState.winSourceCardName}].`);
+        return;
+      }
+
       gameState.currentTurnPlayer = gameState.currentTurnPlayer === 0 ? 1 : 0;
       ServerGameService.applyExtraTurnIfQueued(gameState, currentPlayerId);
       gameState.turnCount += 1;
@@ -5188,7 +5254,7 @@ export const ServerGameService = {
         category: 'TURN',
         actorUid: nextPlayer.uid,
         actorName: nextPlayer.displayName,
-        text: `第 ${gameState.turnCount} 回合：${nextPlayer.displayName}`,
+        text: `Turn ${gameState.turnCount}: ${nextPlayer.displayName}`,
         metadata: { currentTurnPlayer: gameState.currentTurnPlayer }
       });
 
@@ -5263,6 +5329,11 @@ export const ServerGameService = {
             delete (card as any).data.preventNextBattleDestroy;
             delete (card as any).data.preventNextBattleDestroySourceName;
             delete (card as any).data.preventNextBattleDestroyUntilTurn;
+          }
+          if ((card as any).data?.preventBattleDestroyForBattleTurn !== undefined && (card as any).data.preventBattleDestroyForBattleTurn < gameState.turnCount) {
+            delete (card as any).data.preventBattleDestroyForBattleId;
+            delete (card as any).data.preventBattleDestroyForBattleTurn;
+            delete (card as any).data.preventBattleDestroyForBattleSourceName;
           }
           if ((card as any).data?.forbiddenAlchemyBanishTurn !== undefined && (card as any).data.forbiddenAlchemyBanishTurn < gameState.turnCount) {
             delete (card as any).data.forbiddenAlchemyBanishTurn;

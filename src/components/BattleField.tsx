@@ -3367,7 +3367,8 @@ export const BattleField: React.FC = () => {
                 ownerName: o.ownerName,
                 slotLabel: o.slotLabel,
                 zoneLabel: o.zoneLabel || o.source,
-                isMine: o.isMine
+                isMine: o.isMine,
+                isFaceDown: o.card!.displayState === 'FRONT_FACEDOWN'
               }
             ])
         )}

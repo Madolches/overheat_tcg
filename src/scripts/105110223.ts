@@ -6,12 +6,15 @@ const cardEffects: CardEffect[] = [{
   type: 'TRIGGER',
   triggerLocation: ['UNIT', 'GRAVE', 'EXILE'],
   triggerEvent: ['CARD_ENTERED_ZONE', 'CARD_LEFT_FIELD'],
+  sourceSnapshotOnLeftField: true,
   limitCount: 1,
   limitNameType: true,
   description: '进入战场或从战场离开时，可以将卡组中1张菲晶非神蚀卡加入手牌。',
   condition: (_gameState, playerState, instance, event) => {
     const entered = event?.type === 'CARD_ENTERED_ZONE' && event.sourceCardId === instance.gamecardId && event.data?.zone === 'UNIT';
-    const left = event?.type === 'CARD_LEFT_FIELD' && event.sourceCardId === instance.gamecardId && event.data?.sourceZone === 'UNIT';
+    const left = event?.type === 'CARD_LEFT_FIELD' &&
+      (event.sourceCardId === instance.gamecardId || event.data?.previousSourceCardId === instance.gamecardId) &&
+      event.data?.sourceZone === 'UNIT';
     return (entered || left) && playerState.deck.some(card => isFeijingCard(card) && !card.godMark);
   },
   execute: async (instance, gameState, playerState) => {

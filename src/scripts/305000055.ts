@@ -32,7 +32,7 @@ const effect_305000055_start_exile: CardEffect = {
   triggerLocation: ['ITEM'],
   triggerEvent: 'PHASE_CHANGED' as any,
   description: '你的回合开始时，可将卡组顶1张卡背面放逐。',
-  condition: (_gameState, playerState, _instance, event) =>
+  condition: (_gameState, playerState, instance, event) =>
     event?.data?.phase === 'START' &&
     playerState.isTurn &&
     instance.cardlocation === 'ITEM' &&

@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, discardHandCost, isBattleFreeContext, preventNextDestroy, wealthCount } from './BaseUtil';
+import { AtomicEffectExecutor, discardHandCost, ensureData, isBattleFreeContext, wealthCount } from './BaseUtil';
 
 const disableTradeUntilNextOwnTurn = (instance: Card, gameState: any) => {
   (instance as any).data = {
@@ -36,7 +36,15 @@ const cardEffects: CardEffect[] = [{
       battlingOwnUnits.push(defender);
     }
 
-    battlingOwnUnits.forEach(unit => preventNextDestroy(unit, instance, gameState.turnCount));
+    battlingOwnUnits.forEach(unit => {
+      const data = ensureData(unit);
+      const battleId = gameState.battleState
+        ? ((gameState.battleState as any).battleId ||= `battle_${gameState.turnCount}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`)
+        : undefined;
+      data.preventBattleDestroyForBattleId = battleId;
+      data.preventBattleDestroyForBattleTurn = gameState.turnCount;
+      data.preventBattleDestroyForBattleSourceName = instance.fullName;
+    });
     (playerState as any).preventAllDamageTurn = gameState.turnCount;
     (playerState as any).preventAllDamageSourceName = instance.fullName;
   }

@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { canPutUnitOntoBattlefield, createSelectCardQuery } from './BaseUtil';
+import { canPutUnitOntoBattlefield, createSelectCardQuery, moveCard, putUnitOntoField } from './BaseUtil';
 
 const effect_205000136_substitute: CardEffect = {
   id: '205000136_substitute',
@@ -36,16 +36,15 @@ const effect_205000136_activate: CardEffect = {
     if (!target) return;
 
     const damage = target.baseAcValue ?? target.acValue;
-    await AtomicEffectExecutor.execute(gameState, playerState.uid, {
-      type: 'MOVE_FROM_DECK',
-      targetFilter: { gamecardId: target.gamecardId },
-      destinationZone: 'UNIT'
-    }, instance);
+    if (!putUnitOntoField(gameState, playerState.uid, target, instance)) return;
     await AtomicEffectExecutor.execute(gameState, playerState.uid, {
       type: 'DEAL_EFFECT_DAMAGE_SELF',
       value: damage
     }, instance);
     (playerState as any).forceEndTurnRequested = gameState.turnCount;
+    if (instance.cardlocation === 'PLAY') {
+      moveCard(gameState, playerState.uid, instance, 'GRAVE', instance);
+    }
   }
 };
 

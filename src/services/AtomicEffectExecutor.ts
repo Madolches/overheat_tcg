@@ -766,7 +766,8 @@ export class AtomicEffectExecutor {
 
       this.moveCard(gameState, ownerUid, currentZone, ownerUid, toZone, card.gamecardId, true, {
         effectSourcePlayerUid,
-        effectSourceCardId: sourceCard?.gamecardId
+        effectSourceCardId: sourceCard?.gamecardId,
+        faceDown: effect.faceDown
       });
 
       // If moving to unit zone from anywhere, mark as played this turn to ensure summon sickness applies

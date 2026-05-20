@@ -51,6 +51,7 @@ const cardEffects: CardEffect[] = [story('203090028_forced_battle', '主要阶�
 
       gameState.battleState = {
         attackers: [attacker.gamecardId],
+        battleId: `battle_${gameState.turnCount}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         defender: defender.gamecardId,
         unitTargetId: defender.gamecardId,
         defenseLockedToTargetId: defender.gamecardId,

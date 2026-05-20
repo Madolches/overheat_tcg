@@ -311,7 +311,9 @@ const PlayerHalf: React.FC<{
               className="border-purple-900/30 scale-[0.8] md:scale-100" cardBackUrl={cardBackUrl}
               onClick={() => setViewingZone?.({ title: '放逐区', type: 'exile', isOpponentZone: !!isOpponent })}
               onHover={onHoverCard}
-              isFaceUp={true} isOpponent={isOpponent} displayMode="erosion_item"
+              isFaceUp={player.exile?.length > 0 ? player.exile[player.exile.length - 1]?.displayState !== 'FRONT_FACEDOWN' : true}
+              isOpponent={isOpponent}
+              displayMode="erosion_item"
             />
           </>
         ) : (
@@ -615,7 +617,8 @@ const PlayerHalf: React.FC<{
               className="border-purple-900/30 scale-[0.8] md:scale-100" cardBackUrl={cardBackUrl}
               onClick={() => setViewingZone?.({ title: '放逐区', type: 'exile', isOpponentZone: !!isOpponent })}
               onHover={onHoverCard}
-              isFaceUp={true} displayMode="erosion_item"
+              isFaceUp={player.exile?.length > 0 ? player.exile[player.exile.length - 1]?.displayState !== 'FRONT_FACEDOWN' : true}
+              displayMode="erosion_item"
             />
             <CardSlot
               card={player.grave?.length > 0 ? player.grave[player.grave.length - 1] : null}
@@ -698,12 +701,13 @@ export const PlayField: React.FC<PlayFieldProps> = ({
         cardMeta={Object.fromEntries(
           viewingZoneCards.map(card => {
             const isFaceDown = viewingZone?.type === 'erosion' && viewingZoneErosionBackIds.includes(card.gamecardId);
+            const isHiddenExile = viewingZone?.type === 'exile' && card.displayState === 'FRONT_FACEDOWN';
             const isHiddenOpponentHand = !isSpectator && viewingZone?.type === 'hand' && viewingZone?.isOpponentZone && !viewingZoneOwner.isHandPublic;
             return [
               card.gamecardId || card.id,
               {
-                zoneLabel: isFaceDown ? '侵蚀区背面' : viewingZone?.title,
-                isFaceDown: isFaceDown || isHiddenOpponentHand
+                zoneLabel: isFaceDown ? '侵蚀区背面' : isHiddenExile ? '放逐区背面' : viewingZone?.title,
+                isFaceDown: isFaceDown || isHiddenExile || isHiddenOpponentHand
               }
             ];
           })
@@ -715,6 +719,8 @@ export const PlayField: React.FC<PlayFieldProps> = ({
               return;
             }
             const isHiddenErosionBack = viewingZone.type === 'erosion' && viewingZoneErosionBackIds.includes(card.gamecardId);
+            const isHiddenExile = viewingZone.type === 'exile' && card.displayState === 'FRONT_FACEDOWN';
+            if (isHiddenExile) return;
             const clickZone = viewingZone.type === 'erosion' ? (isHiddenErosionBack ? 'erosion_back' : 'erosion_front') : viewingZone.type;
             const index = viewingZoneCards.findIndex(c => c.gamecardId === card.gamecardId);
             onCardClick(card, clickZone, index, e);
