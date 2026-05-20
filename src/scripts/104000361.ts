@@ -60,7 +60,7 @@ const card: Card = {
   isExhausted: false,
   isrush: false,
   canAttack: true,
-  feijingMark: true,
+  feijingMark: false,
   canResetCount: 0,
   effects: cardEffects,
   rarity: 'C',
