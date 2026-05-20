@@ -1,4 +1,51 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import { cardsInZones, moveCard, selectFromEntries } from './BaseUtil';
+
+const recoveryEntries = (playerState: any) =>
+  cardsInZones(playerState, ['GRAVE', 'EROSION_FRONT'])
+    .filter(({ card, source }) => source === 'GRAVE' || card.displayState === 'FRONT_UPRIGHT');
+
+const cardEffects: CardEffect[] = [{
+  id: '101130376_opponent_bounce_recover',
+  type: 'TRIGGER',
+  triggerEvent: 'CARD_LEFT_ZONE',
+  triggerLocation: ['UNIT'],
+  isGlobal: true,
+  limitCount: 1,
+  description: '1回合1次：你的单位由于对手卡的效果从战场返回手牌或卡组时，将墓地或正面侵蚀区最多3张卡放到卡组底。',
+  condition: (_gameState, playerState, _instance, event) =>
+    event?.playerUid === playerState.uid &&
+    event.data?.zone === 'UNIT' &&
+    (event.data?.targetZone === 'HAND' || event.data?.targetZone === 'DECK') &&
+    !!event.data?.isEffect &&
+    !!event.data?.effectSourcePlayerUid &&
+    event.data.effectSourcePlayerUid !== playerState.uid &&
+    recoveryEntries(playerState).length > 0,
+  execute: async (instance, gameState, playerState) => {
+    const entries = recoveryEntries(playerState);
+    selectFromEntries(
+      gameState,
+      playerState.uid,
+      entries,
+      '选择放回卡组底的卡',
+      '选择你的墓地或侵蚀区正面卡中最多3张卡，按选择顺序放置到卡组底。',
+      0,
+      Math.min(3, entries.length),
+      { sourceCardId: instance.gamecardId, effectId: '101130376_opponent_bounce_recover' }
+    );
+  },
+  onQueryResolve: async (instance, gameState, playerState, selections) => {
+    selections.slice(0, 3).forEach(id => {
+      const card = AtomicEffectExecutor.findCardById(gameState, id);
+      const ownerUid = card ? AtomicEffectExecutor.findCardOwnerKey(gameState, card.gamecardId) : undefined;
+      if (!card || ownerUid !== playerState.uid) return;
+      if (card.cardlocation === 'GRAVE' || (card.cardlocation === 'EROSION_FRONT' && card.displayState === 'FRONT_UPRIGHT')) {
+        moveCard(gameState, playerState.uid, card, 'DECK', instance, { insertAtBottom: true });
+      }
+    });
+  }
+}];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -34,7 +81,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'C',
   availableRarities: ['C'],
   cardPackage: 'BT07',

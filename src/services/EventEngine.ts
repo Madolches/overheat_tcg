@@ -65,14 +65,31 @@ export class EventEngine {
         ...player.unitZone, ...player.itemZone, ...player.erosionFront, ...player.erosionBack,
         ...player.playZone, ...player.grave, ...player.hand, ...player.exile, ...player.deck
       ];
+      const eventSourceSnapshot = event.sourceCard &&
+        (!event.playerUid || player.uid === event.playerUid) &&
+        !activeZones.some(card =>
+          card && card.gamecardId === event.sourceCardId
+        )
+        ? event.sourceCard
+        : undefined;
 
-      activeZones.forEach(card => {
+      const cardsToCheck = eventSourceSnapshot ? [eventSourceSnapshot, ...activeZones] : activeZones;
+      cardsToCheck.forEach(card => {
         if (card && card.effects) {
           card.effects.forEach((effect, index) => {
             const isEventMatch = !effect.triggerEvent || 
               (Array.isArray(effect.triggerEvent) ? effect.triggerEvent.includes(event.type) : effect.triggerEvent === event.type);
 
             if ((effect.type === 'TRIGGERED' || effect.type === 'TRIGGER') && isEventMatch) {
+              if (
+                eventSourceSnapshot &&
+                card === eventSourceSnapshot &&
+                event.type === 'CARD_LEFT_FIELD' &&
+                effect.sourceSnapshotOnLeftField !== true
+              ) {
+                return;
+              }
+
               const pseudoTenPlusTargetCardId = event.type === 'GODDESS_TRANSFORMATION'
                 ? event.data?.pseudoTenPlusTargetCardId
                 : undefined;
