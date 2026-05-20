@@ -830,7 +830,8 @@ export const ServerGameService = {
           onQueryResolve: originalEffect.onQueryResolve,
           resolve: originalEffect.resolve,
           applyContinuous: originalEffect.applyContinuous,
-          removeContinuous: originalEffect.removeContinuous
+          removeContinuous: originalEffect.removeContinuous,
+          wealthValue: originalEffect.wealthValue ?? runtimeEffect?.wealthValue
         };
       });
     }

@@ -4,8 +4,9 @@ import { Card, PlayerState, StackItem, GameState, GAME_TIMEOUTS } from '../types
 import { CardComponent } from './Card';
 import { StandardPopup } from './StandardPopup';
 import { KeywordBadges } from './KeywordBadges';
-import { ArrowDown, Shield, Sword, Zap, Trash2, Flag, BookOpen, Layers, AlertTriangle, Search, Play, X, LogOut } from 'lucide-react';
+import { ArrowDown, Shield, Sword, Zap, Trash2, Flag, BookOpen, Layers, AlertTriangle, Search, Play, X, LogOut, Coins } from 'lucide-react';
 import { cn, getCardImageUrl } from '../lib/utils';
+import { getPlayerWealthCount } from '../lib/wealth';
 
 interface PlayFieldProps {
   player: PlayerState;
@@ -218,6 +219,25 @@ const HandZoneSlot: React.FC<{
       </span>
     )}
   </button>
+);
+
+const WealthCounter: React.FC<{
+  value: number;
+  isOpponent?: boolean;
+}> = ({ value, isOpponent }) => (
+  <div
+    className={cn(
+      "flex min-w-[48px] items-center justify-center gap-1 rounded-full border px-2 py-1 shadow-inner md:min-w-[58px] md:px-3",
+      value > 0
+        ? "border-amber-300/40 bg-amber-400/15 text-amber-200 shadow-amber-500/10"
+        : "border-white/5 bg-white/5 text-white/35",
+      isOpponent && "md:flex-row-reverse"
+    )}
+    title={isOpponent ? '对方财富指示物' : '我方财富指示物'}
+  >
+    <Coins className={cn("h-3.5 w-3.5 md:h-4 md:w-4", value > 0 ? "text-amber-300" : "text-white/35")} />
+    <span className="text-sm font-black italic tabular-nums md:text-base">{value}</span>
+  </div>
 );
 
 
@@ -637,6 +657,9 @@ export const PlayField: React.FC<PlayFieldProps> = ({
 
   if (!player || !opponent || !game) return null;
   const isCurrentPlayer = !isSpectator && game.playerIds[game.currentTurnPlayer] === myUid;
+  const wealthContext = { turnCount: game.turnCount };
+  const playerWealth = getPlayerWealthCount(player, wealthContext);
+  const opponentWealth = getPlayerWealthCount(opponent, wealthContext);
   const phaseLabel =
     game.phase === 'COUNTERING' ? '对抗' :
       game.phase === 'MAIN' ? '主要' :
@@ -757,7 +780,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
         <div className="absolute inset-0 bg-gradient-to-r from-transparent via-[#f27d26]/10 to-transparent border-y border-white/5" />
 
         <div className="mx-auto flex w-fit max-w-[calc(100%-0.75rem)] flex-col items-center gap-1 rounded-2xl border border-white/10 bg-zinc-950/80 px-2 py-1 shadow-[0_20px_50px_rgba(0,0,0,0.5)] backdrop-blur-xl md:w-auto md:max-w-full md:flex-row md:gap-4 md:rounded-[2rem] md:px-4 md:py-2">
-          <div className="flex w-fit max-w-full items-center justify-center gap-2 md:w-auto md:gap-4">
+          <div className="flex w-fit max-w-full flex-wrap items-center justify-center gap-2 md:w-auto md:flex-nowrap md:gap-4">
             {/* Round & Surrender */}
             <div className="flex items-center gap-2 md:gap-4">
               <button
@@ -798,6 +821,13 @@ export const PlayField: React.FC<PlayFieldProps> = ({
                   </span>
                 </div>
               )}
+            </div>
+
+            <div className="h-7 w-px bg-white/10 md:h-8" />
+
+            <div className="flex items-center gap-1">
+              <WealthCounter value={opponentWealth} isOpponent />
+              <WealthCounter value={playerWealth} />
             </div>
 
             <div className="h-7 w-px bg-white/10 md:h-8" />

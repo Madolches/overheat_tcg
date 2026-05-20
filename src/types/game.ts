@@ -269,6 +269,7 @@ export interface CardEffect {
   targetSpec?: EffectTargetSpec;
   content?: string; // Description of the effect: Move, Draw, Add Power, etc.
   description: string; // Human readable text
+  wealthValue?: number;
   substitutionFilter?: CardFilter; // Filter for units this card can substitute/protect
   movementReplacementDestination?: TriggerLocation; // Destination if this card's movement is replaced
   erosionKeepReplacement?: boolean; // If true, allows keeping a card during erosion phase that would be moved to grave

@@ -17,7 +17,7 @@ const cardEffects: CardEffect[] = [{
   limitNameType: true,
   description: '财富3以上，战斗自由步骤中，舍弃2张手牌：这次战斗中你的单位不会被战斗破坏，防止你将要受到的所有战斗伤害。',
   condition: (gameState, playerState) =>
-    wealthCount(playerState) >= 3 &&
+    wealthCount(playerState, gameState) >= 3 &&
     isBattleFreeContext(gameState) &&
     !!gameState.battleState &&
     playerState.hand.length >= 2,
@@ -48,7 +48,7 @@ const cardEffects: CardEffect[] = [{
   limitNameType: true,
   description: '财富3以上，选择一名对手，舍弃2张手牌：那名对手抽3张卡，之后舍弃自己的3张手牌。直到下一次你的回合开始失去这项效果。',
   condition: (gameState, playerState, instance) =>
-    wealthCount(playerState) >= 3 &&
+    wealthCount(playerState, gameState) >= 3 &&
     playerState.hand.length >= 2 &&
     ((instance as any).data?.tradeEffectDisabledUntilTurn || 0) < gameState.turnCount &&
     gameState.playerIds.some(uid => uid !== playerState.uid && gameState.players[uid].deck.length >= 3),
