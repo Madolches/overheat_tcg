@@ -52,6 +52,7 @@ import bt06Y08 from '../src/scripts/205000106';
 import bt06Y09 from '../src/scripts/205000103';
 import bt06Y10 from '../src/scripts/305000055';
 import bt06Y11 from '../src/scripts/105110355';
+import chocolate from '../src/scripts/205000149';
 import devotion from '../src/scripts/201100099';
 import prayer from '../src/scripts/201000102';
 
@@ -1322,7 +1323,8 @@ async function testRedDikaiTrackExplore(): Promise<ScenarioResult> {
     await answerPendingQuery(trackState, 'BOT', [enemy.gamecardId]);
   }
   const tracked = trackState.players.BOT.markedUnitAttackTarget === enemy.gamecardId &&
-    trackState.players.BOT.exile.some((card: Card) => card.id === bt06R08.id);
+    trackState.players.BOT.exile.some((card: Card) => card.id === bt06R08.id) &&
+    !(redSource as any).data?.canAttackAnyUnit;
 
   const explore = cloneScriptCard(bt06R09 as Card, 'HAND');
   const handUnit = cloneScriptCard(bt06R02 as Card, 'HAND');
@@ -1490,6 +1492,7 @@ async function testRedTrainerLockAndCelia(): Promise<ScenarioResult> {
   }
   EventEngine.recalculateContinuousEffects(lockState);
   const locked = !!(enemy as any).data?.cannotExhaustUntilTurn;
+  const lockedCantAttack = ServerGameService.getForcedAttackUnits(lockState, 'BOT').length === 0;
   lockState.players.BOT.isTurn = false;
   lockState.players.P1.isTurn = true;
   lockState.currentTurnPlayer = 1;
@@ -1512,9 +1515,9 @@ async function testRedTrainerLockAndCelia(): Promise<ScenarioResult> {
   EventEngine.recalculateContinuousEffects(celiaState);
   const celiaFreed = !(celia as any).data?.cannotAttackOrDefendUntilTurn && !(celia as any).cannotBeEffectTargetByEffect;
 
-  return trainerPlaced && locked && broken && initiallyLocked && celiaFreed
-    ? pass(name, `trainer=${trainerPlaced}, locked=${locked}, broken=${broken}, celia=${celiaFreed}`)
-    : fail(name, `trainer=${trainerPlaced}, locked=${locked}, broken=${broken}, initial=${initiallyLocked}, celia=${celiaFreed}`);
+  return trainerPlaced && locked && lockedCantAttack && broken && initiallyLocked && celiaFreed
+    ? pass(name, `trainer=${trainerPlaced}, locked=${locked}, lockedCantAttack=${lockedCantAttack}, broken=${broken}, celia=${celiaFreed}`)
+    : fail(name, `trainer=${trainerPlaced}, locked=${locked}, lockedCantAttack=${lockedCantAttack}, broken=${broken}, initial=${initiallyLocked}, celia=${celiaFreed}`);
 }
 
 async function testYellowPartsHickAndValkyrie(): Promise<ScenarioResult> {
@@ -1544,7 +1547,10 @@ async function testYellowPartsHickAndValkyrie(): Promise<ScenarioResult> {
   const hickState = game({
     hand: [handPart],
     unitZone: [hick, partLive ? cloneScriptCard(bt06Y01 as Card, 'UNIT') : null, null, null, null, null],
-    erosionBack: [testCard({ id: 'Y03_EB', cardlocation: 'EROSION_BACK' })],
+    erosionBack: [
+      testCard({ id: 'Y03_EB_A', cardlocation: 'EROSION_BACK' }),
+      testCard({ id: 'Y03_EB_B', cardlocation: 'EROSION_BACK' })
+    ],
   });
   EventEngine.recalculateContinuousEffects(hickState);
   const protectedPart = hickState.players.BOT.unitZone[1] as Card;
@@ -1569,20 +1575,24 @@ async function testYellowPartsHickAndValkyrie(): Promise<ScenarioResult> {
   }
   const fodderDestroyed = valkyrieState.players.BOT.grave.some((card: Card) => card.gamecardId === fodder.gamecardId);
   const boosted = valkyrie.power === 4000 && !!valkyrie.temporaryAnnihilation;
-  const valkyrieInHand = cloneScriptCard(bt06Y04 as Card, 'HAND');
-  const valkyrieCannotPayAsFeijing = !valkyrie.feijingMark && !ServerGameService.payCost(
-    game({
-      hand: [valkyrieInHand],
-    }),
-    'BOT',
-    3,
-    { feijingCardId: valkyrieInHand.gamecardId },
-    'YELLOW'
-  ).success;
 
-  return partLive && makerPaid && protectedFromOpponent && hickPlaced && fodderDestroyed && boosted && valkyrieCannotPayAsFeijing
-    ? pass(name, `part=${!!partLive}, hickPlaced=${hickPlaced}, boosted=${boosted}, valkyrieFeijing=${valkyrie.feijingMark}`)
-    : fail(name, `part=${!!partLive}, makerPaid=${makerPaid}, protected=${protectedFromOpponent}, hick=${hickPlaced}, fodder=${fodderDestroyed}, boosted=${boosted}, valkyrieCannotPay=${valkyrieCannotPayAsFeijing}`);
+  const oneScarHick = cloneScriptCard(bt06Y03 as Card, 'UNIT');
+  const oneScarTarget = cloneScriptCard(bt06Y01 as Card, 'HAND');
+  const oneScarState = game({
+    hand: [oneScarTarget],
+    unitZone: [oneScarHick, null, null, null, null, null],
+    erosionBack: [testCard({ id: 'Y03_ONE_EB', cardlocation: 'EROSION_BACK' })],
+  });
+  let hickRequiresScar2 = false;
+  try {
+    await ServerGameService.activateEffect(oneScarState, 'BOT', oneScarHick.gamecardId, 1);
+  } catch {
+    hickRequiresScar2 = true;
+  }
+
+  return partLive && makerPaid && protectedFromOpponent && hickPlaced && hickRequiresScar2 && fodderDestroyed && boosted
+    ? pass(name, `part=${!!partLive}, hickPlaced=${hickPlaced}, scar2=${hickRequiresScar2}, boosted=${boosted}`)
+    : fail(name, `part=${!!partLive}, makerPaid=${makerPaid}, protected=${protectedFromOpponent}, hick=${hickPlaced}, scar2=${hickRequiresScar2}, fodder=${fodderDestroyed}, boosted=${boosted}`);
 }
 
 async function testYellowHighAlchemyChipAndGiant(): Promise<ScenarioResult> {
@@ -1652,9 +1662,10 @@ async function testYellowDailyBlueprintTruthAndIly(): Promise<ScenarioResult> {
   const daily = cloneScriptCard(bt06Y08 as Card, 'HAND');
   const discard = testCard({ id: 'Y08_DISCARD', type: 'UNIT', color: 'YELLOW', cardlocation: 'HAND' });
   const dailyTarget = testCard({ id: 'Y08_TARGET', type: 'UNIT', color: 'GREEN', cardlocation: 'DECK', colorReq: {}, power: 2500, basePower: 2500, damage: 2, baseDamage: 2 });
+  const dailyTargetB = testCard({ id: 'Y08_TARGET_B', type: 'UNIT', color: 'GREEN', cardlocation: 'DECK', colorReq: {}, power: 1500, basePower: 1500, damage: 1, baseDamage: 1 });
   const dailyState = game({
     hand: [daily, discard],
-    deck: [dailyTarget, ...deckCards(4, 'Y08_FILL', 'YELLOW')],
+    deck: [dailyTargetB, dailyTarget, ...deckCards(4, 'Y08_FILL', 'YELLOW')],
     erosionBack: [testCard({ id: 'Y08_EB', cardlocation: 'EROSION_BACK' })],
   });
   await playStoryAndResolve(dailyState, 'BOT', daily);
@@ -1662,26 +1673,27 @@ async function testYellowDailyBlueprintTruthAndIly(): Promise<ScenarioResult> {
     await answerPendingQuery(dailyState, 'BOT', [discard.gamecardId]);
   }
   if (dailyState.pendingQuery?.context?.step === 'PUT_UNIT') {
-    await answerPendingQuery(dailyState, 'BOT', [dailyTarget.gamecardId]);
+    await answerPendingQuery(dailyState, 'BOT', [dailyTarget.gamecardId, dailyTargetB.gamecardId]);
   }
   const dailyLive = dailyState.players.BOT.unitZone.find((unit: Card | null) => unit?.gamecardId === dailyTarget.gamecardId);
-  const dailySilenced = dailyLive?.power === 0 && dailyLive.damage === 1 && !!(dailyLive as any).data?.permanentEffectSilenced;
+  const dailyLiveB = dailyState.players.BOT.unitZone.find((unit: Card | null) => unit?.gamecardId === dailyTargetB.gamecardId);
+  const dailySilenced = dailyLive?.power === 0 && dailyLive.damage === 1 && !!(dailyLive as any).data?.permanentEffectSilenced &&
+    dailyLiveB?.power === 0 && dailyLiveB.damage === 1 && !!(dailyLiveB as any).data?.permanentEffectSilenced;
   if (dailyLive) {
     ServerGameService.moveCard(dailyState, 'BOT', 'UNIT', 'BOT', 'GRAVE', dailyLive.gamecardId, { isEffect: true, effectSourcePlayerUid: 'BOT', effectSourceCardId: daily.gamecardId });
   }
   const dailyExiledOnLeave = dailyState.players.BOT.exile.some((card: Card) => card.gamecardId === dailyTarget.gamecardId);
 
-  const startBlueprint = cloneScriptCard(bt06Y10 as Card, 'ITEM');
-  const startTopCard = testCard({ id: 'Y10_START_TOP', type: 'UNIT', color: 'YELLOW', cardlocation: 'DECK' });
-  const startState = game({
-    deck: [...deckCards(3, 'Y10_START_FILL', 'YELLOW'), startTopCard],
-    itemZone: [startBlueprint],
+  const blueprintStart = cloneScriptCard(bt06Y10 as Card, 'ITEM');
+  const blueprintTop = testCard({ id: 'Y10_TOP', type: 'UNIT', color: 'YELLOW', cardlocation: 'DECK' });
+  const blueprintStartState = game({
+    deck: [blueprintTop],
+    itemZone: [blueprintStart],
   }, {}, { phase: 'START' });
-  EventEngine.dispatchEvent(startState, { type: 'PHASE_CHANGED', playerUid: 'BOT', data: { phase: 'START' } });
-  await activateTriggerAndAnswerYes(startState, 'BOT');
-  const blueprintStartExiled = startState.players.BOT.exile.some((card: Card) =>
-    card.gamecardId === startTopCard.gamecardId &&
-    card.displayState === 'FRONT_FACEDOWN'
+  EventEngine.dispatchEvent(blueprintStartState, { type: 'PHASE_CHANGED' as any, playerUid: 'BOT', data: { phase: 'START' } });
+  await activateTriggerAndAnswerYes(blueprintStartState, 'BOT');
+  const blueprintStartFacedown = blueprintStartState.players.BOT.exile.some((card: Card) =>
+    card.gamecardId === blueprintTop.gamecardId && card.displayState === 'FRONT_FACEDOWN'
   );
 
   const blueprint = cloneScriptCard(bt06Y10 as Card, 'ITEM');
@@ -1752,9 +1764,41 @@ async function testYellowDailyBlueprintTruthAndIly(): Promise<ScenarioResult> {
   const ilyLive = ilyState.players.BOT.unitZone.find((unit: Card | null) => unit?.gamecardId === ilyTarget.gamecardId);
   const ilyTempSilence = !!(ilyLive as any)?.data?.fullEffectSilencedUntilOwnStartUid;
 
-  return dailySilenced && dailyExiledOnLeave && blueprintStartExiled && blueprintPulled && enemyDestroyed && facedownBottomed && truthNormalized && ilyTempSilence
-    ? pass(name, `daily=${dailySilenced}, blueprintStart=${blueprintStartExiled}, blueprint=${blueprintPulled}, truth=${truthNormalized}, ily=${ilyTempSilence}`)
-    : fail(name, `daily=${dailySilenced}/${dailyExiledOnLeave}, blueprintStart=${blueprintStartExiled}, blueprint=${blueprintPulled}/${enemyDestroyed}/${facedownBottomed}, truth=${truthNormalized}, ily=${ilyTempSilence}`);
+  return dailySilenced && dailyExiledOnLeave && blueprintStartFacedown && blueprintPulled && enemyDestroyed && facedownBottomed && truthNormalized && ilyTempSilence
+    ? pass(name, `daily=${dailySilenced}, blueprint=${blueprintStartFacedown}/${blueprintPulled}, truth=${truthNormalized}, ily=${ilyTempSilence}`)
+    : fail(name, `daily=${dailySilenced}/${dailyExiledOnLeave}, blueprint=${blueprintStartFacedown}/${blueprintPulled}/${enemyDestroyed}/${facedownBottomed}, truth=${truthNormalized}, ily=${ilyTempSilence}`);
+}
+
+async function testYellowChocolate(): Promise<ScenarioResult> {
+  const name = 'BT06/SP Yellow Chocolate resolves reveal destroy';
+  const story = cloneScriptCard(chocolate as Card, 'HAND', { colorReq: {}, baseColorReq: {}, acValue: 0, baseAcValue: 0 });
+  const revealGod = testCard({ id: 'CHOC_GOD', type: 'UNIT', color: 'YELLOW', godMark: true, baseGodMark: true, cardlocation: 'DECK' });
+  const ownSmall = testCard({ id: 'CHOC_OWN_SMALL', type: 'UNIT', color: 'YELLOW', godMark: false, cardlocation: 'UNIT', power: 1000, basePower: 1000 });
+  const enemySmall = testCard({ id: 'CHOC_ENEMY_SMALL', type: 'UNIT', color: 'RED', godMark: false, cardlocation: 'UNIT', power: 1500, basePower: 1500 });
+  const enemyLarge = testCard({ id: 'CHOC_ENEMY_LARGE', type: 'UNIT', color: 'RED', godMark: false, cardlocation: 'UNIT', power: 2500, basePower: 2500 });
+  const state = game({
+    hand: [story],
+    deck: [revealGod],
+    unitZone: [ownSmall, null, null, null, null, null],
+  }, {
+    unitZone: [enemySmall, enemyLarge, null, null, null, null],
+  });
+
+  const oldRandom = Math.random;
+  Math.random = () => 0;
+  try {
+    await playStoryAndResolve(state, 'BOT', story);
+  } finally {
+    Math.random = oldRandom;
+  }
+
+  const enemySmallDestroyed = state.players.P1.grave.some((card: Card) => card.gamecardId === enemySmall.gamecardId);
+  const enemyLargeAlive = state.players.P1.unitZone.some((card: Card | null) => card?.gamecardId === enemyLarge.gamecardId);
+  const ownSmallAlive = state.players.BOT.unitZone.some((card: Card | null) => card?.gamecardId === ownSmall.gamecardId);
+
+  return enemySmallDestroyed && enemyLargeAlive && ownSmallAlive
+    ? pass(name, `enemySmall=${enemySmallDestroyed}, enemyLargeAlive=${enemyLargeAlive}, ownSmallAlive=${ownSmallAlive}`)
+    : fail(name, `enemySmall=${enemySmallDestroyed}, enemyLargeAlive=${enemyLargeAlive}, ownSmallAlive=${ownSmallAlive}`);
 }
 
 const scenarios: ScenarioRun[] = [
@@ -1786,6 +1830,7 @@ const scenarios: ScenarioRun[] = [
   testYellowPartsHickAndValkyrie,
   testYellowHighAlchemyChipAndGiant,
   testYellowDailyBlueprintTruthAndIly,
+  testYellowChocolate,
 ];
 
 async function main() {

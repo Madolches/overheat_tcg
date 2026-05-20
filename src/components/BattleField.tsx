@@ -1162,6 +1162,7 @@ export const BattleField: React.FC = () => {
     if ((me as any)?.cannotDeclareAttackTurn === game.turnCount) return false;
     if ((card as any).data?.cannotAttackThisTurn === game.turnCount) return false;
     if ((card as any).data?.cannotAttackOrDefendUntilTurn && (card as any).data.cannotAttackOrDefendUntilTurn >= game.turnCount) return false;
+    if ((card as any).data?.cannotExhaustUntilTurn !== undefined && (card as any).data.cannotExhaustUntilTurn >= game.turnCount) return false;
     const isRush = !!card.isrush;
     const wasPlayedThisTurn = card.playedTurn === game.turnCount;
     return isRush || !wasPlayedThisTurn;
@@ -1239,6 +1240,7 @@ export const BattleField: React.FC = () => {
     if ((card as any).battleForbiddenByEffect) return false;
     if ((card as any).data?.cannotDefendTurn === state.turnCount) return false;
     if ((card as any).data?.cannotAttackOrDefendUntilTurn && (card as any).data.cannotAttackOrDefendUntilTurn >= state.turnCount) return false;
+    if ((card as any).data?.cannotExhaustUntilTurn !== undefined && (card as any).data.cannotExhaustUntilTurn >= state.turnCount) return false;
 
     const lockedTargetId = state.battleState.defenseLockedToTargetId;
     if (lockedTargetId && card.gamecardId !== lockedTargetId) return false;

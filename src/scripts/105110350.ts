@@ -35,13 +35,13 @@ const effect_105110350_put_feijing: CardEffect = {
   id: '105110350_put_feijing',
   type: 'ACTIVATE',
   triggerLocation: ['UNIT'],
-  erosionBackLimit: [1, 99],
-  description: '创痕1，你的主要阶段，横置这张卡：将手牌或卡组1张具有【菲晶】的单位放置到战场。',
+  erosionBackLimit: [2, 99],
+  description: '创痕2，你的主要阶段，横置这张卡：将手牌或卡组1张具有【菲晶】的单位放置到战场。',
   condition: (gameState, playerState, instance) =>
     playerState.isTurn &&
     gameState.phase === 'MAIN' &&
     !instance.isExhausted &&
-    backErosionCount(playerState) >= 1 &&
+    backErosionCount(playerState) >= 2 &&
     getFeijingCandidates(playerState).length > 0,
   cost: async (_gameState, _playerState, instance) => {
     if (instance.isExhausted) return false;

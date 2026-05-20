@@ -84,6 +84,7 @@ const effect_105000353_chain_copy: CardEffect = {
   triggerEvent: 'CARD_ENTERED_ZONE' as any,
   limitCount: 1,
   limitNameType: true,
+  isMandatory: true,
   description: '同名1回合1次，由卡效果从卡组进入战场时，将卡组1张《炼金晶片妖》以横置状态放置到战场。',
   condition: (gameState, playerState, instance, event) =>
     instance.cardlocation === 'UNIT' &&

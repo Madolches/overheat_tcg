@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { createSelectCardQuery, getOpponentUid, isNonGodUnit, markCanAttackAnyUnit, moveCard, ownUnits } from './BaseUtil';
+import { createSelectCardQuery, getOpponentUid, isNonGodUnit, moveCard } from './BaseUtil';
 
 const opponentNonGodUnits = (gameState: any, playerUid: string) =>
   gameState.players[getOpponentUid(gameState, playerUid)].unitZone
@@ -33,7 +33,6 @@ const cardEffects: CardEffect[] = [{
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = opponentNonGodUnits(gameState, playerState.uid).find(unit => unit.gamecardId === selections[0]);
     if (!target) return;
-    ownUnits(playerState).forEach(unit => markCanAttackAnyUnit(unit, instance));
     playerState.markedUnitAttackTarget = target.gamecardId;
     const liveStory = AtomicEffectExecutor.findCardById(gameState, instance.gamecardId);
     if (liveStory?.cardlocation === 'PLAY' || liveStory?.cardlocation === 'GRAVE') {
