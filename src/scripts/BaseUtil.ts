@@ -136,6 +136,13 @@ export const addTemporaryColor = (card: Card, color: string) => {
   ]));
 };
 
+export const addPersistentExtraColor = (card: Card, color: string) => {
+  (card as any).persistentExtraColors = Array.from(new Set([
+    ...((card as any).persistentExtraColors || []),
+    color
+  ]));
+};
+
 export const isSilverInstrumentCard = (card: Card) => card.fullName.includes('银乐器');
 
 export const hasResonanceAbility = (card: Card) =>

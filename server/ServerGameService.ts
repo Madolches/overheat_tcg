@@ -620,7 +620,10 @@ export const ServerGameService = {
       } else if (c.color !== 'NONE') {
         availableColors[c.color] = (availableColors[c.color] || 0) + 1;
       }
-      const extraColors = (c as any).temporaryExtraColors;
+      const extraColors = [
+        ...((c as any).temporaryExtraColors || []),
+        ...((c as any).persistentExtraColors || [])
+      ];
       if (Array.isArray(extraColors)) {
         extraColors.forEach(color => {
           if (typeof color === 'string' && color !== c.color && color in availableColors) {
@@ -708,6 +711,7 @@ export const ServerGameService = {
       const forcedAttackTurn = (unit as any).data?.forcedAttackTurn;
       if (forcedAttackTurn !== gameState.turnCount) return false;
       if (unit.isExhausted || unit.canAttack === false) return false;
+      if (!ServerGameService.canCardBeExhausted(unit, gameState)) return false;
       if ((unit as any).battleForbiddenByEffect) return false;
       if ((unit as any).data?.cannotAttackThisTurn === gameState.turnCount) return false;
       if ((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount) return false;
@@ -979,6 +983,39 @@ export const ServerGameService = {
     return true;
   },
 
+  canCardBeExhausted(card: Card | null | undefined, gameState: GameState) {
+    if (!card) return false;
+    const untilTurn = (card as any).data?.cannotExhaustUntilTurn;
+    return untilTurn === undefined || untilTurn < gameState.turnCount;
+  },
+
+  canUnitDefendInCurrentBattle(gameState: GameState, unit: Card | null | undefined) {
+    if (!unit || !gameState.battleState) return false;
+    if (unit.isExhausted) return false;
+    if (!ServerGameService.canCardBeExhausted(unit, gameState)) return false;
+    if ((unit as any).battleForbiddenByEffect) return false;
+    if ((unit as any).data?.cannotDefendTurn === gameState.turnCount) return false;
+    if ((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount) return false;
+
+    const lockedTargetId = gameState.battleState.defenseLockedToTargetId;
+    if (lockedTargetId && unit.gamecardId !== lockedTargetId) return false;
+
+    const minPower = gameState.battleState.defensePowerRestriction || 0;
+    if (minPower > 0 && (unit.power || 0) < minPower) return false;
+
+    const maxPower = gameState.battleState.defenseMaxPowerRestriction;
+    if (maxPower !== undefined && (unit.power || 0) >= maxPower) return false;
+
+    const attackerPlayer = gameState.players[gameState.playerIds[gameState.currentTurnPlayer]];
+    const attackers = (gameState.battleState.attackers || [])
+      .map(id => attackerPlayer?.unitZone.find(attacker => attacker?.gamecardId === id))
+      .filter(Boolean) as Card[];
+    const minExclusive = Math.max(0, ...attackers.map(attacker => (attacker as any).data?.defenseMinPower || 0));
+    if (minExclusive > 0 && (unit.power || 0) <= minExclusive) return false;
+
+    return true;
+  },
+
   readyCard(card: Card) {
     if (card) {
       card.isExhausted = false;
@@ -1026,6 +1063,13 @@ export const ServerGameService = {
       return;
     }
 
+    if (!ServerGameService.canUnitDefendInCurrentBattle(gameState, target)) {
+      delete gameState.battleState.forcedGuardTargetId;
+      delete gameState.battleState.defenseLockedToTargetId;
+      if (gameState.battleState.defender === target.gamecardId) delete gameState.battleState.defender;
+      if (gameState.battleState.unitTargetId === target.gamecardId) delete gameState.battleState.unitTargetId;
+      return;
+    }
     if (!ServerGameService.exhaustCard(target, gameState)) return;
     gameState.battleState.unitTargetId = target.gamecardId;
     gameState.battleState.defender = target.gamecardId;
@@ -1059,8 +1103,7 @@ export const ServerGameService = {
     const candidates = defenderPlayer.unitZone.filter((unit): unit is Card =>
       !!unit &&
       unit.id === '104020246' &&
-      !unit.isExhausted &&
-      !((unit as any).data?.cannotExhaustUntilTurn !== undefined && (unit as any).data.cannotExhaustUntilTurn >= gameState.turnCount)
+      ServerGameService.canUnitDefendInCurrentBattle(gameState, unit)
     );
 
     if (candidates.length !== 1) return false;
@@ -1110,6 +1153,7 @@ export const ServerGameService = {
     card.temporaryHeroic = false;
     card.temporaryCanAttackAny = false;
     delete (card as any).temporaryExtraColors;
+    delete (card as any).persistentExtraColors;
     card.temporaryBuffSources = {};
     card.temporaryBuffDetails = {};
     card.influencingEffects = [];
@@ -4118,11 +4162,7 @@ export const ServerGameService = {
         .filter((unit): unit is Card => !!unit);
       const mustDefend = attackingUnits.some(unit => (unit as any).data?.mustBeDefendedTurn === gameState.turnCount);
       const hasAvailableDefender = player.unitZone.some(unit =>
-        unit &&
-        !unit.isExhausted &&
-        !(unit as any).battleForbiddenByEffect &&
-        !((unit as any).data?.cannotDefendTurn === gameState.turnCount) &&
-        !((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount)
+        ServerGameService.canUnitDefendInCurrentBattle(gameState, unit)
       );
       if (mustDefend && hasAvailableDefender) {
         throw new Error('由于效果限制，必须选择1个单位宣言防御');
@@ -4224,6 +4264,7 @@ export const ServerGameService = {
       }
     } else {
       // Unit combat
+      EventEngine.recalculateContinuousEffects(gameState);
       const defendingUnitId = gameState.battleState!.defender;
       const defendingUnit = defender.unitZone.find(c => c?.gamecardId === defendingUnitId);
 
@@ -7871,18 +7912,8 @@ export const ServerGameService = {
         const attackingUnits = (gameState.battleState?.attackers || []).map(id =>
           attacker.unitZone.find(c => c?.gamecardId === id)
         ).filter(Boolean) as Card[];
-        const lockedTargetId = gameState.battleState?.defenseLockedToTargetId;
-        const minPower = gameState.battleState?.defensePowerRestriction || 0;
-        const maxPower = gameState.battleState?.defenseMaxPowerRestriction;
         const availableDefenders = bot.unitZone.filter(c =>
-          c &&
-          !c.isExhausted &&
-          !(c as any).battleForbiddenByEffect &&
-          !((c as any).data?.cannotDefendTurn === gameState.turnCount) &&
-          !((c as any).data?.cannotAttackOrDefendUntilTurn && (c as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount) &&
-          (!lockedTargetId || c.gamecardId === lockedTargetId) &&
-          (c.power || 0) >= minPower &&
-          (maxPower === undefined || (c.power || 0) < maxPower)
+          ServerGameService.canUnitDefendInCurrentBattle(gameState, c)
         );
 
         const defender = chooseDefender(

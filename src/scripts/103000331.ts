@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { addTemporaryColor, createChoiceQuery, ensureData, markReturnToDeckBottomAtEnd } from './BaseUtil';
+import { addPersistentExtraColor, createChoiceQuery, ensureData, markReturnToDeckBottomAtEnd } from './BaseUtil';
 
 const colorOptions = [
   { id: 'WHITE', label: '白色' },
@@ -30,8 +30,8 @@ const cardEffects: CardEffect[] = [{
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const color = selections[0];
     if (colorOptions.some(option => option.id === color)) {
-      addTemporaryColor(instance, color);
-      gameState.logs.push(`[${instance.fullName}] 本回合也具备 ${color}。`);
+      addPersistentExtraColor(instance, color);
+      gameState.logs.push(`[${instance.fullName}] 也具备 ${color}。`);
     }
 
     if (!ensureData(instance).placedByIrodoriBirdTurn) {

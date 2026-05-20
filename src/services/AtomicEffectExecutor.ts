@@ -910,7 +910,10 @@ export class AtomicEffectExecutor {
   static matchesColor(card: Card, targetColor: string): boolean {
     if (card.color === targetColor) return true;
 
-    const extraColors = (card as any).temporaryExtraColors;
+    const extraColors = [
+      ...((card as any).temporaryExtraColors || []),
+      ...((card as any).persistentExtraColors || [])
+    ];
     if (
       ['UNIT', 'ITEM', 'EROSION_FRONT'].includes(card.cardlocation as string) &&
       Array.isArray(extraColors) &&
@@ -1159,6 +1162,7 @@ export class AtomicEffectExecutor {
       card.temporaryHeroic = false;
       card.temporaryCanAttackAny = false;
       delete (card as any).temporaryExtraColors;
+      delete (card as any).persistentExtraColors;
       card.temporaryBuffSources = {};
       card.temporaryBuffDetails = {};
       card.influencingEffects = [];

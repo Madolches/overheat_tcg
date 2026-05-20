@@ -1,6 +1,7 @@
 import { ServerGameService } from '../server/ServerGameService';
 import { EventEngine } from '../src/services/EventEngine';
 import { Card, TriggerLocation } from '../src/types/game';
+import { moveCardAsCost } from '../src/scripts/BaseUtil';
 import bt06W01 from '../src/scripts/101100342';
 import bt06W02 from '../src/scripts/101140343';
 import bt06W03 from '../src/scripts/101140362';
@@ -306,11 +307,7 @@ async function testDawnFollowerDrawsWhenExiledForShingiCost(): Promise<ScenarioR
     playZone: [shingiSource],
   });
 
-  ServerGameService.moveCard(state, 'BOT', 'UNIT', 'BOT', 'EXILE', follower.gamecardId, {
-    isEffect: true,
-    effectSourcePlayerUid: 'BOT',
-    effectSourceCardId: shingiSource.gamecardId,
-  });
+  moveCardAsCost(state, 'BOT', follower, 'EXILE', shingiSource);
   await ServerGameService.checkTriggeredEffects(state);
 
   return state.players.BOT.hand.length === 1 && state.players.BOT.exile.some((card: Card) => card.gamecardId === follower.gamecardId)
@@ -456,6 +453,52 @@ async function testChantSingerReadiesOnOpponentAttack(): Promise<ScenarioResult>
   return !singer.isExhausted
     ? pass(name, `exhausted=${singer.isExhausted}`)
     : fail(name, `exhausted=${singer.isExhausted}`);
+}
+
+async function testChantSingerCannotBeBattleDestroyedByPower2500OrLess(): Promise<ScenarioResult> {
+  const name = 'BT06-W06 Chant Singer is immune to 2500 or lower non-alliance battle destruction';
+
+  const defendingSinger = cloneScriptCard(bt06W06 as Card, 'UNIT');
+  const attacker2500 = testCard({ id: 'ATTACKER_2500', fullName: '2500 Attacker', cardlocation: 'UNIT', power: 2500, basePower: 2500 });
+  const defenseState = game({
+    unitZone: [attacker2500, null, null, null, null, null],
+  }, {
+    unitZone: [defendingSinger, null, null, null, null, null],
+  }, {
+    phase: 'DAMAGE_CALCULATION',
+    battleState: {
+      attackers: [attacker2500.gamecardId],
+      defender: defendingSinger.gamecardId,
+      isAlliance: false,
+      resolvedUnitIds: [],
+    },
+  });
+
+  await ServerGameService.resolveDamage(defenseState);
+  const survivedDefense = defenseState.players.P1.unitZone.some((unit: Card | null) => unit?.gamecardId === defendingSinger.gamecardId);
+
+  const attackingSinger = cloneScriptCard(bt06W06 as Card, 'UNIT');
+  const defender2500 = testCard({ id: 'DEFENDER_2500', fullName: '2500 Defender', cardlocation: 'UNIT', power: 2500, basePower: 2500 });
+  const attackState = game({
+    unitZone: [attackingSinger, null, null, null, null, null],
+  }, {
+    unitZone: [defender2500, null, null, null, null, null],
+  }, {
+    phase: 'DAMAGE_CALCULATION',
+    battleState: {
+      attackers: [attackingSinger.gamecardId],
+      defender: defender2500.gamecardId,
+      isAlliance: false,
+      resolvedUnitIds: [],
+    },
+  });
+
+  await ServerGameService.resolveDamage(attackState);
+  const survivedAttack = attackState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === attackingSinger.gamecardId);
+
+  return survivedDefense && survivedAttack
+    ? pass(name, `defense=${survivedDefense}, attack=${survivedAttack}`)
+    : fail(name, `defense=${survivedDefense}, attack=${survivedAttack}`);
 }
 
 async function testDevotionProtectsFromOpponentLeaveEffect(): Promise<ScenarioResult> {
@@ -1022,6 +1065,15 @@ async function testGreenBirdSalalaAndAccordion(): Promise<ScenarioResult> {
   }
   const liveFeather = birdState.players.BOT.unitZone.find((unit: Card | null) => unit?.id === bt06G05.id);
   const featherPlaced = !!liveFeather && liveFeather.isExhausted && !(liveFeather as any).data?.returnToDeckBottomAtTurnEnd;
+  const featherColorBeforeTurnEnd = !!(liveFeather as any)?.persistentExtraColors?.includes('RED');
+  if (liveFeather) {
+    await ServerGameService.executeEndPhase(birdState, birdState.players.BOT);
+  }
+  const featherColorAfterTurnEnd = !!(liveFeather as any)?.persistentExtraColors?.includes('RED');
+  const featherPaysRedRequirement = !!liveFeather && ServerGameService.getColorRequirementResult(
+    birdState.players.BOT,
+    { RED: 1 }
+  ).valid;
 
   const salala = cloneScriptCard(bt06G07 as Card, 'UNIT');
   const chimeraCost = cloneScriptCard(bt06G11 as Card, 'GRAVE');
@@ -1072,9 +1124,52 @@ async function testGreenBirdSalalaAndAccordion(): Promise<ScenarioResult> {
   }
   const silenced = target.silencedEffectIds?.includes('G10_DUMMY_ACTIVATE') === true;
 
-  return featherPlaced && lockedAndRecovered && silenced
-    ? pass(name, `feather=${featherPlaced}, lockedRecovered=${lockedAndRecovered}, silenced=${silenced}`)
-    : fail(name, `feather=${featherPlaced}, lockedRecovered=${lockedAndRecovered}, silenced=${silenced}`);
+  return featherPlaced && featherColorBeforeTurnEnd && featherColorAfterTurnEnd && featherPaysRedRequirement && lockedAndRecovered && silenced
+    ? pass(name, `feather=${featherPlaced}, color=${featherColorAfterTurnEnd}, lockedRecovered=${lockedAndRecovered}, silenced=${silenced}`)
+    : fail(name, `feather=${featherPlaced}, colorBefore=${featherColorBeforeTurnEnd}, colorAfter=${featherColorAfterTurnEnd}, pays=${featherPaysRedRequirement}, lockedRecovered=${lockedAndRecovered}, silenced=${silenced}`);
+}
+
+async function testCannotExhaustUnitIsNotAvailableDefender(): Promise<ScenarioResult> {
+  const name = 'cannot-exhaust unit is not treated as an available defender';
+  const attacker = testCard({ id: 'LOCK_ATTACKER', type: 'UNIT', color: 'GREEN', cardlocation: 'UNIT', power: 1000, damage: 1 });
+  const lockedDefender = testCard({
+    id: 'LOCKED_DEFENDER',
+    type: 'UNIT',
+    color: 'RED',
+    cardlocation: 'UNIT',
+    power: 5000,
+    damage: 2,
+    data: {
+      cannotExhaustUntilTurn: 7,
+      cannotExhaustSourceName: '瑟族少女「萨拉拉」',
+    },
+  } as any);
+  const state = game({
+    unitZone: [attacker, null, null, null, null, null],
+  }, {
+    displayName: 'P1',
+    botDifficulty: 'hard',
+    botDeckProfileId: 'generic',
+    unitZone: [lockedDefender, null, null, null, null, null],
+  }, {
+    turnCount: 6,
+    phase: 'DEFENSE_DECLARATION',
+    battleState: {
+      attackers: [attacker.gamecardId],
+      isAlliance: false,
+      defensePowerRestriction: 0,
+    },
+  });
+  state.currentTurnPlayer = 0;
+  state.players.BOT.isTurn = true;
+  state.players.P1.isTurn = false;
+
+  await ServerGameService.botMoveForPlayer(state, 'P1');
+
+  const declinedDefense = state.phase === 'BATTLE_FREE' && !state.battleState?.defender && !lockedDefender.isExhausted;
+  return declinedDefense
+    ? pass(name, `phase=${state.phase}, defender=${state.battleState?.defender || 'none'}`)
+    : fail(name, `phase=${state.phase}, defender=${state.battleState?.defender || 'none'}, exhausted=${lockedDefender.isExhausted}`);
 }
 
 async function testGreenStoriesAndChimera(): Promise<ScenarioResult> {
@@ -1109,6 +1204,41 @@ async function testGreenStoriesAndChimera(): Promise<ScenarioResult> {
   }
   const itemDestroyed = destroyState.players.P1.grave.some((card: Card) => card.id === itemTarget.id);
 
+  const resonanceSource = cloneScriptCard(bt06G01 as Card, 'UNIT');
+  const resonanceSpell = cloneScriptCard(bt06G08 as Card, 'GRAVE');
+  const sernobuAttacker = cloneScriptCard(bt06G02 as Card, 'UNIT');
+  const attackTarget = testCard({ id: 'G08_ATTACK_TARGET', type: 'UNIT', color: 'RED', godMark: false, cardlocation: 'UNIT' });
+  const resonanceState = game({
+    grave: [resonanceSpell],
+    unitZone: [resonanceSource, sernobuAttacker, null, null, null, null],
+  }, {
+    unitZone: [attackTarget, null, null, null, null, null],
+  });
+  await activateAndResolveByOpponentPass(resonanceState, 'BOT', resonanceSource, 0);
+  if (resonanceState.pendingQuery?.context?.effectId === '103090327_resonance') {
+    await answerPendingQuery(resonanceState, 'BOT', [resonanceSpell.gamecardId]);
+  }
+  for (let guard = 0; guard < 8; guard++) {
+    if (!resonanceState.pendingQuery) {
+      await ServerGameService.checkTriggeredEffects(resonanceState);
+    }
+    if (!resonanceState.pendingQuery) break;
+
+    if (resonanceState.pendingQuery.callbackKey === 'TRIGGER_CHOICE') {
+      const isSilverSpellTrigger = resonanceState.pendingQuery.context?.sourceCardId === resonanceSpell.gamecardId;
+      await answerPendingQuery(resonanceState, 'BOT', [isSilverSpellTrigger ? 'YES' : 'NO']);
+      continue;
+    }
+
+    if (resonanceState.pendingQuery.context?.effectId === '203000095_exiled_by_resonance_attack') {
+      await answerPendingQuery(resonanceState, 'BOT', [attackTarget.gamecardId]);
+    }
+    break;
+  }
+  const resonanceAttackEnabled =
+    resonanceState.players.BOT.markedUnitAttackTarget === attackTarget.gamecardId &&
+    !!(sernobuAttacker as any).data?.canAttackAnyUnit;
+
   const ambush = cloneScriptCard(bt06G09 as Card, 'HAND');
   const chimera = cloneScriptCard(bt06G11 as Card, 'GRAVE');
   const greenCost = testCard({ id: 'G09_COST', color: 'GREEN', cardlocation: 'HAND' });
@@ -1142,9 +1272,9 @@ async function testGreenStoriesAndChimera(): Promise<ScenarioResult> {
     liveChimera.isHeroic === true &&
     liveChimera.isAnnihilation === true;
 
-  return itemDestroyed && revived && chimeraResolved
-    ? pass(name, `itemDestroyed=${itemDestroyed}, revived=${revived}, chimera=${chimeraResolved}`)
-    : fail(name, `itemDestroyed=${itemDestroyed}, revived=${revived}, chimera=${chimeraResolved}`);
+  return itemDestroyed && resonanceAttackEnabled && revived && chimeraResolved
+    ? pass(name, `itemDestroyed=${itemDestroyed}, resonance=${resonanceAttackEnabled}, revived=${revived}, chimera=${chimeraResolved}`)
+    : fail(name, `itemDestroyed=${itemDestroyed}, resonance=${resonanceAttackEnabled}, revived=${revived}, chimera=${chimeraResolved}`);
 }
 
 async function testRedDikaiTrackExplore(): Promise<ScenarioResult> {
@@ -1439,10 +1569,20 @@ async function testYellowPartsHickAndValkyrie(): Promise<ScenarioResult> {
   }
   const fodderDestroyed = valkyrieState.players.BOT.grave.some((card: Card) => card.gamecardId === fodder.gamecardId);
   const boosted = valkyrie.power === 4000 && !!valkyrie.temporaryAnnihilation;
+  const valkyrieInHand = cloneScriptCard(bt06Y04 as Card, 'HAND');
+  const valkyrieCannotPayAsFeijing = !valkyrie.feijingMark && !ServerGameService.payCost(
+    game({
+      hand: [valkyrieInHand],
+    }),
+    'BOT',
+    3,
+    { feijingCardId: valkyrieInHand.gamecardId },
+    'YELLOW'
+  ).success;
 
-  return partLive && makerPaid && protectedFromOpponent && hickPlaced && fodderDestroyed && boosted
-    ? pass(name, `part=${!!partLive}, hickPlaced=${hickPlaced}, boosted=${boosted}`)
-    : fail(name, `part=${!!partLive}, makerPaid=${makerPaid}, protected=${protectedFromOpponent}, hick=${hickPlaced}, fodder=${fodderDestroyed}, boosted=${boosted}`);
+  return partLive && makerPaid && protectedFromOpponent && hickPlaced && fodderDestroyed && boosted && valkyrieCannotPayAsFeijing
+    ? pass(name, `part=${!!partLive}, hickPlaced=${hickPlaced}, boosted=${boosted}, valkyrieFeijing=${valkyrie.feijingMark}`)
+    : fail(name, `part=${!!partLive}, makerPaid=${makerPaid}, protected=${protectedFromOpponent}, hick=${hickPlaced}, fodder=${fodderDestroyed}, boosted=${boosted}, valkyrieCannotPay=${valkyrieCannotPayAsFeijing}`);
 }
 
 async function testYellowHighAlchemyChipAndGiant(): Promise<ScenarioResult> {
@@ -1531,6 +1671,19 @@ async function testYellowDailyBlueprintTruthAndIly(): Promise<ScenarioResult> {
   }
   const dailyExiledOnLeave = dailyState.players.BOT.exile.some((card: Card) => card.gamecardId === dailyTarget.gamecardId);
 
+  const startBlueprint = cloneScriptCard(bt06Y10 as Card, 'ITEM');
+  const startTopCard = testCard({ id: 'Y10_START_TOP', type: 'UNIT', color: 'YELLOW', cardlocation: 'DECK' });
+  const startState = game({
+    deck: [...deckCards(3, 'Y10_START_FILL', 'YELLOW'), startTopCard],
+    itemZone: [startBlueprint],
+  }, {}, { phase: 'START' });
+  EventEngine.dispatchEvent(startState, { type: 'PHASE_CHANGED', playerUid: 'BOT', data: { phase: 'START' } });
+  await activateTriggerAndAnswerYes(startState, 'BOT');
+  const blueprintStartExiled = startState.players.BOT.exile.some((card: Card) =>
+    card.gamecardId === startTopCard.gamecardId &&
+    card.displayState === 'FRONT_FACEDOWN'
+  );
+
   const blueprint = cloneScriptCard(bt06Y10 as Card, 'ITEM');
   const valkyrie = cloneScriptCard(bt06Y04 as Card, 'DECK');
   const enemy = testCard({ id: 'Y10_ENEMY', type: 'UNIT', color: 'RED', godMark: false, cardlocation: 'UNIT' });
@@ -1561,14 +1714,15 @@ async function testYellowDailyBlueprintTruthAndIly(): Promise<ScenarioResult> {
     blueprintState.players.BOT.deck.some((card: Card) => card.gamecardId === faceDownA.gamecardId);
 
   const truth = cloneScriptCard(bt06Y11 as Card, 'UNIT');
+  const truthFeijing = cloneScriptCard(bt06Y01 as Card, 'UNIT');
   const truthTarget = testCard({ id: 'Y11_TARGET', type: 'UNIT', color: 'RED', cardlocation: 'GRAVE', colorReq: {}, power: 2000, basePower: 2000, damage: 2, baseDamage: 2 });
   const truthState = game({
     grave: [truthTarget],
-    unitZone: [truth, null, null, null, null, null],
+    unitZone: [truth, truthFeijing, null, null, null, null],
     erosionBack: [testCard({ id: 'Y11_EB', cardlocation: 'EROSION_BACK' })],
   }, {}, { phase: 'END' });
   EventEngine.recalculateContinuousEffects(truthState);
-  const truthBlue = (truth as any).temporaryExtraColors?.includes('BLUE');
+  const truthHasBlueUnit = (truthFeijing as any).temporaryExtraColors?.includes('BLUE');
   truthState.triggeredEffectsQueue = [];
   EventEngine.dispatchEvent(truthState, { type: 'TURN_END' as any, playerUid: 'BOT' });
   await activateTriggerAndAnswerYes(truthState, 'BOT');
@@ -1576,7 +1730,7 @@ async function testYellowDailyBlueprintTruthAndIly(): Promise<ScenarioResult> {
     await answerPendingQuery(truthState, 'BOT', [truthTarget.gamecardId]);
   }
   const truthLive = truthState.players.BOT.unitZone.find((unit: Card | null) => unit?.gamecardId === truthTarget.gamecardId);
-  const truthNormalized = truthBlue && truthLive?.power === 0 && truthLive.damage === 1 && !!(truthLive as any).data?.permanentEffectSilenced;
+  const truthNormalized = truthHasBlueUnit && truthLive?.power === 0 && truthLive.damage === 1 && !!(truthLive as any).data?.permanentEffectSilenced;
 
   const ily = cloneScriptCard(bt06Y05 as Card, 'UNIT');
   const fieldA = cloneScriptCard(bt06Y01 as Card, 'UNIT');
@@ -1598,9 +1752,9 @@ async function testYellowDailyBlueprintTruthAndIly(): Promise<ScenarioResult> {
   const ilyLive = ilyState.players.BOT.unitZone.find((unit: Card | null) => unit?.gamecardId === ilyTarget.gamecardId);
   const ilyTempSilence = !!(ilyLive as any)?.data?.fullEffectSilencedUntilOwnStartUid;
 
-  return dailySilenced && dailyExiledOnLeave && blueprintPulled && enemyDestroyed && facedownBottomed && truthNormalized && ilyTempSilence
-    ? pass(name, `daily=${dailySilenced}, blueprint=${blueprintPulled}, truth=${truthNormalized}, ily=${ilyTempSilence}`)
-    : fail(name, `daily=${dailySilenced}/${dailyExiledOnLeave}, blueprint=${blueprintPulled}/${enemyDestroyed}/${facedownBottomed}, truth=${truthNormalized}, ily=${ilyTempSilence}`);
+  return dailySilenced && dailyExiledOnLeave && blueprintStartExiled && blueprintPulled && enemyDestroyed && facedownBottomed && truthNormalized && ilyTempSilence
+    ? pass(name, `daily=${dailySilenced}, blueprintStart=${blueprintStartExiled}, blueprint=${blueprintPulled}, truth=${truthNormalized}, ily=${ilyTempSilence}`)
+    : fail(name, `daily=${dailySilenced}/${dailyExiledOnLeave}, blueprintStart=${blueprintStartExiled}, blueprint=${blueprintPulled}/${enemyDestroyed}/${facedownBottomed}, truth=${truthNormalized}, ily=${ilyTempSilence}`);
 }
 
 const scenarios: ScenarioRun[] = [
@@ -1612,6 +1766,7 @@ const scenarios: ScenarioRun[] = [
   testKuriTenPlusPreventsDamage,
   testBishopAuraAndDawnFollowers,
   testChantSingerReadiesOnOpponentAttack,
+  testChantSingerCannotBeBattleDestroyedByPower2500OrLess,
   testDevotionProtectsFromOpponentLeaveEffect,
   testAngelAdventPlacesShingiMarkedUnit,
   testDawnRitualPlacesGoddessChurchAc3,
@@ -1623,6 +1778,7 @@ const scenarios: ScenarioRun[] = [
   testBlueSheathAndFuka,
   testGreenResonanceDrawBoostAndSearch,
   testGreenBirdSalalaAndAccordion,
+  testCannotExhaustUnitIsNotAvailableDefender,
   testGreenStoriesAndChimera,
   testRedDikaiTrackExplore,
   testRedBatsBetisAndGiantBat,

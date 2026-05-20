@@ -128,7 +128,7 @@ const card: Card = {
   isHeroic: true,
   baseHeroic: true,
   canAttack: true,
-  feijingMark: true,
+  feijingMark: false,
   canResetCount: 0,
   effects: [effect_105110351_blueprint_destroy, effect_105110351_destroy_boost],
   rarity: 'SR',

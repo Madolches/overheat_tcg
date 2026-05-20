@@ -6,7 +6,8 @@ const FIELD_LEAVE_DATA_PREFIXES_TO_KEEP = [
   'returnFromExileAfterBattle',
   'permanentEffectSilenced',
   'pendingKuriLeaveRevive',
-  'fullEffectSilencedUntilOwnStart'
+  'fullEffectSilencedUntilOwnStart',
+  'lastMovedAsCost'
 ];
 
 export const isFieldZone = (zone?: TriggerLocation) => !!zone && FIELD_ZONES.has(zone);
@@ -70,6 +71,7 @@ export const clearBattlefieldState = (card: Card) => {
   card.temporaryCanAttackAny = false;
   card.temporaryBuffSources = {};
   card.temporaryBuffDetails = {};
+  delete (card as any).persistentExtraColors;
 
   if (card.baseColorReq) card.colorReq = { ...card.baseColorReq };
   if (card.basePower !== undefined) card.power = card.basePower;
