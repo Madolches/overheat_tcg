@@ -6645,7 +6645,13 @@ export const ServerGameService = {
     gameState: GameState,
     playerUid: string,
     payment: { feijingCardId?: string; exhaustUnitIds?: string[]; erosionFrontIds?: string[] },
-    options: { paymentCost?: number; paymentColor?: string; sourceCard?: Card; addedReadyDefenders?: number } = {}
+    options: {
+      paymentCost?: number;
+      paymentColor?: string;
+      sourceCard?: Card;
+      addedReadyDefenders?: number;
+      additionalExhaustUnitIds?: string[];
+    } = {}
   ) {
     const player = gameState.players[playerUid];
     if (!player || ServerGameService.getBotDifficulty(gameState, playerUid) !== 'hard') {
@@ -6683,9 +6689,15 @@ export const ServerGameService = {
       !(unit as any).battleForbiddenByEffect &&
       !((unit as any).data?.cannotDefendTurn === gameState.turnCount) &&
       !((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount);
-    const exhaustedUnits = (payment.exhaustUnitIds || [])
+    const paymentExhaustedUnitIds = new Set(payment.exhaustUnitIds || []);
+    const paymentExhaustedUnits = Array.from(paymentExhaustedUnitIds)
       .map(id => ServerGameService.findCardById(gameState, id))
       .filter((card): card is Card => !!card);
+    const additionalExhaustedUnits = (options.additionalExhaustUnitIds || [])
+      .filter(id => !paymentExhaustedUnitIds.has(id))
+      .map(id => ServerGameService.findCardById(gameState, id))
+      .filter((card): card is Card => !!card);
+    const exhaustedUnits = [...paymentExhaustedUnits, ...additionalExhaustedUnits];
     const exhaustedReadyDefenders = exhaustedUnits.filter(canDefendSoon).length;
     const readyDefendersBefore = player.unitZone.filter(canDefendSoon).length + (options.addedReadyDefenders || 0);
     const readyDefendersAfter = Math.max(0, readyDefendersBefore - exhaustedReadyDefenders);
@@ -6735,7 +6747,7 @@ export const ServerGameService = {
           ? paymentCost
           : 3
         : 0;
-      const unitPayment = exhaustedUnits.reduce((total, unit) => {
+      const unitPayment = paymentExhaustedUnits.reduce((total, unit) => {
         const data = (unit as any).data || {};
         const accessMin = Math.max(1, Number(data.accessTapMinValue || 1));
         const accessMax = data.accessTapColor && data.accessTapColor !== paymentColor
@@ -6981,6 +6993,7 @@ export const ServerGameService = {
           const paymentOptions = ServerGameService.botEffectPaymentExhaustsSource(effect)
             ? { excludeExhaustUnitIds: [card.gamecardId] }
             : undefined;
+          const sourceExhaustUnitIds = paymentOptions?.excludeExhaustUnitIds || [];
           if (paymentCost > 0 && !ServerGameService.canBotPayPositiveCost(gameState, player, paymentCost, card.color, card, {
             excludeUnitIds: paymentOptions?.excludeExhaustUnitIds,
           })) {
@@ -6998,11 +7011,12 @@ export const ServerGameService = {
               },
             })
             : {};
-          const paymentRisk = paymentCost > 0
+          const paymentRisk = paymentCost > 0 || sourceExhaustUnitIds.length > 0
             ? ServerGameService.scoreBotPaymentSelectionRisk(gameState, playerUid, projectedPayment, {
               paymentCost,
               paymentColor: card.color,
               sourceCard: card,
+              additionalExhaustUnitIds: sourceExhaustUnitIds,
             })
             : { penalty: 0, notes: [] as string[], estimatedDeckPayment: 0, readyDefendersAfter: undefined };
           const targetCount = ServerGameService.getEffectTargetCount(gameState, playerUid, card, effect);

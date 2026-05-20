@@ -2863,6 +2863,76 @@ function testBigSalalaPaymentPreservesCradleUnderPressure(): ScenarioResult {
   );
 }
 
+function testEffectSourceExhaustCountsAsPaymentRisk(): ScenarioResult {
+  const profile = getDeckAiProfile('big-salala');
+  const paidCost = (async () => true) as any;
+  paidCost.paymentCost = 1;
+  paidCost.paymentColor = 'GREEN';
+  const windmill = unit({
+    id: '103090078',
+    fullName: 'Mobile Windmill Cannon',
+    color: 'GREEN',
+    damage: 2,
+    power: 2500,
+    playedTurn: 4,
+    effects: [effect({
+      id: '103090078_destroy_later',
+      type: 'ACTIVATE',
+      triggerLocation: ['UNIT'],
+      description: 'pay 1 cost and exhaust this: destroy later',
+      condition: () => true,
+      cost: paidCost,
+      targetSpec: { controller: 'OPPONENT', zones: ['UNIT'], minSelections: 1, maxSelections: 1 },
+    })],
+  });
+  const repairer = unit({
+    id: '103090077',
+    fullName: 'Windmill Repairer',
+    color: 'GREEN',
+    damage: 1,
+    power: 1000,
+    playedTurn: 3,
+  });
+  const target = unit({ id: 'P1_WINDMILL_TARGET', color: 'BLUE', damage: 2, power: 2000, playedTurn: 1 });
+  const opponentA = unit({ id: 'P1_WINDMILL_PRESSURE_A', color: 'BLUE', damage: 3, power: 3000, playedTurn: 1 });
+  const opponentB = unit({ id: 'P1_WINDMILL_PRESSURE_B', color: 'BLUE', damage: 3, power: 2500, playedTurn: 1 });
+  const state = game(
+    {
+      unitZone: [windmill, repairer, null, null, null, null],
+      erosionBack: erosionCards(4, 'BOT_WINDMILL_RISK_EROSION'),
+      deck: deckCards(9, 'BOT_WINDMILL_RISK_DECK'),
+      botDifficulty: 'hard',
+      botDeckProfileId: profile.id,
+    },
+    {
+      unitZone: [target, opponentA, opponentB, null, null, null],
+      botDeckProfileId: 'blue-adventurer',
+    },
+    {
+      phase: 'MAIN',
+      turnCount: 5,
+      botDifficulty: 'hard',
+      botDeckProfiles: { BOT: profile.id, P1: 'blue-adventurer' },
+    }
+  );
+  const candidates = ServerGameService.getBotActivatableEffectCandidates(state, 'BOT') as any[];
+  const candidate = candidates.find(entry => entry.effect?.id === '103090078_destroy_later');
+  const exhaustedIds = new Set((candidate?.paymentRisk?.exhaustedUnits || []).map((card: any) => card.gamecardId));
+
+  return assertScenario(
+    'effect source exhaust counts as payment risk',
+    !!candidate &&
+      exhaustedIds.has(windmill.gamecardId) &&
+      !(candidate.projectedPayment?.exhaustUnitIds || []).includes(windmill.gamecardId) &&
+      candidate.paymentRisk.readyDefendersAfter === 1 &&
+      candidate.paymentRisk.penalty >= 60 &&
+      candidate.score < 5.5,
+    candidate
+      ? `score=${candidate.score.toFixed(1)}, penalty=${candidate.paymentRisk.penalty.toFixed(1)}, payment=${JSON.stringify(candidate.projectedPayment)}, exhausted=${Array.from(exhaustedIds).join(',')}, readyAfter=${candidate.paymentRisk.readyDefendersAfter}`
+      : `candidates=${candidates.map(entry => `${entry.effect?.id}:${entry.score}`).join(',')}`
+  );
+}
+
 function testNegativeCostProtectsErosionGodmark(): ScenarioResult {
   const profile = getDeckAiProfile('white-temple');
   const low = unit({
@@ -5402,6 +5472,7 @@ const scenarios: ScenarioRun[] = [
   testCostAvoidsCurrentBattleUnit,
   testPaymentExhaustUsesLowUnitBeforeClosingAttacker,
   testBigSalalaPaymentPreservesCradleUnderPressure,
+  testEffectSourceExhaustCountsAsPaymentRisk,
   testNegativeCostProtectsErosionGodmark,
   testDefenseDoesNotThrowGodMarkOnNonLethalHit,
   testDefenseDeclinesLowImpactChumpBlock,
