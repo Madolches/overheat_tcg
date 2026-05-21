@@ -1,6 +1,13 @@
 import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor, addInfluence, allCardsOnField, createSelectCardQuery, ensureData, moveCard, ownUnits, ownerUidOf } from './BaseUtil';
 
+const getFieldSlotIndex = (gameState: any, ownerUid: string, card: Card) => {
+  const owner = gameState.players[ownerUid];
+  const zone = card.cardlocation;
+  const zoneCards = zone === 'ITEM' ? owner?.itemZone : zone === 'UNIT' ? owner?.unitZone : undefined;
+  return Array.isArray(zoneCards) ? zoneCards.findIndex((slot: Card | null) => slot?.gamecardId === card.gamecardId) : -1;
+};
+
 const cardEffects: CardEffect[] = [{
     id: '101140100_blink',
     type: 'TRIGGER',
@@ -29,6 +36,7 @@ const cardEffects: CardEffect[] = [{
       if (!target) return;
       const ownerUid = ownerUidOf(gameState, target);
       const zone = target.cardlocation as TriggerLocation;
+      const slotIndex = ownerUid ? getFieldSlotIndex(gameState, ownerUid, target) : -1;
       const id = target.gamecardId;
       moveCard(gameState, ownerUid, target, 'EXILE', instance, { faceDown: false });
       const exiled = AtomicEffectExecutor.findCardById(gameState, id);
@@ -43,6 +51,7 @@ const cardEffects: CardEffect[] = [{
         cardId: id,
         ownerUid,
         zone,
+        slotIndex,
         sourceCardId: instance.gamecardId,
         afterTurn: returnTurn,
         sourceName: instance.fullName
@@ -75,7 +84,7 @@ const cardEffects: CardEffect[] = [{
         if (exiled && entry.ownerUid && exiled.cardlocation === 'EXILE') {
           const data = ensureData(exiled);
           delete data.returnAtOwnEndSourceName;
-          moveCard(gameState, entry.ownerUid, exiled, entry.zone || 'UNIT', instance);
+          moveCard(gameState, entry.ownerUid, exiled, entry.zone || 'UNIT', instance, { targetIndex: entry.slotIndex });
           gameState.logs.push(`[${entry.sourceName || instance.fullName}] ${exiled.fullName} 在回合结束时回归战场。`);
         }
       });

@@ -2,6 +2,13 @@ import { Card, CardEffect, GameEvent } from '../types/game';
 import { addInfluence, allCardsOnField, createSelectCardQuery, ensureData, moveCard, ownerUidOf } from './BaseUtil';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 
+const getFieldSlotIndex = (gameState: any, ownerUid: string, card: Card) => {
+  const owner = gameState.players[ownerUid];
+  const zone = card.cardlocation;
+  const zoneCards = zone === 'ITEM' ? owner?.itemZone : zone === 'UNIT' ? owner?.unitZone : undefined;
+  return Array.isArray(zoneCards) ? zoneCards.findIndex((slot: Card | null) => slot?.gamecardId === card.gamecardId) : -1;
+};
+
 const cardEffects: CardEffect[] = [{
   id: '101140151_enter_exile',
   type: 'TRIGGER',
@@ -24,12 +31,14 @@ const cardEffects: CardEffect[] = [{
     const ownerUid = ownerUidOf(gameState, target);
     if (!ownerUid) return;
     const originalZone = target.cardlocation;
+    const originalSlotIndex = getFieldSlotIndex(gameState, ownerUid, target);
     const currentTurnPlayerUid = gameState.playerIds[gameState.currentTurnPlayer];
     const returnTurn = gameState.turnCount + (currentTurnPlayerUid === playerState.uid ? 1 : 0);
     moveCard(gameState, ownerUid, target, 'EXILE', instance, { faceDown: false });
     ensureData(target).escortReturn = {
       ownerUid,
       zone: originalZone,
+      slotIndex: originalSlotIndex,
       returnOnOpponentEndTurn: returnTurn,
       sourceName: instance.fullName,
       sourceCardId: instance.gamecardId
@@ -40,6 +49,7 @@ const cardEffects: CardEffect[] = [{
       cardId: target.gamecardId,
       ownerUid,
       zone: originalZone,
+      slotIndex: originalSlotIndex,
       sourceCardId: instance.gamecardId,
       returnTurn
     });
@@ -71,8 +81,8 @@ const cardEffects: CardEffect[] = [{
       const card = AtomicEffectExecutor.findCardById(gameState, entry.cardId);
       if (!card || card.cardlocation !== 'EXILE') continue;
       delete ensureData(card).escortReturn;
-      moveCard(gameState, entry.ownerUid, card, entry.zone, instance);
-      card.isExhausted = true;
+      moveCard(gameState, entry.ownerUid, card, entry.zone, instance, { targetIndex: entry.slotIndex });
+      if (entry.zone === 'UNIT') card.isExhausted = true;
       card.displayState = 'FRONT_UPRIGHT';
     }
     (playerState as any).escortReturns = remaining;

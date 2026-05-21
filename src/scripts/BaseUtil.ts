@@ -531,7 +531,7 @@ export const moveCard = (
   card: Card,
   toZone: TriggerLocation,
   sourceCard?: Card,
-  options?: { insertAtBottom?: boolean; faceDown?: boolean; toPlayerUid?: string }
+  options?: { insertAtBottom?: boolean; faceDown?: boolean; toPlayerUid?: string; targetIndex?: number }
 ) => {
   const targetPlayerUid = options?.toPlayerUid || ownerUid;
   if (sourceCard && isUnaffectedByCardEffect(gameState, card, sourceCard, options?.toPlayerUid ? ownerUidOf(gameState, sourceCard) : undefined)) {
@@ -548,6 +548,7 @@ export const moveCard = (
     {
       insertAtBottom: options?.insertAtBottom,
       faceDown: options?.faceDown,
+      targetIndex: options?.targetIndex,
       effectSourcePlayerUid: (sourceCard ? AtomicEffectExecutor.findCardOwnerKey(gameState, sourceCard.gamecardId) : ownerUid) || ownerUid,
       effectSourceCardId: sourceCard?.gamecardId
     }
@@ -560,7 +561,7 @@ export const moveCardAsCost = (
   card: Card,
   toZone: TriggerLocation,
   sourceCard?: Card,
-  options?: { insertAtBottom?: boolean; faceDown?: boolean; toPlayerUid?: string }
+  options?: { insertAtBottom?: boolean; faceDown?: boolean; toPlayerUid?: string; targetIndex?: number }
 ) => {
   const targetPlayerUid = options?.toPlayerUid || ownerUid;
   const data = ensureData(card);
@@ -578,6 +579,7 @@ export const moveCardAsCost = (
     {
       insertAtBottom: options?.insertAtBottom,
       faceDown: options?.faceDown,
+      targetIndex: options?.targetIndex,
       effectSourcePlayerUid: (sourceCard ? AtomicEffectExecutor.findCardOwnerKey(gameState, sourceCard.gamecardId) : ownerUid) || ownerUid,
       effectSourceCardId: sourceCard?.gamecardId
     }
@@ -1261,7 +1263,7 @@ export const moveByEffect = (
   card: Card,
   toZone: TriggerLocation,
   source: Card,
-  options?: { toPlayerUid?: string; insertAtBottom?: boolean; faceDown?: boolean }
+  options?: { toPlayerUid?: string; insertAtBottom?: boolean; faceDown?: boolean; targetIndex?: number }
 ) => {
   const fromUid = ownerUidOf(gameState, card);
   if (!fromUid) return;
