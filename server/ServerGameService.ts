@@ -2075,6 +2075,8 @@ export const ServerGameService = {
   enterCountering(gameState: GameState, sourcePlayerId: string, stackItem: StackItem) {
     const now = Date.now();
     const elapsed = now - (gameState.phaseTimerStart || now);
+    const opponentId = gameState.playerIds.find(id => id !== sourcePlayerId);
+    const isUncounterable = ServerGameService.isStackItemUncounterable(gameState, sourcePlayerId, stackItem);
 
     if (gameState.phase !== 'COUNTERING') {
       // If we are leaving a shared phase (MAIN, BATTLE_DECLARATION, BATTLE_FREE), subtract from turn budget
@@ -2098,8 +2100,7 @@ export const ServerGameService = {
     // Combo Link Numbering (Link 1 is the trigger, Link 2 is the first response, etc.)
     const linkNumber = gameState.counterStack.length;
     ServerGameService.assignDeclaredTargetLink(gameState, stackItem.declaredTargets, linkNumber);
-    const opponentId = gameState.playerIds.find(id => id !== sourcePlayerId);
-    gameState.priorityPlayerId = opponentId;
+    gameState.priorityPlayerId = isUncounterable ? sourcePlayerId : opponentId;
 
     if (stackItem.card && stackItem.type !== 'PHASE_END') {
       const isPlayedPermanent = stackItem.type === 'PLAY' && stackItem.card.type !== 'STORY';
@@ -2120,6 +2121,30 @@ export const ServerGameService = {
         metadata: { linkNumber, stackType: stackItem.type, effectIndex: stackItem.effectIndex }
       });
     }
+  },
+
+  isShingiNamedCard(card?: Card) {
+    return !!card && (
+      card.fullName.includes('神仪') ||
+      card.fullName.includes('绁炰华')
+    );
+  },
+
+  playerHasDawnChapel(gameState: GameState, playerUid: string) {
+    const player = gameState.players[playerUid];
+    return !!player?.itemZone.some(item => item?.id === '301140059');
+  },
+
+  isStackItemUncounterable(gameState: GameState, sourcePlayerId: string, stackItem: StackItem) {
+    if (
+      stackItem.type === 'PLAY' &&
+      ServerGameService.isShingiNamedCard(stackItem.card) &&
+      ServerGameService.playerHasDawnChapel(gameState, sourcePlayerId)
+    ) {
+      gameState.logs.push('[「黎明礼拜堂」] 对手不能对抗这次神仪卡的使用。');
+      return true;
+    }
+    return false;
   },
 
   async playCard(gameState: GameState, playerId: string, cardId: string, paymentSelection: { feijingCardId?: string, exhaustUnitIds?: string[], erosionFrontIds?: string[] }, declaredTargets?: DeclaredEffectTarget[], options?: { resumeFromQuery?: boolean; paymentSelectionResolved?: boolean }) {
@@ -2461,6 +2486,14 @@ export const ServerGameService = {
 
     const player = gameState.players[playerId];
     const topItem = gameState.counterStack[gameState.counterStack.length - 1];
+    if (
+      topItem?.ownerUid === playerId &&
+      topItem.type === 'PLAY' &&
+      ServerGameService.isShingiNamedCard(topItem.card) &&
+      ServerGameService.playerHasDawnChapel(gameState, playerId)
+    ) {
+      gameState.logs.push(`${player.displayName} 的神仪卡不能被对抗，直接结算。`);
+    }
 
     if (topItem.type === 'PHASE_END') {
       gameState.logs.push(`${player.displayName} 接受了阶段结束请求 (Pass)。`);
@@ -3535,14 +3568,34 @@ export const ServerGameService = {
           subCard = player.unitZone[subCardIdx] || undefined;
         }
         if (subCardIdx !== -1 && subCard) {
-          ServerGameService.moveCard(gameState, playerUid, subZone, playerUid, 'GRAVE', subCardId, {
-            isEffect,
-            effectSourcePlayerUid: sourcePlayerId,
-            effectSourceCardId: sourcePlayerId
-              ? gameState.currentProcessingItem?.card?.gamecardId
-              : undefined
-          });
-          gameState.logs.push(`[系统] ${subCard.fullName} 代替了承受破坏。`);
+          const targetUnit = ServerGameService.findCardById(gameState, targetUnitId) || ({ gamecardId: targetUnitId } as Card);
+          const substitutionEffect = subCard.effects?.find(e =>
+            e.substitutionFilter &&
+            (!e.substitutionOnlyEffect || isEffect) &&
+            (!e.substitutionOnlyOpponent || (!!sourcePlayerId && sourcePlayerId !== playerUid)) &&
+            AtomicEffectExecutor.matchesFilter(targetUnit, e.substitutionFilter, subCard)
+          );
+          const substitutionAction = substitutionEffect?.substitutionAction || 'SEND_SELF_TO_GRAVE';
+          if (substitutionAction === 'EXHAUST_SELF') {
+            if (ServerGameService.exhaustCard(subCard, gameState)) {
+              gameState.logs.push(`[系统] ${subCard.fullName} 横置代替了承受破坏。`);
+            } else {
+              gameState.logs.push(`[系统] ${subCard.fullName} 无法横置，代替破坏失败。`);
+              await ServerGameService.destroyUnit(gameState, playerUid, targetUnitId, isEffect, sourcePlayerId, true);
+            }
+          } else if (substitutionAction === 'DESTROY_SELF') {
+            await ServerGameService.destroyUnit(gameState, playerUid, subCardId, true, sourcePlayerId, true);
+            gameState.logs.push(`[系统] ${subCard.fullName} 破坏自身代替了承受破坏。`);
+          } else {
+            ServerGameService.moveCard(gameState, playerUid, subZone, playerUid, 'GRAVE', subCardId, {
+              isEffect,
+              effectSourcePlayerUid: sourcePlayerId,
+              effectSourceCardId: sourcePlayerId
+                ? gameState.currentProcessingItem?.card?.gamecardId
+                : undefined
+            });
+            gameState.logs.push(`[系统] ${subCard.fullName} 代替了承受破坏。`);
+          }
 
           // Mark the unit as resolved (it survived)
           if (gameState.battleState) {
@@ -3737,7 +3790,7 @@ export const ServerGameService = {
 
   findCardById(gameState: GameState, gamecardId: string): Card | undefined {
     for (const player of Object.values(gameState.players)) {
-      const zones = [player.hand, player.deck, player.grave, player.exile, player.unitZone, player.itemZone, player.erosionFront, player.erosionBack];
+      const zones = [player.hand, player.deck, player.grave, player.exile, player.unitZone, player.itemZone, player.erosionFront, player.erosionBack, player.playZone];
       for (const zone of zones) {
         const found = zone.find(c => c?.gamecardId === gamecardId);
         if (found) return found;
@@ -4550,6 +4603,16 @@ export const ServerGameService = {
     }
 
     if (
+      source === 'EFFECT' &&
+      (player as any).preventOpponentEffectDamageTurn === gameState.turnCount
+    ) {
+      gameState.logs.push(`[${(player as any).preventOpponentEffectDamageSourceName || '伤害防止'}] 防止了 ${player.displayName} 将要受到的 ${damage} 点对手效果伤害。`);
+      (player as any).preventedOpponentEffectDamageThisTurn = Number((player as any).preventedOpponentEffectDamageThisTurn || 0) + damage;
+      ServerGameService.bottomGraveCardsForPreventedEffectDamage(gameState, playerId, damage);
+      return 0;
+    }
+
+    if (
       source === 'BATTLE' &&
       (player as any).preventBattleDamageUpToTurn === gameState.turnCount &&
       damage <= Number((player as any).preventBattleDamageUpToAmount || 0)
@@ -4704,6 +4767,25 @@ export const ServerGameService = {
       });
     }
     return finalAmount;
+  },
+
+  bottomGraveCardsForPreventedEffectDamage(gameState: GameState, playerId: string, amount: number) {
+    const player = gameState.players[playerId];
+    if (!player || amount <= 0) return;
+    const sourceName = (player as any).preventOpponentEffectDamageSourceName || '伤害防止';
+    const sourceCardId = (player as any).preventOpponentEffectDamageSourceCardId;
+    const cards = player.grave.slice(0, Math.min(amount, player.grave.length));
+    cards.forEach(card => {
+      ServerGameService.moveCard(gameState, playerId, 'GRAVE', playerId, 'DECK', card.gamecardId, {
+        insertAtBottom: true,
+        isEffect: true,
+        effectSourcePlayerUid: playerId,
+        effectSourceCardId: sourceCardId
+      });
+    });
+    if (cards.length > 0) {
+      gameState.logs.push(`[${sourceName}] 将墓地 ${cards.length} 张卡放置到卡组底。`);
+    }
   },
 
   applyAllianceAnnihilationDamage(gameState: GameState, defenderPlayerId: string, survivingUnits: Card[]) {
@@ -4967,11 +5049,21 @@ export const ServerGameService = {
         c !== null &&
         c.gamecardId !== gamecardId &&
         c.effects &&
-        c.effects.some(e => e.substitutionFilter && AtomicEffectExecutor.matchesFilter(unit, e.substitutionFilter, c))
+        c.effects.some(e =>
+          e.substitutionFilter &&
+          (!e.substitutionOnlyEffect || isEffect) &&
+          (!e.substitutionOnlyOpponent || (!!sourcePlayerId && sourcePlayerId !== playerId)) &&
+          AtomicEffectExecutor.matchesFilter(unit, e.substitutionFilter, c)
+        )
       ) as Card[];
 
       for (const subCard of substitutionCards) {
-        const effect = subCard.effects.find(e => e.substitutionFilter && AtomicEffectExecutor.matchesFilter(unit, e.substitutionFilter, subCard));
+        const effect = subCard.effects.find(e =>
+          e.substitutionFilter &&
+          (!e.substitutionOnlyEffect || isEffect) &&
+          (!e.substitutionOnlyOpponent || (!!sourcePlayerId && sourcePlayerId !== playerId)) &&
+          AtomicEffectExecutor.matchesFilter(unit, e.substitutionFilter, subCard)
+        );
         const result = ServerGameService.checkEffectLimitsAndReqs(gameState, playerId, subCard, effect);
         if (effect && result.valid) {
           // Issue Query
@@ -5231,6 +5323,10 @@ export const ServerGameService = {
         delete (p as any).windProductionSourceName;
         delete (p as any).preventAllDamageTurn;
         delete (p as any).preventAllDamageSourceName;
+        delete (p as any).preventOpponentEffectDamageTurn;
+        delete (p as any).preventOpponentEffectDamageSourceName;
+        delete (p as any).preventOpponentEffectDamageSourceCardId;
+        delete (p as any).preventedOpponentEffectDamageThisTurn;
 
         const allCards = [
           ...p.deck, ...p.hand, ...p.grave, ...p.exile,
