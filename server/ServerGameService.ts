@@ -7,7 +7,7 @@ import { getCardIdentity, getLocationLabel } from '../src/lib/utils';
 import { addBattleLog, cardToBattleLogRef, describeBattleLogTarget } from '../src/lib/battleLog';
 import { SERVER_CARD_LIBRARY } from './card_loader';
 import { GameService } from '../src/services/gameService';
-import { grantedTotemReviveFromGrave, standardizeChoiceOptions } from '../src/scripts/BaseUtil';
+import { grantedTotemReviveFromGrave, isOpponentAcAtMost, standardizeChoiceOptions } from '../src/scripts/BaseUtil';
 import { BotDifficulty, DeckAiProfile } from './ai/types';
 import { getDeckAiProfile } from './ai/deckProfiles';
 import { inferPlayerDeckProfile } from './ai/playerDeckProfile';
@@ -27,6 +27,7 @@ import {
   isClosingTurnPlan,
   scoreCardValue,
   scoreActivatableEffect,
+  scoreMainPhaseCardSequencingValue,
   applyOpeningHandSoftCompensation,
   scoreAttackCandidate,
   scorePaymentExhaustValue,
@@ -77,6 +78,8 @@ export const ServerGameService = {
 
   isFullEffectSilencedThisTurn(gameState: GameState, card: Card) {
     const data = (card as any).data;
+    if (data?.permanentEffectSilenced) return true;
+    if (data?.fullEffectSilencedUntilOwnStartUid) return true;
     if (data?.fullEffectSilencedTurn !== gameState.turnCount) return false;
     const zones = data.fullEffectSilencedZones as TriggerLocation[] | undefined;
     return !zones || zones.includes(card.cardlocation as TriggerLocation);
@@ -266,12 +269,43 @@ export const ServerGameService = {
       gameState.logs.push(`[${target.fullName}] 不受对手宣言颜色的卡牌效果影响。`);
       return true;
     }
+    if (
+      data.unaffectedByOpponentAcLe !== undefined &&
+      isOpponentAcAtMost(gameState, target, source, Number(data.unaffectedByOpponentAcLe), effectSourceOwnerUid)
+    ) {
+      gameState.logs.push(`[${target.fullName}] is unaffected by opponent ACCESS ${data.unaffectedByOpponentAcLe} or less card effects.`);
+      return true;
+    }
     return false;
   },
 
   isLegalDeclaredTarget(gameState: GameState, sourceCard: Card, target: Card) {
     if (target.gamecardId === sourceCard.gamecardId) return true;
-    if (target.cardlocation === 'UNIT' && (target as any).cannotBeEffectTargetByEffect) return false;
+    const isFieldCard = target.cardlocation === 'UNIT' || target.cardlocation === 'ITEM';
+    const data = (target as any).data || {};
+    if (isFieldCard && (target as any).cannotBeEffectTargetByEffect) return false;
+    if (
+      isFieldCard &&
+      data.cannotBeEffectTargetByOpponent
+    ) {
+      const sourceOwnerUid = ServerGameService.findCardLocation(gameState, sourceCard.gamecardId)?.ownerUid;
+      const targetOwnerUid = ServerGameService.findCardLocation(gameState, target.gamecardId)?.ownerUid;
+      if (sourceOwnerUid && targetOwnerUid && sourceOwnerUid !== targetOwnerUid) return false;
+    }
+    if (
+      isFieldCard &&
+      Array.isArray(data.cannotBeEffectTargetColors) &&
+      data.cannotBeEffectTargetColors.includes(sourceCard.color)
+    ) {
+      return false;
+    }
+    if (
+      isFieldCard &&
+      data.cannotBeEffectTargetByOpponentAcLe !== undefined &&
+      isOpponentAcAtMost(gameState, target, sourceCard, Number(data.cannotBeEffectTargetByOpponentAcLe))
+    ) {
+      return false;
+    }
     return true;
   },
 
@@ -586,6 +620,17 @@ export const ServerGameService = {
       } else if (c.color !== 'NONE') {
         availableColors[c.color] = (availableColors[c.color] || 0) + 1;
       }
+      const extraColors = [
+        ...((c as any).temporaryExtraColors || []),
+        ...((c as any).persistentExtraColors || [])
+      ];
+      if (Array.isArray(extraColors)) {
+        extraColors.forEach(color => {
+          if (typeof color === 'string' && color !== c.color && color in availableColors) {
+            availableColors[color] = (availableColors[color] || 0) + 1;
+          }
+        });
+      }
     });
 
     let totalDeficit = 0;
@@ -659,12 +704,13 @@ export const ServerGameService = {
   getForcedAttackUnits(gameState: GameState, playerId: string) {
     const player = gameState.players[playerId];
     if (!player) return [];
+    if (ServerGameService.isPlayerAttackLockedThisTurn(gameState, playerId)) return [];
 
     return player.unitZone.filter((unit): unit is Card => {
       if (!unit) return false;
       const forcedAttackTurn = (unit as any).data?.forcedAttackTurn;
       if (forcedAttackTurn !== gameState.turnCount) return false;
-      if (unit.isExhausted || unit.canAttack === false) return false;
+      if (!ServerGameService.canExhaustForDeclaration(unit, gameState) || unit.canAttack === false) return false;
       if ((unit as any).battleForbiddenByEffect) return false;
       if ((unit as any).data?.cannotAttackThisTurn === gameState.turnCount) return false;
       if ((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount) return false;
@@ -673,6 +719,58 @@ export const ServerGameService = {
       const wasPlayedThisTurn = unit.playedTurn === gameState.turnCount;
       return isRush || !wasPlayedThisTurn;
     });
+  },
+
+  canUnitDefendInCurrentBattle(gameState: GameState, unit: Card | null | undefined) {
+    if (!unit || !gameState.battleState) return false;
+    if (unit.isExhausted) return false;
+    if ((unit as any).battleForbiddenByEffect) return false;
+    if ((unit as any).data?.cannotDefendTurn === gameState.turnCount) return false;
+    if ((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount) return false;
+    if (!ServerGameService.canExhaustForDeclaration(unit, gameState)) return false;
+
+    const lockedTargetId = gameState.battleState.defenseLockedToTargetId;
+    if (lockedTargetId && unit.gamecardId !== lockedTargetId) return false;
+
+    const minPower = gameState.battleState.defensePowerRestriction || 0;
+    if (minPower > 0 && (unit.power || 0) < minPower) return false;
+
+    const maxPower = gameState.battleState.defenseMaxPowerRestriction;
+    if (maxPower !== undefined && (unit.power || 0) >= maxPower) return false;
+
+    const turnPlayerId = gameState.playerIds[gameState.currentTurnPlayer];
+    const attackers = (gameState.battleState.attackers || [])
+      .map(id => gameState.players[turnPlayerId]?.unitZone.find(attacker => attacker?.gamecardId === id))
+      .filter((attacker): attacker is Card => !!attacker);
+    const minExclusive = Math.max(0, ...attackers.map(attacker => (attacker as any).data?.defenseMinPower || 0));
+    return minExclusive <= 0 || (unit.power || 0) > minExclusive;
+  },
+
+  isPlayerAttackLockedThisTurn(gameState: GameState, playerUid: string) {
+    const player = gameState.players[playerUid];
+    return !!player && (player as any).cannotDeclareAttackTurn === gameState.turnCount;
+  },
+
+  applyExtraTurnIfQueued(gameState: GameState, currentPlayerId: string) {
+    const player = gameState.players[currentPlayerId];
+    if (!player || (player as any).extraTurnAfterCurrentTurn !== gameState.turnCount) return false;
+
+    delete (player as any).extraTurnAfterCurrentTurn;
+    gameState.currentTurnPlayer = gameState.playerIds.indexOf(currentPlayerId) as 0 | 1;
+    if (gameState.currentTurnPlayer !== 0 && gameState.currentTurnPlayer !== 1) {
+      gameState.currentTurnPlayer = 0;
+    }
+    gameState.logs.push(`[追加回合] ${player.displayName} 获得了一个追加回合。`);
+    return true;
+  },
+
+  ensureBattleInstanceId(gameState: GameState) {
+    if (!gameState.battleState) return undefined;
+    const battleState = gameState.battleState as any;
+    if (!battleState.battleId) {
+      battleState.battleId = `battle_${gameState.turnCount}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    }
+    return battleState.battleId as string;
   },
 
   async enterForcedAttackBattleIfNeeded(gameState: GameState, playerId: string, onUpdate?: (state: GameState) => Promise<void>, reason: string = 'FORCED_ATTACK') {
@@ -766,7 +864,8 @@ export const ServerGameService = {
           onQueryResolve: originalEffect.onQueryResolve,
           resolve: originalEffect.resolve,
           applyContinuous: originalEffect.applyContinuous,
-          removeContinuous: originalEffect.removeContinuous
+          removeContinuous: originalEffect.removeContinuous,
+          wealthValue: originalEffect.wealthValue ?? runtimeEffect?.wealthValue
         };
       });
     }
@@ -908,10 +1007,20 @@ export const ServerGameService = {
     return { valid: true };
   },
 
-  exhaustCard(card: Card) {
-    if (card) {
-      card.isExhausted = true;
+  exhaustCard(card: Card, gameState?: GameState) {
+    if (!card) return false;
+    const untilTurn = (card as any).data?.cannotExhaustUntilTurn;
+    if (untilTurn !== undefined && (!gameState || untilTurn >= gameState.turnCount)) {
+      return false;
     }
+    card.isExhausted = true;
+    return true;
+  },
+
+  canExhaustForDeclaration(card: Card | null | undefined, gameState: GameState) {
+    if (!card || card.isExhausted) return false;
+    const untilTurn = (card as any).data?.cannotExhaustUntilTurn;
+    return untilTurn === undefined || untilTurn < gameState.turnCount;
   },
 
   readyCard(card: Card) {
@@ -961,7 +1070,14 @@ export const ServerGameService = {
       return;
     }
 
-    target.isExhausted = true;
+    if (!ServerGameService.canUnitDefendInCurrentBattle(gameState, target)) {
+      delete gameState.battleState.forcedGuardTargetId;
+      delete gameState.battleState.defenseLockedToTargetId;
+      if (gameState.battleState.defender === target.gamecardId) delete gameState.battleState.defender;
+      if (gameState.battleState.unitTargetId === target.gamecardId) delete gameState.battleState.unitTargetId;
+      return;
+    }
+    if (!ServerGameService.exhaustCard(target, gameState)) return;
     gameState.battleState.unitTargetId = target.gamecardId;
     gameState.battleState.defender = target.gamecardId;
     gameState.battleState.defenseLockedToTargetId = target.gamecardId;
@@ -994,13 +1110,13 @@ export const ServerGameService = {
     const candidates = defenderPlayer.unitZone.filter((unit): unit is Card =>
       !!unit &&
       unit.id === '104020246' &&
-      !unit.isExhausted
+      ServerGameService.canUnitDefendInCurrentBattle(gameState, unit)
     );
 
     if (candidates.length !== 1) return false;
 
     const target = candidates[0];
-    target.isExhausted = true;
+    if (!ServerGameService.exhaustCard(target, gameState)) return false;
     gameState.battleState.unitTargetId = target.gamecardId;
     gameState.battleState.defender = target.gamecardId;
     gameState.battleState.defenseLockedToTargetId = target.gamecardId;
@@ -1043,6 +1159,8 @@ export const ServerGameService = {
     card.temporaryAnnihilation = false;
     card.temporaryHeroic = false;
     card.temporaryCanAttackAny = false;
+    delete (card as any).temporaryExtraColors;
+    delete (card as any).persistentExtraColors;
     card.temporaryBuffSources = {};
     card.temporaryBuffDetails = {};
     card.influencingEffects = [];
@@ -1254,6 +1372,34 @@ export const ServerGameService = {
           return false;
         }
       }
+      if (
+        options?.isEffect &&
+        (sourceZone === 'UNIT' || sourceZone === 'ITEM') &&
+        !['UNIT', 'ITEM'].includes(targetZone) &&
+        options.effectSourcePlayerUid &&
+        options.effectSourcePlayerUid !== sourcePlayerId &&
+        (card as any).data?.cannotLeaveFieldByOpponentEffectTurn === gameState.turnCount
+      ) {
+        const sourceName = (card as any).data?.cannotLeaveFieldByOpponentEffectSourceName || '卡牌效果';
+        gameState.logs.push(`[${sourceName}] 防止了 [${card.fullName}] 因对手效果从战场离开。`);
+        return false;
+      }
+      if (
+        options?.isEffect &&
+        (sourceZone === 'UNIT' || sourceZone === 'ITEM') &&
+        !['UNIT', 'ITEM'].includes(targetZone) &&
+        options.effectSourceCardId
+      ) {
+        const sourceCard = ServerGameService.findCardById(gameState, options.effectSourceCardId);
+        if (
+          sourceCard &&
+          (card as any).data?.cannotLeaveFieldByOpponentAcLe !== undefined &&
+          isOpponentAcAtMost(gameState, card, sourceCard, Number((card as any).data.cannotLeaveFieldByOpponentAcLe), options.effectSourcePlayerUid)
+        ) {
+          gameState.logs.push(`[${card.fullName}] cannot leave the field by opponent ACCESS ${(card as any).data.cannotLeaveFieldByOpponentAcLe} or less card effects.`);
+          return false;
+        }
+      }
       previousSourceCardIdForMove = card.gamecardId;
       if (sourceZone === 'UNIT' || sourceZone === 'ITEM' || sourceZone === 'EROSION_FRONT' || sourceZone === 'EROSION_BACK') {
         sourceArray[index] = null;
@@ -1275,6 +1421,16 @@ export const ServerGameService = {
     }
 
     if (
+      (sourceZone === 'UNIT' || sourceZone === 'ITEM') &&
+      targetZone !== 'EXILE' &&
+      !['UNIT', 'ITEM'].includes(targetZone) &&
+      (card as any).data?.exileWhenLeavesFieldSourceName
+    ) {
+      targetZone = 'EXILE';
+      gameState.logs.push(`[替换效果] [${card.fullName}] 离开战场时改为放逐。`);
+    }
+
+    if (
       options?.isEffect &&
       (sourceZone === 'EROSION_FRONT' || sourceZone === 'EROSION_BACK') &&
       targetZone === 'EXILE'
@@ -1289,10 +1445,6 @@ export const ServerGameService = {
       card.type === 'UNIT'
     ) {
       targetPlayer.unitFromGraveToFieldTurn = gameState.turnCount;
-    }
-
-    if ((targetZone === 'HAND' || targetZone === 'DECK') && sourceZone !== 'HAND' && sourceZone !== 'DECK') {
-      ServerGameService.refreshCardAsNewInstance(card);
     }
 
     // Movement Replacement logic (e.g. 104010484)
@@ -1324,6 +1476,10 @@ export const ServerGameService = {
         onlyLeftFieldEvent: true
       });
       clearBattlefieldState(card);
+    }
+
+    if ((targetZone === 'HAND' || targetZone === 'DECK') && sourceZone !== 'HAND' && sourceZone !== 'DECK') {
+      ServerGameService.refreshCardAsNewInstance(card);
     }
 
     if (!(card as any).data) {
@@ -1808,7 +1964,12 @@ export const ServerGameService = {
             if (reservedDeckCard) player.deck.push(reservedDeckCard);
             return { success: false, reason: '不能横置本次宣言的单位来支付该费用' };
           }
-          const card = [...player.unitZone].find(c => c?.gamecardId === uid && !c.isExhausted && !(c as any).data?.cannotExhaustByEffect);
+          const card = [...player.unitZone].find(c =>
+            c?.gamecardId === uid &&
+            !c.isExhausted &&
+            !(c as any).data?.cannotExhaustByEffect &&
+            !((c as any).data?.cannotExhaustUntilTurn !== undefined && (c as any).data.cannotExhaustUntilTurn >= gameState.turnCount)
+          );
           if (card) {
             cardsToExhaust.push(card);
           } else {
@@ -1833,7 +1994,7 @@ export const ServerGameService = {
       remainingCost = selectedAccessMax >= remainingCost ? 0 : remainingCost - selectedAccessMax;
 
       // Actually exhaust them
-      cardsToExhaust.forEach(c => ServerGameService.exhaustCard(c));
+      cardsToExhaust.forEach(c => ServerGameService.exhaustCard(c, gameState));
       const exhaustedUnits = cardsToExhaust.map(card => ({ id: card.gamecardId, name: card.fullName }));
       const erosionCostCards: { id: string; name: string }[] = [];
       let feijingSummary: PaymentSummary['feijingCard'];
@@ -2149,10 +2310,24 @@ export const ServerGameService = {
       if (card) location = 'HAND';
     }
 
+    let cardControllerId = playerId;
+    if (!card) {
+      const opponentId = gameState.playerIds.find(id => id !== playerId);
+      const opponent = opponentId ? gameState.players[opponentId] : undefined;
+      if (opponent) {
+        findInZones([opponent.unitZone], 'UNIT');
+        if (!card) findInZones([opponent.itemZone], 'ITEM');
+        if (card) cardControllerId = opponentId!;
+      }
+    }
+
     if (!card) throw new Error('Card not found');
 
     const effect = card.effects?.[effectIndex];
     if (!effect) throw new Error('Effect not found');
+    if (cardControllerId !== playerId && !(effect as any).canBeActivatedByOpponent) {
+      throw new Error('不能发动对手卡牌的效果');
+    }
     const loc = location || (card.cardlocation as TriggerLocation);
     const result = ServerGameService.checkEffectLimitsAndReqs(gameState, playerId, card, effect, loc);
     if (!result.valid) {
@@ -2424,23 +2599,25 @@ export const ServerGameService = {
               }
             }
             const liveStory = owner.playZone.find(c => c?.gamecardId === card.gamecardId);
-            const replaceToExile = liveStory?.effects?.some(effect =>
-              effect.type === 'CONTINUOUS' &&
-              effect.content === 'EXILE_WHEN_LEAVES_PLAY_TO_GRAVE'
-            );
-            ServerGameService.moveCard(
-              gameState,
-              stackItem.ownerUid,
-              'PLAY',
-              stackItem.ownerUid,
-              replaceToExile ? 'EXILE' : 'GRAVE',
-              card.gamecardId,
-              replaceToExile ? {
-                isEffect: true,
-                effectSourcePlayerUid: stackItem.ownerUid,
-                effectSourceCardId: card.gamecardId
-              } : undefined
-            );
+            if (liveStory) {
+              const replaceToExile = liveStory.effects?.some(effect =>
+                effect.type === 'CONTINUOUS' &&
+                effect.content === 'EXILE_WHEN_LEAVES_PLAY_TO_GRAVE'
+              );
+              ServerGameService.moveCard(
+                gameState,
+                stackItem.ownerUid,
+                'PLAY',
+                stackItem.ownerUid,
+                replaceToExile ? 'EXILE' : 'GRAVE',
+                card.gamecardId,
+                replaceToExile ? {
+                  isEffect: true,
+                  effectSourcePlayerUid: stackItem.ownerUid,
+                  effectSourceCardId: card.gamecardId
+                } : undefined
+              );
+            }
           }
           const identity = getCardIdentity(gameState, stackItem.ownerUid, card);
           ServerGameService.clearDeclaredTargetMarkers(gameState, stackItem.declaredTargets);
@@ -2494,6 +2671,7 @@ export const ServerGameService = {
             attackers: stackItem.attackerIds || [],
             isAlliance: !!stackItem.isAlliance
           };
+          ServerGameService.ensureBattleInstanceId(gameState);
           gameState.phase = stackItem.skipDefense ? 'BATTLE_FREE' : 'DEFENSE_DECLARATION';
           gameState.logs.push(`[攻击宣言] 连锁结算完成，进入${stackItem.skipDefense ? '战斗自由' : '防御宣言'}阶段`);
           // Clear previous phase so we don't return to MAIN
@@ -2613,7 +2791,10 @@ export const ServerGameService = {
     if (gameState.triggeredEffectsQueue && gameState.triggeredEffectsQueue.length > 0) {
       const trigger = gameState.triggeredEffectsQueue.shift()!;
       let { card, effect, effectIndex, playerUid, event } = trigger;
-      const liveSource = ServerGameService.findCardLocation(gameState, card.gamecardId);
+      let liveSource = ServerGameService.findCardLocation(gameState, card.gamecardId);
+      if (!liveSource && event?.sourceCardId === card.gamecardId) {
+        liveSource = ServerGameService.findCardLocation(gameState, event.data?.previousSourceCardId);
+      }
       if (!liveSource) {
         await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
         return;
@@ -2680,6 +2861,18 @@ export const ServerGameService = {
         const currentPlayerId = gameState.playerIds[gameState.currentTurnPlayer];
         await ServerGameService.enterForcedAttackBattleIfNeeded(gameState, currentPlayerId, onUpdate, 'FORCED_ATTACK_CONTINUE');
       }
+
+      const currentPlayerId = gameState.playerIds[gameState.currentTurnPlayer];
+      const currentPlayer = gameState.players[currentPlayerId];
+      if (
+        currentPlayer &&
+        !gameState.pendingQuery &&
+        (currentPlayer as any).forceEndTurnRequested === gameState.turnCount &&
+        currentPlayer.isTurn
+      ) {
+        delete (currentPlayer as any).forceEndTurnRequested;
+        await ServerGameService.executeEndPhase(gameState, currentPlayer);
+      }
     }
   },
 
@@ -2742,7 +2935,7 @@ export const ServerGameService = {
         const paymentSelection = JSON.parse(selections[0]);
         const paymentTargetId = query.context?.targetCardId || query.context?.targetId;
         const paymentTarget = paymentTargetId ? ServerGameService.findCardById(gameState, paymentTargetId) : undefined;
-        const paymentCost = paymentTarget && query.context?.useEffectiveCardCost !== false
+        const paymentCost = paymentTarget && query.context?.useEffectiveCardCost === true
           ? ServerGameService.getEffectivePlayCost(gameState.players[paymentPlayerUid], paymentTarget, gameState)
           : (query.paymentCost || 0);
         const result = ServerGameService.payCost(
@@ -3223,6 +3416,25 @@ export const ServerGameService = {
           });
         });
         gameState.logs.push(`[${sourceCard.fullName}] 支付侵蚀${amount}：将 ${amount} 张正面侵蚀卡转为背面。`);
+      } else if (query.context?.costType === 'TOP_DECK_FACE_DOWN_EXILE') {
+        const amount = query.context?.topDeckExileAmount || 1;
+        const player = gameState.players[activationPlayerUid];
+        if (!player || player.deck.length < amount) {
+          gameState.pendingQuery = query;
+          throw new Error(`卡组数量不足，无法将卡组顶${amount}张背面放逐作为费用`);
+        }
+
+        for (let i = 0; i < amount; i += 1) {
+          const topCard = player.deck[player.deck.length - 1];
+          if (!topCard) break;
+          ServerGameService.moveCard(gameState, activationPlayerUid, 'DECK', activationPlayerUid, 'EXILE', topCard.gamecardId, {
+            faceDown: true,
+            isEffect: true,
+            effectSourcePlayerUid: activationPlayerUid,
+            effectSourceCardId: sourceCard.gamecardId
+          });
+        }
+        gameState.logs.push(`[${sourceCard.fullName}] 将卡组顶${amount}张卡背面放逐作为费用。`);
       } else if (query.context?.costType === 'DISCARD_HAND_COST') {
         const amount = query.context?.discardCostAmount || selections.length;
         const player = gameState.players[activationPlayerUid];
@@ -3244,7 +3456,10 @@ export const ServerGameService = {
         });
         gameState.logs.push(`[${sourceCard.fullName}] 舍弃 ${amount} 张手牌作为费用。`);
         if (query.context?.exhaustSourceAsCost) {
-          sourceCard.isExhausted = true;
+          if (!ServerGameService.exhaustCard(sourceCard, gameState)) {
+            gameState.pendingQuery = query;
+            throw new Error(`[${sourceCard.fullName}] 不能横置自身支付费用`);
+          }
           EventEngine.dispatchEvent(gameState, {
             type: 'CARD_ROTATED',
             sourceCard,
@@ -3435,7 +3650,7 @@ export const ServerGameService = {
       // Exhaust remaining units
       attackingUnits.forEach(u => {
         const unit = attacker.unitZone.find(uz => uz?.gamecardId === u.gamecardId);
-        if (unit) unit.isExhausted = true;
+        if (unit) ServerGameService.exhaustCard(unit, gameState);
       });
 
       // Annihilation for survivor
@@ -3568,6 +3783,9 @@ export const ServerGameService = {
       gameState.logs.push(`[阶段切换] ${player.displayName} 进入战斗阶段`);
     }
     if (gameState.phase !== 'BATTLE_DECLARATION') throw new Error('Not in battle declaration phase');
+    if (ServerGameService.isPlayerAttackLockedThisTurn(gameState, playerId)) {
+      throw new Error('你本回合不能宣言攻击');
+    }
 
     const attackers: Card[] = [];
 
@@ -3717,6 +3935,9 @@ export const ServerGameService = {
       if ((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount) {
         throw new Error(`单位 [${unit.fullName}] 由于 [${(unit as any).data.cannotAttackOrDefendSourceName || '卡牌效果'}] 不能宣言攻击`);
       }
+      if (!ServerGameService.canExhaustForDeclaration(unit, gameState)) {
+        throw new Error(`单位 [${unit.fullName}] 由于 [${(unit as any).data.cannotExhaustSourceName || '卡牌效果'}] 不能横置`);
+      }
       if (isAlliance && (unit as any).data?.cannotAllianceByEffect) {
         throw new Error(`单位 [${unit.fullName}] 由于效果不能组成联军`);
       }
@@ -3809,7 +4030,7 @@ export const ServerGameService = {
 
     // Exhaust attackers
     for (const unit of attackers) {
-      ServerGameService.exhaustCard(unit);
+      ServerGameService.exhaustCard(unit, gameState);
       if ((player as any).snowstormTurn === gameState.turnCount) {
         unit.temporaryDamageBuff = (unit.temporaryDamageBuff || 0) - 1;
         unit.temporaryPowerBuff = (unit.temporaryPowerBuff || 0) - 1000;
@@ -3823,7 +4044,8 @@ export const ServerGameService = {
       attackers: attackerIds,
       isAlliance,
       unitTargetId: targetId === 'NO_PROMPT' ? undefined : targetId,
-      defensePowerRestriction: 0
+      defensePowerRestriction: 0,
+      battleId: `battle_${gameState.turnCount}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     };
     EventEngine.recalculateContinuousEffects(gameState);
 
@@ -3882,6 +4104,9 @@ export const ServerGameService = {
       if ((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount) {
         throw new Error(`单位 [${unit.fullName}] 由于 [${(unit as any).data.cannotAttackOrDefendSourceName || '卡牌效果'}] 不能宣言防御`);
       }
+      if (!ServerGameService.canExhaustForDeclaration(unit, gameState)) {
+        throw new Error(`单位 [${unit.fullName}] 由于 [${(unit as any).data.cannotExhaustSourceName || '卡牌效果'}] 不能横置`);
+      }
 
       const lockedTargetId = gameState.battleState.defenseLockedToTargetId;
       if (lockedTargetId && defenderId !== lockedTargetId) {
@@ -3927,7 +4152,7 @@ export const ServerGameService = {
         return gameState;
       }
 
-      ServerGameService.exhaustCard(unit);
+      ServerGameService.exhaustCard(unit, gameState);
       if ((player as any).snowstormTurn === gameState.turnCount) {
         unit.temporaryDamageBuff = (unit.temporaryDamageBuff || 0) - 1;
         unit.temporaryPowerBuff = (unit.temporaryPowerBuff || 0) - 1000;
@@ -3958,11 +4183,7 @@ export const ServerGameService = {
         .filter((unit): unit is Card => !!unit);
       const mustDefend = attackingUnits.some(unit => (unit as any).data?.mustBeDefendedTurn === gameState.turnCount);
       const hasAvailableDefender = player.unitZone.some(unit =>
-        unit &&
-        !unit.isExhausted &&
-        !(unit as any).battleForbiddenByEffect &&
-        !((unit as any).data?.cannotDefendTurn === gameState.turnCount) &&
-        !((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount)
+        ServerGameService.canUnitDefendInCurrentBattle(gameState, unit)
       );
       if (mustDefend && hasAvailableDefender) {
         throw new Error('由于效果限制，必须选择1个单位宣言防御');
@@ -4064,6 +4285,7 @@ export const ServerGameService = {
       }
     } else {
       // Unit combat
+      EventEngine.recalculateContinuousEffects(gameState);
       const defendingUnitId = gameState.battleState!.defender;
       const defendingUnit = defender.unitZone.find(c => c?.gamecardId === defendingUnitId);
 
@@ -4290,7 +4512,7 @@ export const ServerGameService = {
       const keepResetUnitIds = new Set(gameState.battleState.keepResetUnitIds || []);
       attackingUnits.forEach(u => {
         const unit = attacker.unitZone.find(uz => uz?.gamecardId === u.gamecardId);
-        if (unit && !keepResetUnitIds.has(unit.gamecardId)) unit.isExhausted = true;
+        if (unit && !keepResetUnitIds.has(unit.gamecardId)) ServerGameService.exhaustCard(unit, gameState);
       });
     }
 
@@ -4575,6 +4797,19 @@ export const ServerGameService = {
     }
 
     const unit = zone === 'UNIT' ? player.unitZone[unitIdx]! : player.itemZone[unitIdx]!;
+    const battleId = ServerGameService.ensureBattleInstanceId(gameState);
+
+    if (
+      !isEffect &&
+      zone === 'UNIT' &&
+      !!battleId &&
+      (unit as any).data?.preventBattleDestroyForBattleTurn === gameState.turnCount &&
+      (unit as any).data.preventBattleDestroyForBattleId === battleId
+    ) {
+      const sourceName = (unit as any).data.preventBattleDestroyForBattleSourceName || '战斗破坏防止';
+      gameState.logs.push(`[${sourceName}] 防止了 [${unit.fullName}] 这次战斗中将被战斗破坏。`);
+      return false;
+    }
 
     if (!isEffect && (unit as any).data?.combatImmuneUntilOwnNextTurnStartUid === playerId) {
       gameState.logs.push(`[${unit.fullName}] 不会被战斗破坏，本次破坏无效。`);
@@ -4583,6 +4818,32 @@ export const ServerGameService = {
 
     if (!isEffect && (unit as any).battleImmuneByEffect) {
       gameState.logs.push(`[${unit.fullName}] 因效果不会被战斗破坏。`);
+      return false;
+    }
+
+    if (
+      !isEffect &&
+      (unit as any).data?.preventNextBattleDestroy &&
+      (
+        (unit as any).data.preventNextBattleDestroyUntilTurn === undefined ||
+        (unit as any).data.preventNextBattleDestroyUntilTurn >= gameState.turnCount
+      )
+    ) {
+      const sourceName = (unit as any).data?.preventNextBattleDestroySourceName || '战斗破坏防止';
+      delete (unit as any).data.preventNextBattleDestroy;
+      delete (unit as any).data.preventNextBattleDestroySourceName;
+      delete (unit as any).data.preventNextBattleDestroyUntilTurn;
+      gameState.logs.push(`[${sourceName}] 防止了 [${unit.fullName}] 将要被战斗破坏。`);
+      return false;
+    }
+
+    if (
+      !isEffect &&
+      (unit as any).data?.preventFirstBattleDestroyEachTurnSourceName &&
+      (unit as any).data.preventFirstBattleDestroyEachTurnUsedTurn !== gameState.turnCount
+    ) {
+      (unit as any).data.preventFirstBattleDestroyEachTurnUsedTurn = gameState.turnCount;
+      gameState.logs.push(`[${(unit as any).data.preventFirstBattleDestroyEachTurnSourceName}] 防止了 [${unit.fullName}] 本回合第一次将被战斗破坏。`);
       return false;
     }
 
@@ -4659,6 +4920,19 @@ export const ServerGameService = {
       }
     }
 
+    if (
+      isEffect &&
+      sourcePlayerId &&
+      sourcePlayerId !== playerId &&
+      (unit as any).data?.unaffectedByOpponentAcLe !== undefined
+    ) {
+      const sourceCard = gameState.currentProcessingItem?.card;
+      if (sourceCard && isOpponentAcAtMost(gameState, unit, sourceCard, Number((unit as any).data.unaffectedByOpponentAcLe), sourcePlayerId)) {
+        gameState.logs.push(`[${unit.fullName}] is unaffected by opponent ACCESS ${(unit as any).data.unaffectedByOpponentAcLe} or less card effects.`);
+        return false;
+      }
+    }
+
     if ((unit as any).data?.returnToHandOnDestroyTurn === gameState.turnCount) {
       ServerGameService.moveCard(gameState, playerId, zone, playerId, 'HAND', gamecardId, {
         isEffect: true,
@@ -4668,6 +4942,28 @@ export const ServerGameService = {
       gameState.logs.push(`[替换效果] ${unit.fullName} 本回合被破坏时改为返回手牌。`);
       await ServerGameService.checkTriggeredEffects(gameState);
       return false;
+    }
+
+    if (!skipSubstitution && (unit as any).data?.betisCanDestroyBatInstead) {
+      const bat = player.unitZone.find(candidate =>
+        candidate &&
+        candidate.gamecardId !== unit.gamecardId &&
+        (
+          candidate.id === '102070357' ||
+          candidate.fullName.includes('异界狂蝠') ||
+          !!(candidate as any).data?.extraNameContainsOtherworldBatBy
+        )
+      );
+      if (bat) {
+        ServerGameService.moveCard(gameState, playerId, 'UNIT', playerId, 'GRAVE', bat.gamecardId, {
+          isEffect: true,
+          effectSourcePlayerUid: playerId,
+          effectSourceCardId: unit.gamecardId
+        });
+        gameState.logs.push(`[${unit.fullName}] destroyed [${bat.fullName}] instead of being destroyed.`);
+        await ServerGameService.checkTriggeredEffects(gameState);
+        return false;
+      }
     }
 
     if (!isEffect && !skipSubstitution && !skip102050091BattleSave) {
@@ -4934,7 +5230,17 @@ export const ServerGameService = {
         }
       }
 
+      if ((currentPlayer as any).loseAtEndOfTurn === gameState.turnCount) {
+        gameState.gameStatus = 2;
+        gameState.winReason = 'CARD_EFFECT_SPECIAL_WIN';
+        gameState.winnerId = gameState.playerIds.find(id => id !== currentPlayerId);
+        gameState.winSourceCardName = (currentPlayer as any).loseAtEndOfTurnSourceName || '鍗＄墝鏁堟灉';
+        gameState.logs.push(`[Game End] ${currentPlayer.displayName} loses at end of turn due to [${gameState.winSourceCardName}].`);
+        return;
+      }
+
       gameState.currentTurnPlayer = gameState.currentTurnPlayer === 0 ? 1 : 0;
+      ServerGameService.applyExtraTurnIfQueued(gameState, currentPlayerId);
       gameState.turnCount += 1;
       gameState.phase = 'START';
       gameState.phaseTimerStart = Date.now();
@@ -4948,7 +5254,7 @@ export const ServerGameService = {
         category: 'TURN',
         actorUid: nextPlayer.uid,
         actorName: nextPlayer.displayName,
-        text: `第 ${gameState.turnCount} 回合：${nextPlayer.displayName}`,
+        text: `Turn ${gameState.turnCount}: ${nextPlayer.displayName}`,
         metadata: { currentTurnPlayer: gameState.currentTurnPlayer }
       });
 
@@ -4958,6 +5264,10 @@ export const ServerGameService = {
       Object.values(gameState.players).forEach(p => {
         p.hasUnitReturnedThisTurn = false;
         delete (p as any).unitsReturnedToDeckThisTurn;
+        if ((p as any).cannotDeclareAttackTurn !== gameState.turnCount) {
+          delete (p as any).cannotDeclareAttackTurn;
+          delete (p as any).cannotDeclareAttackSourceName;
+        }
         p.hasExhaustedThisTurn = [];
         p.negatedNames = [];
         delete (p as any).windProductionTurn;
@@ -5002,6 +5312,10 @@ export const ServerGameService = {
             delete (card as any).data.cannotAttackOrDefendUntilTurn;
             delete (card as any).data.cannotAttackOrDefendSourceName;
           }
+          if ((card as any).data?.cannotExhaustUntilTurn !== undefined && (card as any).data.cannotExhaustUntilTurn < gameState.turnCount) {
+            delete (card as any).data.cannotExhaustUntilTurn;
+            delete (card as any).data.cannotExhaustSourceName;
+          }
           if ((card as any).data?.cannotActivateUntilTurn !== undefined && (card as any).data.cannotActivateUntilTurn < gameState.turnCount) {
             delete (card as any).data.cannotActivateUntilTurn;
             delete (card as any).data.cannotActivateSourceName;
@@ -5010,6 +5324,16 @@ export const ServerGameService = {
             delete (card as any).data.preventNextDestroy;
             delete (card as any).data.preventNextDestroySourceName;
             delete (card as any).data.preventNextDestroyUntilTurn;
+          }
+          if ((card as any).data?.preventNextBattleDestroyUntilTurn !== undefined && (card as any).data.preventNextBattleDestroyUntilTurn < gameState.turnCount) {
+            delete (card as any).data.preventNextBattleDestroy;
+            delete (card as any).data.preventNextBattleDestroySourceName;
+            delete (card as any).data.preventNextBattleDestroyUntilTurn;
+          }
+          if ((card as any).data?.preventBattleDestroyForBattleTurn !== undefined && (card as any).data.preventBattleDestroyForBattleTurn < gameState.turnCount) {
+            delete (card as any).data.preventBattleDestroyForBattleId;
+            delete (card as any).data.preventBattleDestroyForBattleTurn;
+            delete (card as any).data.preventBattleDestroyForBattleSourceName;
           }
           if ((card as any).data?.forbiddenAlchemyBanishTurn !== undefined && (card as any).data.forbiddenAlchemyBanishTurn < gameState.turnCount) {
             delete (card as any).data.forbiddenAlchemyBanishTurn;
@@ -5054,6 +5378,7 @@ export const ServerGameService = {
             u.temporaryAnnihilation = false;
             u.temporaryHeroic = false;
             u.temporaryCanAttackAny = false;
+            delete (u as any).temporaryExtraColors;
             u.temporaryBuffSources = {};
             u.temporaryBuffDetails = {};
             u.isrush = u.baseIsrush;
@@ -5200,7 +5525,10 @@ export const ServerGameService = {
   ) {
     const { card, effectIndex, event, skipCost } = trigger;
     const effect = trigger.effect || card.effects?.[effectIndex];
-    const liveSource = ServerGameService.findCardLocation(gameState, card.gamecardId);
+    let liveSource = ServerGameService.findCardLocation(gameState, card.gamecardId);
+    if (!liveSource && event?.sourceCardId === card.gamecardId) {
+      liveSource = ServerGameService.findCardLocation(gameState, event.data?.previousSourceCardId);
+    }
 
     if (!effect || !liveSource) {
       await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
@@ -5558,6 +5886,10 @@ export const ServerGameService = {
           }
           if ((c as any).data?.fullEffectSilencedTurn !== undefined) {
             delete (c as any).data.fullEffectSilencedTurn;
+            delete (c as any).data.fullEffectSilenceSource;
+          }
+          if ((c as any).data?.fullEffectSilencedUntilOwnStartUid === player.uid) {
+            delete (c as any).data.fullEffectSilencedUntilOwnStartUid;
             delete (c as any).data.fullEffectSilenceSource;
           }
           if ((c as any).data?.combatImmuneUntilOwnNextTurnStartUid === player.uid) {
@@ -6280,20 +6612,35 @@ export const ServerGameService = {
   },
 
   getBotEffectPaymentCost(effect: CardEffect) {
-    const explicitCost = Number(effect.playCost || 0);
+    const explicitCost = Number((effect.cost as any)?.paymentCost || effect.playCost || 0);
     if (Number.isFinite(explicitCost) && explicitCost > 0) return explicitCost;
 
     const text = `${effect.description || ''} ${effect.content || ''}`;
     const match = text.match(/支付\s*(\d+)\s*费用/) ||
       text.match(/pay\s*(\d+)\s*(?:cost|resource)?/i);
     const parsed = match ? Number(match[1]) : 0;
-    return Number.isFinite(parsed) ? parsed : 0;
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    const looksLikeAccessPayment = /支付|鏀粯|敮浠|费|費|费用|璐|璐圭敤|pay|payment|cost|resource/i.test(text);
+    return effect.cost && looksLikeAccessPayment ? 1 : 0;
   },
 
-  canBotPayPositiveCost(gameState: GameState, player: PlayerState, cost: number, cardColor?: string, sourceCard?: Card) {
+  botEffectPaymentExhaustsSource(effect: CardEffect) {
+    const text = `${effect.description || ''} ${effect.content || ''}`;
+    return /横置|妯疆|exhaust/i.test(text);
+  },
+
+  canBotPayPositiveCost(
+    gameState: GameState,
+    player: PlayerState,
+    cost: number,
+    cardColor?: string,
+    sourceCard?: Card,
+    options: { excludeUnitIds?: string[] } = {}
+  ) {
     if (cost <= 0) return true;
     const normalizedColor = cardColor === 'NONE' ? undefined : cardColor;
     const sourceCardId = sourceCard?.gamecardId;
+    const excludedUnitIds = new Set(options.excludeUnitIds || []);
 
     const hasSpecialSubstitute = player.hand.some(card =>
       ServerGameService.canUse204000145AsPaymentSubstitute(card, normalizedColor, cost, sourceCardId) ||
@@ -6311,7 +6658,7 @@ export const ServerGameService = {
     if (hasFeijing) remainingCost = Math.max(0, remainingCost - 3);
 
     const readyUnitPayment = player.unitZone
-      .filter((card): card is Card => !!card && !card.isExhausted && !(card as any).data?.cannotExhaustByEffect)
+      .filter((card): card is Card => !!card && !card.isExhausted && !(card as any).data?.cannotExhaustByEffect && !excludedUnitIds.has(card.gamecardId))
       .reduce((total, card) => {
         const data = (card as any).data || {};
         const accessMin = Math.max(1, Number(data.accessTapMinValue || 1));
@@ -6336,9 +6683,10 @@ export const ServerGameService = {
     const player = gameState.players[paymentPlayerUid];
     if (!player) return false;
 
-    const paymentTargetId = query.context?.targetCardId || query.context?.targetId || query.context?.sourceCardId;
+    const paymentTargetId = query.context?.targetCardId || query.context?.targetId;
     const paymentTarget = paymentTargetId ? ServerGameService.findCardById(gameState, paymentTargetId) : undefined;
-    const paymentCost = paymentTarget && query.context?.useEffectiveCardCost !== false
+    const sourceCard = query.context?.sourceCardId ? ServerGameService.findCardById(gameState, query.context.sourceCardId) : undefined;
+    const paymentCost = paymentTarget && query.context?.useEffectiveCardCost === true
       ? ServerGameService.getEffectivePlayCost(player, paymentTarget, gameState)
       : Number(query.paymentCost || 0);
 
@@ -6352,7 +6700,8 @@ export const ServerGameService = {
       player,
       paymentCost,
       paymentTarget?.color || query.paymentColor,
-      paymentTarget
+      paymentTarget || sourceCard,
+      { excludeUnitIds: query.context?.paymentOptions?.excludeExhaustUnitIds || [] }
     );
   },
 
@@ -6378,11 +6727,57 @@ export const ServerGameService = {
     return !opponentIsAggro;
   },
 
+  getRedDikaiScadiErosionWindow(player: PlayerState | undefined) {
+    if (!player) return undefined;
+    const dikai = player.unitZone.find(unit => unit?.id === '102050432');
+    const scadi = player.itemZone.find(item =>
+      item?.id === '302050013' &&
+      (!dikai || item.equipTargetId === dikai.gamecardId)
+    );
+    if (!scadi?.equipTargetId) return undefined;
+    const equippedTarget = player.unitZone.find(unit => unit?.gamecardId === scadi.equipTargetId);
+    if (!equippedTarget) return undefined;
+    const erosion = countErosion(player);
+    return {
+      scadi,
+      equippedTarget,
+      erosion,
+      inWindow: erosion >= 5 && erosion <= 7,
+      belowWindow: erosion < 5,
+      aboveWindow: erosion > 7,
+    };
+  },
+
+  scoreRedDikaiScadiDeckPaymentAdjustment(player: PlayerState, deckPayment: number) {
+    const window = ServerGameService.getRedDikaiScadiErosionWindow(player);
+    if (!window || deckPayment <= 0) return 0;
+    const after = window.erosion + deckPayment;
+
+    if (window.belowWindow) {
+      if (after >= 5 && after <= 7) return -46 - deckPayment * 8;
+      if (after < 5) return -12 * deckPayment;
+      return 34 + (after - 7) * 22;
+    }
+
+    if (window.inWindow) {
+      if (after <= 7) return -4 * deckPayment;
+      return 48 + (after - 7) * 24;
+    }
+
+    return 30 + deckPayment * 16;
+  },
+
   scoreBotPaymentSelectionRisk(
     gameState: GameState,
     playerUid: string,
     payment: { feijingCardId?: string; exhaustUnitIds?: string[]; erosionFrontIds?: string[] },
-    options: { paymentCost?: number; paymentColor?: string; sourceCard?: Card; addedReadyDefenders?: number } = {}
+    options: {
+      paymentCost?: number;
+      paymentColor?: string;
+      sourceCard?: Card;
+      addedReadyDefenders?: number;
+      additionalExhaustUnitIds?: string[];
+    } = {}
   ) {
     const player = gameState.players[playerUid];
     if (!player || ServerGameService.getBotDifficulty(gameState, playerUid) !== 'hard') {
@@ -6420,9 +6815,15 @@ export const ServerGameService = {
       !(unit as any).battleForbiddenByEffect &&
       !((unit as any).data?.cannotDefendTurn === gameState.turnCount) &&
       !((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount);
-    const exhaustedUnits = (payment.exhaustUnitIds || [])
+    const paymentExhaustedUnitIds = new Set(payment.exhaustUnitIds || []);
+    const paymentExhaustedUnits = Array.from(paymentExhaustedUnitIds)
       .map(id => ServerGameService.findCardById(gameState, id))
       .filter((card): card is Card => !!card);
+    const additionalExhaustedUnits = (options.additionalExhaustUnitIds || [])
+      .filter(id => !paymentExhaustedUnitIds.has(id))
+      .map(id => ServerGameService.findCardById(gameState, id))
+      .filter((card): card is Card => !!card);
+    const exhaustedUnits = [...paymentExhaustedUnits, ...additionalExhaustedUnits];
     const exhaustedReadyDefenders = exhaustedUnits.filter(canDefendSoon).length;
     const readyDefendersBefore = player.unitZone.filter(canDefendSoon).length + (options.addedReadyDefenders || 0);
     const readyDefendersAfter = Math.max(0, readyDefendersBefore - exhaustedReadyDefenders);
@@ -6472,7 +6873,7 @@ export const ServerGameService = {
           ? paymentCost
           : 3
         : 0;
-      const unitPayment = exhaustedUnits.reduce((total, unit) => {
+      const unitPayment = paymentExhaustedUnits.reduce((total, unit) => {
         const data = (unit as any).data || {};
         const accessMin = Math.max(1, Number(data.accessTapMinValue || 1));
         const accessMax = data.accessTapColor && data.accessTapColor !== paymentColor
@@ -6481,6 +6882,14 @@ export const ServerGameService = {
         return total + accessMax;
       }, 0);
       estimatedDeckPayment = Math.max(0, paymentCost - feijingReduction - unitPayment);
+    }
+
+    if (profile.id === 'red-dikai' && estimatedDeckPayment > 0) {
+      const scadiAdjustment = ServerGameService.scoreRedDikaiScadiDeckPaymentAdjustment(player, estimatedDeckPayment);
+      if (scadiAdjustment !== 0) {
+        penalty += scadiAdjustment;
+        notes.push(scadiAdjustment < 0 ? 'scadi erosion window setup' : 'scadi erosion window risk');
+      }
     }
 
     if (estimatedDeckPayment > 0 && defensePressure) {
@@ -6687,15 +7096,13 @@ export const ServerGameService = {
     const attempts = ServerGameService.getBotEffectAttempts(gameState, player);
     const failedEffectIds = ServerGameService.getBotEffectFailedIds(gameState, player);
     const zones: Array<{ location: TriggerLocation; cards: (Card | null)[] }> = [
+      { location: 'HAND', cards: player.hand },
       { location: 'UNIT', cards: player.unitZone },
       { location: 'ITEM', cards: player.itemZone },
       { location: 'EROSION_FRONT', cards: player.erosionFront },
       { location: 'EROSION_BACK', cards: player.erosionBack },
       { location: 'GRAVE', cards: player.grave },
     ];
-    if (gameState.phase === 'COUNTERING') {
-      zones.push({ location: 'HAND', cards: player.hand });
-    }
 
     return zones.flatMap(({ location, cards }) =>
       cards.flatMap(card => {
@@ -6709,7 +7116,13 @@ export const ServerGameService = {
           const rules = ServerGameService.checkEffectLimitsAndReqs(gameState, playerUid, card, effect, location);
           if (!rules.valid) return undefined;
           const paymentCost = ServerGameService.getBotEffectPaymentCost(effect);
-          if (paymentCost > 0 && !ServerGameService.canBotPayPositiveCost(gameState, player, paymentCost, card.color, card)) {
+          const paymentOptions = ServerGameService.botEffectPaymentExhaustsSource(effect)
+            ? { excludeExhaustUnitIds: [card.gamecardId] }
+            : undefined;
+          const sourceExhaustUnitIds = paymentOptions?.excludeExhaustUnitIds || [];
+          if (paymentCost > 0 && !ServerGameService.canBotPayPositiveCost(gameState, player, paymentCost, card.color, card, {
+            excludeUnitIds: paymentOptions?.excludeExhaustUnitIds,
+          })) {
             return undefined;
           }
           const projectedPayment = paymentCost > 0
@@ -6720,14 +7133,16 @@ export const ServerGameService = {
                 cardId: card.gamecardId,
                 sourceCardId: card.gamecardId,
                 paymentTargetId: card.gamecardId,
+                paymentOptions,
               },
             })
             : {};
-          const paymentRisk = paymentCost > 0
+          const paymentRisk = paymentCost > 0 || sourceExhaustUnitIds.length > 0
             ? ServerGameService.scoreBotPaymentSelectionRisk(gameState, playerUid, projectedPayment, {
               paymentCost,
               paymentColor: card.color,
               sourceCard: card,
+              additionalExhaustUnitIds: sourceExhaustUnitIds,
             })
             : { penalty: 0, notes: [] as string[], estimatedDeckPayment: 0, readyDefendersAfter: undefined };
           const targetCount = ServerGameService.getEffectTargetCount(gameState, playerUid, card, effect);
@@ -7192,6 +7607,9 @@ export const ServerGameService = {
           ? 18
           : 5
       : 0;
+    const redScadiErosionWindow = difficulty === 'hard' && profile.id === 'red-dikai'
+      ? ServerGameService.getRedDikaiScadiErosionWindow(player)
+      : undefined;
     let bestSelection: { feijingCardId?: string; exhaustUnitIds?: string[] } | undefined;
     let bestRemaining = Number.POSITIVE_INFINITY;
     let bestPaymentScore = Number.POSITIVE_INFINITY;
@@ -7281,7 +7699,15 @@ export const ServerGameService = {
         if (remainingAfterUnits > player.deck.length) continue;
         if (remainingAfterUnits > 0 && !canUseWindProduction && remainingAfterUnits >= 10 - totalErosion) continue;
 
-        const paymentScore = feijingValue + selectedUnitValue + remainingAfterUnits * deckPaymentWeight + exhaustUnitIds.length * 0.1;
+        const scadiDeckPaymentAdjustment = redScadiErosionWindow
+          ? ServerGameService.scoreRedDikaiScadiDeckPaymentAdjustment(player, remainingAfterUnits)
+          : 0;
+        const paymentScore =
+          feijingValue +
+          selectedUnitValue +
+          remainingAfterUnits * deckPaymentWeight +
+          scadiDeckPaymentAdjustment +
+          exhaustUnitIds.length * 0.1;
         if (
           paymentScore < bestPaymentScore ||
           (paymentScore === bestPaymentScore && remainingAfterUnits < bestRemaining) ||
@@ -7369,16 +7795,17 @@ export const ServerGameService = {
         selections = canPay ? [JSON.stringify(payment)] : [];
         const paymentPlayerUid = query.context?.activationPlayerUid || playerUid;
         const paymentPlayer = gameState.players[paymentPlayerUid];
-        const paymentTargetId = query.context?.targetCardId || query.context?.targetId || query.context?.sourceCardId;
+        const paymentTargetId = query.context?.targetCardId || query.context?.targetId;
         const paymentTarget = paymentTargetId ? ServerGameService.findCardById(gameState, paymentTargetId) : undefined;
-        const resolvedPaymentCost = paymentTarget && query.context?.useEffectiveCardCost !== false && paymentPlayer
+        const sourceCard = query.context?.sourceCardId ? ServerGameService.findCardById(gameState, query.context.sourceCardId) : undefined;
+        const resolvedPaymentCost = paymentTarget && query.context?.useEffectiveCardCost === true && paymentPlayer
           ? ServerGameService.getEffectivePlayCost(paymentPlayer, paymentTarget, gameState)
           : Number(query.paymentCost || 0);
         const paymentRisk = canPay && resolvedPaymentCost > 0
           ? ServerGameService.scoreBotPaymentSelectionRisk(gameState, paymentPlayerUid, payment, {
             paymentCost: resolvedPaymentCost,
             paymentColor: paymentTarget?.color || query.paymentColor,
-            sourceCard: paymentTarget,
+            sourceCard: paymentTarget || sourceCard,
           })
           : { penalty: 0, notes: [] as string[], exhaustedUnits: [] as Card[], estimatedDeckPayment: 0, readyDefendersAfter: undefined };
         if (canPay) ServerGameService.recordAiDecision(gameState, playerUid, {
@@ -7496,6 +7923,8 @@ export const ServerGameService = {
             totalDamage: turnPlan.totalAvailableDamage,
             damageToCritical: turnPlan.damageToCritical,
             lethalWindow: turnPlan.lethalWindow,
+            likelyDefenders: turnPlan.likelyDefenders,
+            damageThroughLikelyDefenders: turnPlan.damageThroughLikelyDefenders,
             reserveDefenders: turnPlan.reserveDefenders,
             defendersNeededNextTurn: turnPlan.defendersNeededNextTurn,
             incomingDamage: turnPlan.opponentPotentialDamage,
@@ -7531,18 +7960,8 @@ export const ServerGameService = {
         const attackingUnits = (gameState.battleState?.attackers || []).map(id =>
           attacker.unitZone.find(c => c?.gamecardId === id)
         ).filter(Boolean) as Card[];
-        const lockedTargetId = gameState.battleState?.defenseLockedToTargetId;
-        const minPower = gameState.battleState?.defensePowerRestriction || 0;
-        const maxPower = gameState.battleState?.defenseMaxPowerRestriction;
         const availableDefenders = bot.unitZone.filter(c =>
-          c &&
-          !c.isExhausted &&
-          !(c as any).battleForbiddenByEffect &&
-          !((c as any).data?.cannotDefendTurn === gameState.turnCount) &&
-          !((c as any).data?.cannotAttackOrDefendUntilTurn && (c as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount) &&
-          (!lockedTargetId || c.gamecardId === lockedTargetId) &&
-          (c.power || 0) >= minPower &&
-          (maxPower === undefined || (c.power || 0) < maxPower)
+          ServerGameService.canUnitDefendInCurrentBattle(gameState, c)
         );
 
         const defender = chooseDefender(
@@ -7666,21 +8085,49 @@ export const ServerGameService = {
       const erosionCards = bot.erosionFront.filter((card): card is Card => !!card);
       let erosionChoice: 'A' | 'B' | 'C' = 'A';
       let selectedErosionCard: Card | undefined;
+      let selectedErosionScore: number | undefined;
       let erosionReason = 'clear erosion cards to grave';
 
       if (difficulty === 'hard' && erosionCards.length > 0) {
+        const recoveryValue = (card: Card) => {
+          const preserve = profile.preserveCardIds?.[card.id] || profile.preserveCardIds?.[card.uniqueId] || 0;
+          const preferred = profile.preferredCardIds?.[card.id] || profile.preferredCardIds?.[card.uniqueId] || 0;
+          const baseValue = scoreCardValue(card, profile);
+          const playableValue = scorePlayableCard(gameState, bot, card, profile);
+          let score = baseValue + Math.max(-10, playableValue * 0.12);
+          if (card.godMark) score += card.type === 'UNIT' ? 76 : 42;
+          if (preserve > 0 || preferred > 0) score += 26 + preserve * 0.9 + preferred * 0.55;
+          if (card.type === 'UNIT') {
+            score += Math.max(0, card.damage || 0) * 8;
+            score += Math.max(0, card.power || 0) / 800;
+            if (card.isrush) score += 6;
+          } else if (card.type === 'ITEM') {
+            score += card.isEquip ? 14 : 5;
+          } else if (card.type === 'STORY') {
+            score += Math.max(0, card.acValue || 0) <= 3 ? 4 : 0;
+          }
+          return score;
+        };
         const scoredErosionCards = [...erosionCards]
           .map(card => ({
             card,
-            score: scoreCardValue(card, profile) + scorePlayableCard(gameState, bot, card, profile) * 0.25,
+            valueScore: scoreCardValue(card, profile),
+            playableScore: scorePlayableCard(gameState, bot, card, profile),
+            score: recoveryValue(card),
           }))
-          .sort((a, b) => b.score - a.score);
+          .sort((a, b) =>
+            b.score - a.score ||
+            b.valueScore - a.valueScore ||
+            b.playableScore - a.playableScore
+          );
         selectedErosionCard = scoredErosionCards[0]?.card;
+        selectedErosionScore = scoredErosionCards[0]?.score;
         const lowDeck = profile.riskThresholds?.lowDeck ?? 10;
         const criticalDeck = profile.riskThresholds?.criticalDeck ?? 3;
         const stopSelfDrawAtDeck = profile.riskThresholds?.stopSelfDrawAtDeck ?? lowDeck;
         const deckDanger = bot.deck.length <= stopSelfDrawAtDeck;
         const canUseChoiceC = bot.deck.length > Math.max(criticalDeck + 2, 5) && bot.erosionBack.filter(Boolean).length < 9;
+        const canUseHighValueChoiceC = bot.deck.length > Math.max(criticalDeck + 1, 4) && bot.erosionBack.filter(Boolean).length < 9;
         const handPressure = bot.hand.length <= 2;
         const ownUnits = bot.unitZone.filter(Boolean).length;
         const readyDefenders = bot.unitZone.filter(unit =>
@@ -7705,18 +8152,6 @@ export const ServerGameService = {
           (ownUnits === 0 && opponentUnits >= 2);
         const selectedScore = scoredErosionCards[0]?.score || 0;
         const openUnitSlot = bot.unitZone.some(slot => slot === null);
-        const recoveryValue = (card: Card) => {
-          const preserve = profile.preserveCardIds?.[card.id] || profile.preserveCardIds?.[card.uniqueId] || 0;
-          const preferred = profile.preferredCardIds?.[card.id] || profile.preferredCardIds?.[card.uniqueId] || 0;
-          let score = scoreCardValue(card, profile) + scorePlayableCard(gameState, bot, card, profile) * 0.2;
-          if (card.type === 'UNIT') {
-            if (card.godMark) score += 72;
-            if (preserve > 0 || preferred > 0) score += 24 + preserve * 0.8 + preferred * 0.45;
-            score += Math.max(0, card.damage || 0) * 5;
-            score += Math.max(0, card.power || 0) / 900;
-          }
-          return score;
-        };
         const emergencyRecoveryCard = scoredErosionCards
           .filter(({ card }) => {
           if (!canUseChoiceC || !openUnitSlot || card.type !== 'UNIT') return false;
@@ -7732,11 +8167,42 @@ export const ServerGameService = {
           !!emergencyRecoveryCard &&
           incomingThreat.lethalWithoutBlocks &&
           readyDefenders < Math.max(1, incomingThreat.defendersNeeded);
+        const selectedRecoveryValue = selectedErosionCard ? recoveryValue(selectedErosionCard) : 0;
+        const selectedPlayableNow = (() => {
+          const card = selectedErosionCard;
+          if (!card || card.type !== 'UNIT') return false;
+          if (!openUnitSlot) return false;
+          if (bot.factionLock && card.faction !== bot.factionLock) return false;
+          const colorCheck = ServerGameService.getColorRequirementResult(bot, card.colorReq || {});
+          if (!colorCheck.valid) return false;
+          const effectiveCost = ServerGameService.getEffectivePlayCost(bot, card, gameState);
+          if (effectiveCost < 0) return true;
+          return ServerGameService.canBotPayPositiveCost(gameState, bot, effectiveCost, card.color, card);
+        })();
+        const boardBehind = ownUnits <= Math.max(1, opponentUnits);
+        const highValueLowDeckRecovery =
+          canUseHighValueChoiceC &&
+          deckDanger &&
+          !!selectedErosionCard &&
+          (
+            selectedRecoveryValue >= 70 ||
+            selectedScore >= 50 ||
+            (selectedErosionCard.godMark && (selectedRecoveryValue >= 45 || selectedScore >= 30))
+          ) &&
+          (
+            handPressure ||
+            (needsTempoRecovery && selectedPlayableNow) ||
+            (boardBehind && selectedPlayableNow) ||
+            (selectedErosionCard.godMark && selectedPlayableNow)
+          );
 
         if (needsEmergencyRecovery) {
           selectedErosionCard = emergencyRecoveryCard;
           erosionChoice = 'C';
           erosionReason = 'emergency defense: recover a high-value playable unit from erosion despite low deck pressure';
+        } else if (highValueLowDeckRecovery) {
+          erosionChoice = 'C';
+          erosionReason = 'low deck but high-value recovery: take the erosion card because the current board or hand needs it';
         } else if (deckDanger && selectedErosionCard) {
           erosionChoice = 'B';
           erosionReason = 'low deck: preserve the best erosion card without spending another deck card';
@@ -7764,6 +8230,7 @@ export const ServerGameService = {
           ownDeck: bot.deck.length,
           handSize: bot.hand.length,
           erosionReason,
+          selectedScore: selectedErosionScore !== undefined ? Number(selectedErosionScore.toFixed(1)) : undefined,
         },
       });
       await ServerGameService.handleErosionChoice(gameState, playerUid, erosionChoice, selectedErosionCard?.gamecardId);
@@ -7807,6 +8274,9 @@ export const ServerGameService = {
       }
 
       if (difficulty === 'hard' && ServerGameService.hasBotClosingAttackCommitment(gameState, playerUid)) {
+        if (await ServerGameService.tryActivateBotEffect(gameState, playerUid, 'MAIN_COMBAT_SETUP', Math.max(42, turnPlan?.minBattleEffectScore ?? 9.5), onUpdate)) {
+          return;
+        }
         const attackCandidates = bot.unitZone.filter(unit => canUnitAttack(gameState, unit)) as Card[];
         if (attackCandidates.length > 0) {
           ServerGameService.recordAiDecision(gameState, playerUid, {
@@ -7845,11 +8315,47 @@ export const ServerGameService = {
         return;
       }
 
+      if (
+        difficulty === 'hard' &&
+        turnPlan &&
+        !turnPlan.attackBeforeDeveloping &&
+        gameState.turnCount > 1 &&
+        (bot as any).botClosingAttackStartedTurn === gameState.turnCount &&
+        (isClosingTurnPlan(turnPlan) || turnPlan.totalAvailableDamage >= Math.max(1, turnPlan.damageToCritical))
+      ) {
+        const attackCandidates = bot.unitZone.filter(unit => canUnitAttack(gameState, unit)) as Card[];
+        if (attackCandidates.length > 0) {
+          ServerGameService.markBotClosingAttackCommitment(gameState, playerUid, turnPlan);
+          ServerGameService.recordAiDecision(gameState, playerUid, {
+            action: 'ENTER_BATTLE',
+            subject: `${attackCandidates.length} attackers`,
+            reason: 'Continue the current pressure attack line instead of developing more cards after combat has already started this turn.',
+            details: {
+              attackers: attackCandidates.length,
+              pressureAttackAlreadyStarted: true,
+              opponentErosion: turnPlan.opponentErosion,
+              totalAvailableDamage: attackCandidates.reduce((sum, unit) => sum + Math.max(0, unit.damage || 0), 0),
+              damageToCritical: turnPlan.damageToCritical,
+              ownDeck: bot.deck.length,
+            },
+            candidates: attackCandidates.slice(0, 3).map(card => ({
+              name: ServerGameService.getAiCardName(card),
+              score: scoreAttackCandidate(gameState, bot, card, profile),
+            })),
+          });
+          await ServerGameService.advancePhase(gameState, 'DECLARE_BATTLE', playerUid);
+          return;
+        }
+      }
+
       if (difficulty === 'hard' && turnPlan && gameState.turnCount > 1 && (bot as any).botReservedAttackTurn !== gameState.turnCount) {
         const attackCandidates = bot.unitZone.filter(unit => canUnitAttack(gameState, unit)) as Card[];
         const shouldAttackBeforeDeveloping = turnPlan.attackBeforeDeveloping;
 
         if (shouldAttackBeforeDeveloping) {
+          if (await ServerGameService.tryActivateBotEffect(gameState, playerUid, 'MAIN_PRE_ATTACK_SETUP', Math.max(42, turnPlan?.minBattleEffectScore ?? 9.5), onUpdate)) {
+            return;
+          }
           ServerGameService.markBotClosingAttackCommitment(gameState, playerUid, turnPlan);
           ServerGameService.recordAiDecision(gameState, playerUid, {
             action: 'ENTER_BATTLE',
@@ -7993,14 +8499,72 @@ export const ServerGameService = {
             defensivePaymentPenalty += 18;
           }
         }
+        const redScadiWindow = difficulty === 'hard' && profile.id === 'red-dikai'
+          ? ServerGameService.getRedDikaiScadiErosionWindow(bot)
+          : undefined;
+        let scadiErosionPaymentBonus = 0;
+        if (redScadiWindow && estimatedDeckPayment > 0) {
+          const adjustment = ServerGameService.scoreRedDikaiScadiDeckPaymentAdjustment(bot, estimatedDeckPayment);
+          scadiErosionPaymentBonus -= adjustment;
+        }
+        let closingDevelopmentPenalty = 0;
+        if (
+          difficulty === 'hard' &&
+          turnPlan &&
+          isClosingTurnPlan(turnPlan) &&
+          gameState.turnCount > 1 &&
+          !turnPlan.attackBeforeDeveloping
+        ) {
+          const sequencingValue = scoreMainPhaseCardSequencingValue(gameState, bot, card, profile);
+          const addsImmediateAttacker = card.type === 'UNIT' && card.isrush && bot.unitZone.some(slot => slot === null);
+          const tacticalSupport =
+            sequencingValue >= 36 ||
+            (turnPlan.likelyDefenders > 0 && card.type !== 'UNIT') ||
+            (addsImmediateAttacker && (card.damage || 0) > 0);
+          if (!tacticalSupport) {
+            closingDevelopmentPenalty += 95;
+            if (card.type === 'UNIT' && (card.damage || 0) <= 1) closingDevelopmentPenalty += 18;
+            if (turnPlan.lethalWindow || turnPlan.tacticalLine === 'lethal' || turnPlan.tacticalLine === 'erosion-lethal') {
+              closingDevelopmentPenalty += 35;
+            }
+          }
+        }
+        const exhaustedClosingAttackers = exhaustedPaymentUnits
+          .map(id => bot.unitZone.find(unit => unit?.gamecardId === id))
+          .filter((unit): unit is Card => !!unit && canUnitAttack(gameState, unit));
+        const exhaustedClosingDamage = exhaustedClosingAttackers.reduce((sum, unit) => sum + Math.max(0, unit.damage || 0), 0);
+        const addedImmediateDamage = card.type === 'UNIT' && card.isrush && bot.unitZone.some(slot => slot === null)
+          ? Math.max(0, card.damage || 0)
+          : 0;
+        let closingPaymentPenalty = 0;
+        if (
+          difficulty === 'hard' &&
+          turnPlan &&
+          isClosingTurnPlan(turnPlan) &&
+          gameState.turnCount > 1 &&
+          exhaustedClosingAttackers.length > 0
+        ) {
+          const projectedClosingDamage = Math.max(0, turnPlan.totalAvailableDamage - exhaustedClosingDamage + addedImmediateDamage);
+          const breaksClosingDamage = projectedClosingDamage < Math.max(1, turnPlan.damageToCritical);
+          closingPaymentPenalty +=
+            80 +
+            exhaustedClosingAttackers.length * 24 +
+            exhaustedClosingDamage * 18;
+          if (breaksClosingDamage || turnPlan.lethalWindow || turnPlan.tacticalLine === 'lethal' || turnPlan.tacticalLine === 'erosion-lethal') {
+            closingPaymentPenalty += 90;
+          }
+        }
         return {
           card,
           rawScore,
-          score: rawScore + defenseDevelopmentBonus - defensivePaymentPenalty,
+          score: rawScore + defenseDevelopmentBonus + scadiErosionPaymentBonus - defensivePaymentPenalty - closingPaymentPenalty - closingDevelopmentPenalty,
           effectiveCost,
           initialPaymentSelection,
           defensivePaymentPenalty,
           defenseDevelopmentBonus,
+          scadiErosionPaymentBonus,
+          closingPaymentPenalty,
+          closingDevelopmentPenalty,
           exhaustedPaymentUnits,
           estimatedDeckPayment,
           netReadyDefenders,
@@ -8049,6 +8613,8 @@ export const ServerGameService = {
             rawScore: Number(chosenPlayOption.rawScore.toFixed(1)),
             defensivePaymentPenalty: Number(chosenPlayOption.defensivePaymentPenalty.toFixed(1)),
             defenseDevelopmentBonus: Number(chosenPlayOption.defenseDevelopmentBonus.toFixed(1)),
+            closingPaymentPenalty: Number(chosenPlayOption.closingPaymentPenalty.toFixed(1)),
+            closingDevelopmentPenalty: Number(chosenPlayOption.closingDevelopmentPenalty.toFixed(1)),
             paymentExhaustsUnits: chosenPlayOption.exhaustedPaymentUnits.length,
             estimatedDeckPayment: chosenPlayOption.estimatedDeckPayment,
             netReadyDefenders: chosenPlayOption.netReadyDefenders,
@@ -8105,6 +8671,8 @@ export const ServerGameService = {
               rawScore: Number(chosenPlayOption.rawScore.toFixed(1)),
               defensivePaymentPenalty: Number(chosenPlayOption.defensivePaymentPenalty.toFixed(1)),
               defenseDevelopmentBonus: Number(chosenPlayOption.defenseDevelopmentBonus.toFixed(1)),
+              closingPaymentPenalty: Number(chosenPlayOption.closingPaymentPenalty.toFixed(1)),
+              closingDevelopmentPenalty: Number(chosenPlayOption.closingDevelopmentPenalty.toFixed(1)),
               estimatedDeckPayment: chosenPlayOption.estimatedDeckPayment,
             },
           });
@@ -8182,6 +8750,9 @@ export const ServerGameService = {
       const opponent = opponentUid ? gameState.players[opponentUid] : undefined;
       const opponentErosion = opponent ? countErosion(opponent) : 0;
       const totalAvailableDamage = attackCandidates.reduce((sum, unit) => sum + (unit.damage || 0), 0);
+      const attackDamages = attackCandidates
+        .map(unit => Math.max(0, unit.damage || 0))
+        .sort((a, b) => b - a);
       const likelyDefenders = opponent
         ? opponent.unitZone.filter(unit =>
           unit &&
@@ -8191,8 +8762,10 @@ export const ServerGameService = {
           !((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount)
         ).length
         : 0;
+      const damageThroughLikelyDefenders = Math.max(0, totalAvailableDamage -
+        attackDamages.slice(0, likelyDefenders).reduce((sum, damage) => sum + damage, 0));
       const damageToCritical = damageToErosionCritical(opponent);
-      const erosionPressureWindow = !!opponent && !opponent.isGoddessMode && totalAvailableDamage >= damageToCritical;
+      const erosionPressureWindow = !!opponent && !opponent.isGoddessMode && damageThroughLikelyDefenders >= damageToCritical;
       const lethalWindow = opponent ? battleDamageWouldDeckOut(totalAvailableDamage, opponent) : false;
       const ownErosion = turnPlan?.ownErosion ?? countErosion(bot);
       const opponentPotentialDamage = turnPlan?.opponentPotentialDamage ?? (opponent
@@ -8202,9 +8775,17 @@ export const ServerGameService = {
         opponentPotentialDamage > 0 ||
         !!turnPlan?.opponentLethalWithoutBlocks ||
         !!turnPlan?.opponentLethalThroughOneBlock;
+      const forcingAttackWindow = difficulty === 'hard' && !!turnPlan && (
+        isClosingTurnPlan(turnPlan) ||
+        turnPlan.tacticalLine === 'lethal' ||
+        turnPlan.tacticalLine === 'erosion-lethal' ||
+        turnPlan.lethalWindow ||
+        turnPlan.damageThroughLikelyDefenders >= Math.max(1, turnPlan.damageToCritical)
+      );
       const shouldReserveDefenders =
         difficulty === 'hard' &&
         !forcedAttackUnit &&
+        !forcingAttackWindow &&
         !turnPlan?.desperationAttack &&
         dynamicCounterPressure &&
         !lethalWindow &&
@@ -8221,6 +8802,7 @@ export const ServerGameService = {
       const shouldHoldOnlyAttacker =
         difficulty === 'hard' &&
         !forcedAttackUnit &&
+        !forcingAttackWindow &&
         !turnPlan?.desperationAttack &&
         dynamicCounterPressure &&
         !lethalWindow &&
@@ -8264,6 +8846,18 @@ export const ServerGameService = {
       const comboAllianceAttack = difficulty === 'hard' && !forcedAttackUnit
         ? getComboAllianceAttack(gameState, bot, profile, attackCandidates)
         : undefined;
+      const relaxedAttackThreshold =
+        forcingAttackWindow ||
+        isClosingTurnPlan(turnPlan) ||
+        lethalWindow ||
+        erosionPressureWindow ||
+        (!!turnPlan?.desperationAttack && (lethalWindow || erosionPressureWindow));
+      const minimumAttackScore =
+        difficulty === 'hard' && !forcedAttackUnit
+          ? relaxedAttackThreshold
+            ? 0
+            : (turnPlan?.mode === 'defense' || turnPlan?.mode === 'stabilize' || turnPlan?.desperationAttack ? 30 : 14)
+          : 0;
       if (comboAllianceAttack) {
         ServerGameService.markBotClosingAttackCommitment(gameState, playerUid, turnPlan);
         comboAllianceAttack.attackers.forEach(card => reservedDefenderIds.delete(card.gamecardId));
@@ -8279,6 +8873,7 @@ export const ServerGameService = {
             opponentErosion,
             totalAvailableDamage,
             likelyDefenders,
+            damageThroughLikelyDefenders,
             reservedDefenders: reservedDefenderIds.size,
             planMode: turnPlan?.mode,
           },
@@ -8299,7 +8894,7 @@ export const ServerGameService = {
         return;
       }
       const attacker = difficulty === 'hard'
-        ? forcedAttackUnit || (scoredAvailableAttackers[0]?.score > 0 ? scoredAvailableAttackers[0].card : undefined)
+        ? forcedAttackUnit || (scoredAvailableAttackers[0]?.score > minimumAttackScore ? scoredAvailableAttackers[0].card : undefined)
         : forcedAttackUnit || bot.unitZone.find(c => {
         if (!c || c.isExhausted || c.canAttack === false) return false;
         if ((c as any).battleForbiddenByEffect) return false;
@@ -8310,6 +8905,17 @@ export const ServerGameService = {
         return isRush || !wasPlayedThisTurn;
       });
       if (attacker) {
+        if (
+          difficulty === 'hard' &&
+          (
+            isClosingTurnPlan(turnPlan) ||
+            erosionPressureWindow ||
+            lethalWindow ||
+            totalAvailableDamage >= Math.max(1, damageToCritical)
+          )
+        ) {
+          (bot as any).botClosingAttackStartedTurn = gameState.turnCount;
+        }
         ServerGameService.markBotClosingAttackCommitment(gameState, playerUid, turnPlan);
         const chosen = scoredAvailableAttackers.find(candidate => candidate.card.gamecardId === attacker.gamecardId) ||
           scoredAttackers.find(candidate => candidate.card.gamecardId === attacker.gamecardId);
@@ -8331,6 +8937,7 @@ export const ServerGameService = {
             opponentErosion,
             totalAvailableDamage,
             likelyDefenders,
+            damageThroughLikelyDefenders,
             damageToCritical,
             lethalWindow,
             erosionPressureWindow,
@@ -8339,6 +8946,7 @@ export const ServerGameService = {
             dynamicCounterPressure,
             ownErosion,
             planMode: turnPlan?.mode,
+            minimumAttackScore,
           },
           candidates: scoredAvailableAttackers.slice(0, 3).map(candidate => ({
             name: ServerGameService.getAiCardName(candidate.card),
@@ -8371,6 +8979,8 @@ export const ServerGameService = {
             reservedDefenders: reservedDefenderIds.size,
             heldUnfavorableAttack,
             bestAttackScore: scoredAvailableAttackers[0]?.score,
+            minimumAttackScore,
+            damageThroughLikelyDefenders,
             opponentPotentialDamage,
             dynamicCounterPressure,
             ownErosion,

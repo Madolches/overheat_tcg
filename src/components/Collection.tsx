@@ -48,7 +48,7 @@ export const Collection: React.FC = () => {
   const [filterColor, setFilterColor] = useState<string | null>(null);
   const [visibleCardCount, setVisibleCardCount] = useState(INITIAL_VISIBLE_CARD_COUNT);
   const [filters, setFilters] = useState({
-    ac: '', damage: '', power: '', cardPackage: 'ALL', cardType: 'ALL', faction: 'ALL', ownership: 'ALL'
+    ac: '', damage: '', power: '', cardPackage: 'ALL', cardType: 'ALL', faction: 'ALL', ownership: 'ALL', godMark: 'ALL'
   });
   const deferredSearchTerm = useDeferredValue(searchTerm.trim());
   const {
@@ -287,6 +287,8 @@ export const Collection: React.FC = () => {
     if (card.type === 'UNIT' && filters.power !== '' && card.power?.toString() !== filters.power) return false;
     if (!matchesCardPackageFilter(card.cardPackage, filters.cardPackage)) return false;
     if (filters.faction !== 'ALL' && card.faction !== filters.faction) return false;
+    if (filters.godMark === 'GOD_MARK' && !card.godMark) return false;
+    if (filters.godMark === 'NON_GOD_MARK' && card.godMark) return false;
     const isOwned = (collection[card.uniqueId] || collection[card.id] || 0) > 0;
     if (filters.ownership === 'OWNED' && !isOwned) return false;
     if (filters.ownership === 'NOT_OWNED' && isOwned) return false;
@@ -461,6 +463,16 @@ export const Collection: React.FC = () => {
                     {FACTIONS.map(f => (
                       <option key={f} value={f}>{f}</option>
                     ))}
+                  </select>
+
+                  <select
+                    className="bg-zinc-900/50 border border-white/5 rounded-xl px-2 md:px-3 py-2 md:py-2.5 text-[10px] md:text-xs font-bold text-white focus:outline-none"
+                    value={filters.godMark}
+                    onChange={e => setFilters({ ...filters, godMark: e.target.value })}
+                  >
+                    <option value="ALL">全部神蚀</option>
+                    <option value="GOD_MARK">神蚀卡</option>
+                    <option value="NON_GOD_MARK">非神蚀卡</option>
                   </select>
 
                   <input

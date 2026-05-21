@@ -1,4 +1,39 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import { createPlayerSelectQuery, getOpponentUid, millTop, ownUnits } from './BaseUtil';
+
+const hasWhiteOrYellowUnit = (playerState: any) =>
+  ownUnits(playerState).some(unit =>
+    AtomicEffectExecutor.matchesColor(unit, 'WHITE') ||
+    AtomicEffectExecutor.matchesColor(unit, 'YELLOW')
+  );
+
+const effect_102000277_enter_mill: CardEffect = {
+  id: '102000277_enter_mill',
+  type: 'TRIGGER',
+  triggerEvent: 'CARD_ENTERED_ZONE',
+  triggerLocation: ['UNIT'],
+  limitCount: 1,
+  limitNameType: true,
+  description: '【诱】同名1回合1次，你的战场上有白色或黄色单位，这个单位进入战场时，选择1名对手：将其卡组顶2张送入墓地。',
+  condition: (_gameState, playerState, instance, event) =>
+    event?.sourceCardId === instance.gamecardId &&
+    event.data?.zone === 'UNIT' &&
+    hasWhiteOrYellowUnit(playerState),
+  execute: async (instance, gameState, playerState) => {
+    createPlayerSelectQuery(
+      gameState,
+      playerState.uid,
+      '选择对手',
+      '选择1名对手，将他的卡组顶2张送入墓地。',
+      { sourceCardId: instance.gamecardId, effectId: '102000277_enter_mill' },
+      { includeSelf: false, includeOpponent: true }
+    );
+  },
+  onQueryResolve: async (instance, gameState, playerState) => {
+    millTop(gameState, getOpponentUid(gameState, playerState.uid), 2, instance);
+  }
+};
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -11,7 +46,6 @@ import { Card } from '../types/game';
  * Keywords: N/A
  * Card Detail:
  * 【诱】〖同名1回合1次〗{你的战场上有白色或黄色单位，这个单位进入战场时，选择1名对手}:将被选择的玩家的卡组顶2张卡送入墓地。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '102000277',
@@ -34,10 +68,10 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: [effect_102000277_enter_mill],
   rarity: 'R',
   availableRarities: ['R'],
-  cardPackage: 'BT06',
+  cardPackage: 'SP02',
   uniqueId: null as any,
 };
 

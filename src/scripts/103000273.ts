@@ -1,4 +1,147 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import {
+  addTempDamage,
+  addTempPower,
+  createSelectCardQuery,
+  ownItems,
+  ownUnits,
+  readyByEffect
+} from './BaseUtil';
+
+const hasWhiteOrBlueUnit = (playerState: any) =>
+  ownUnits(playerState).some(unit =>
+    AtomicEffectExecutor.matchesColor(unit, 'WHITE') ||
+    AtomicEffectExecutor.matchesColor(unit, 'BLUE')
+  );
+
+const isVictoriaUnit = (card: Card) =>
+  card.type === 'UNIT' &&
+  (
+    card.fullName.includes('维多利亚') ||
+    !!card.specialName?.includes('维多利亚')
+  );
+
+const ownFieldCards = (playerState: any) => [
+  ...ownUnits(playerState),
+  ...ownItems(playerState)
+];
+
+const canExhaustForWhiteBlueCost = (card: Card) =>
+  !card.isExhausted &&
+  (
+    AtomicEffectExecutor.matchesColor(card, 'WHITE') ||
+    AtomicEffectExecutor.matchesColor(card, 'BLUE')
+  );
+
+const hasWhiteBlueExhaustCost = (playerState: any) => {
+  const candidates = ownFieldCards(playerState).filter(canExhaustForWhiteBlueCost);
+  return candidates.some(card => AtomicEffectExecutor.matchesColor(card, 'WHITE')) &&
+    candidates.some(card => AtomicEffectExecutor.matchesColor(card, 'BLUE')) &&
+    candidates.length >= 2;
+};
+
+const payWhiteBlueExhaustCost = (gameState: any, playerState: any, selections: string[]) => {
+  const selected = selections
+    .map(id => ownFieldCards(playerState).find(card => card.gamecardId === id))
+    .filter((card: Card | undefined): card is Card => !!card && canExhaustForWhiteBlueCost(card));
+  const hasWhite = selected.some(card => AtomicEffectExecutor.matchesColor(card, 'WHITE'));
+  const hasBlue = selected.some(card => AtomicEffectExecutor.matchesColor(card, 'BLUE'));
+  if (selected.length !== 2 || new Set(selected.map(card => card.gamecardId)).size !== 2 || !hasWhite || !hasBlue) {
+    return false;
+  }
+
+  selected.forEach(card => {
+    card.isExhausted = true;
+  });
+  gameState.logs.push(`[费用] 横置了 ${selected.map(card => `[${card.fullName}]`).join('、')}。`);
+  return true;
+};
+
+const effect_103000273_enter_boost: CardEffect = {
+  id: '103000273_enter_boost',
+  type: 'TRIGGER',
+  triggerEvent: 'CARD_ENTERED_ZONE',
+  triggerLocation: ['UNIT'],
+  limitCount: 1,
+  limitNameType: true,
+  description: '【诱】同名1回合1次，你的战场上有白色或蓝色单位，这个单位进入战场时，选择你的1个非神蚀单位：本回合中，其伤害+1、力量+500。',
+  condition: (_gameState, playerState, instance, event) =>
+    event?.sourceCardId === instance.gamecardId &&
+    event.data?.zone === 'UNIT' &&
+    hasWhiteOrBlueUnit(playerState) &&
+    ownUnits(playerState).some(unit => !unit.godMark),
+  execute: async (instance, gameState, playerState) => {
+    const candidates = ownUnits(playerState).filter(unit => !unit.godMark);
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      candidates,
+      '选择强化单位',
+      '选择你的1个非神蚀单位，本回合中伤害+1、力量+500。',
+      1,
+      1,
+      { sourceCardId: instance.gamecardId, effectId: '103000273_enter_boost' },
+      () => 'UNIT'
+    );
+  },
+  onQueryResolve: async (instance, gameState, _playerState, selections) => {
+    const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
+    if (!target || target.cardlocation !== 'UNIT' || target.godMark) return;
+    addTempDamage(target, instance, 1);
+    addTempPower(target, instance, 500);
+  }
+};
+
+const effect_103000273_ready_victoria: CardEffect = {
+  id: '103000273_ready_victoria',
+  type: 'ACTIVATE',
+  triggerLocation: ['UNIT'],
+  description: '【启】选择你的1个「维多利亚」单位，横置你战场上的白色、蓝色卡各1张：将其重置，本回合中力量+1000。',
+  condition: (_gameState, playerState, instance) =>
+    instance.cardlocation === 'UNIT' &&
+    ownUnits(playerState).some(isVictoriaUnit) &&
+    hasWhiteBlueExhaustCost(playerState),
+  execute: async (instance, gameState, playerState) => {
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      ownUnits(playerState).filter(isVictoriaUnit),
+      '选择维多利亚单位',
+      '选择你的1个「维多利亚」单位。',
+      1,
+      1,
+      { sourceCardId: instance.gamecardId, effectId: '103000273_ready_victoria', step: 'TARGET' },
+      () => 'UNIT'
+    );
+  },
+  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step === 'TARGET') {
+      const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
+      if (!target || target.cardlocation !== 'UNIT' || !isVictoriaUnit(target)) return;
+      const candidates = ownFieldCards(playerState).filter(canExhaustForWhiteBlueCost);
+      createSelectCardQuery(
+        gameState,
+        playerState.uid,
+        candidates,
+        '选择横置费用',
+        '选择你战场上的白色、蓝色卡各1张横置。',
+        2,
+        2,
+        { sourceCardId: instance.gamecardId, effectId: '103000273_ready_victoria', step: 'COST', targetId: target.gamecardId },
+        card => card.cardlocation as any
+      );
+      return;
+    }
+
+    if (context?.step !== 'COST') return;
+    const target = context.targetId ? AtomicEffectExecutor.findCardById(gameState, context.targetId) : undefined;
+    if (!target || target.cardlocation !== 'UNIT' || !isVictoriaUnit(target)) return;
+    if (!payWhiteBlueExhaustCost(gameState, playerState, selections)) return;
+    readyByEffect(gameState, target, instance);
+    addTempPower(target, instance, 1000);
+  }
+};
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -12,7 +155,6 @@ import { Card } from '../types/game';
  * Card Detail:
  * 【诱】〖同名1回合1次〗{你的战场上有白色或蓝色单位，这个单位进入战场时，选择你的一个非神蚀单位}:本回合中，被选择的单位＋1/＋1500。
  * 【启】{选择一个你的「维多利亚」单位}{将你的战场上的白色、蓝色卡各一张横置}:将被选择的单位重置，本回合中，被选择的单位＋1000。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '103000273',
@@ -28,17 +170,17 @@ const card: Card = {
   basePower: 1000,
   damage: 1,
   baseDamage: 1,
-  godMark: true,
+  godMark: false,
   displayState: 'FRONT_UPRIGHT',
   isExhausted: false,
   isrush: false,
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: [effect_103000273_enter_boost, effect_103000273_ready_victoria],
   rarity: 'R',
   availableRarities: ['R'],
-  cardPackage: 'BT07',
+  cardPackage: 'SP02',
   uniqueId: null as any,
 };
 

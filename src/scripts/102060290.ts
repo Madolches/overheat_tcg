@@ -28,7 +28,7 @@ const card: Card = {
   basePower: 2500,
   damage: 1,
   baseDamage: 1,
-  godMark: true,
+  godMark: false,
   displayState: 'FRONT_UPRIGHT',
   isExhausted: false,
   isrush: false,
@@ -38,7 +38,7 @@ const card: Card = {
   effects: [],
   rarity: 'SR',
   availableRarities: ['SR'],
-  cardPackage: 'BT07',
+  cardPackage: 'SP03',
   uniqueId: null as any,
 };
 

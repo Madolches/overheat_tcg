@@ -19,6 +19,22 @@ const RED_REMOVAL_EFFECT_IDS = new Set([
   '202050034_destroy_god',
 ]);
 
+const redErosionCount = (player: any) =>
+  (player?.erosionFront?.filter(Boolean).length || 0) +
+  (player?.erosionBack?.filter(Boolean).length || 0);
+
+const scadiDikaiTarget = (context: any) => {
+  const player = context.player;
+  if (!player) return undefined;
+  const dikai = player.unitZone.find((unit: any) => unit?.id === RED_DIKAI_ID);
+  if (!dikai) return undefined;
+  const scadi = player.itemZone.find((item: any) => item?.id === RED_SCADI_ID && item.equipTargetId === dikai.gamecardId);
+  return scadi ? dikai : undefined;
+};
+
+const scadiEquippedToCard = (context: any, card: any) =>
+  !!context.player?.itemZone.some((item: any) => item?.id === RED_SCADI_ID && item.equipTargetId === card?.gamecardId);
+
 export const redDikaiProfile: DeckAiProfile = {
   id: 'red-dikai',
   displayName: '纯红迪凯',
@@ -148,6 +164,13 @@ export const redDikaiProfile: DeckAiProfile = {
         context.plan.lethalWindow ||
         context.plan.totalAvailableDamage >= Math.max(1, damageToCritical - 1) ||
         liveOpponentErosion >= 7;
+      const scadiTarget = scadiDikaiTarget(context);
+      const needsScadiErosionSetup =
+        !!scadiTarget &&
+        context.plan.ownErosion < 5 &&
+        context.plan.ownDeck > 5 &&
+        context.plan.attackers > 0 &&
+        !context.plan.lethalWindow;
 
       if (context.plan.attackers > 0 && liveOpponentErosion >= 5) {
         attackBeforeDeveloping = true;
@@ -169,6 +192,10 @@ export const redDikaiProfile: DeckAiProfile = {
       if (!nearKill && context.plan.ownDeck <= 6 && context.plan.opponentPotentialDamage > 0) {
         reserveDefendersDelta += 1;
         notes.push('red route: low deck only stabilizes when no kill line exists');
+      }
+      if (needsScadiErosionSetup) {
+        attackBeforeDeveloping = false;
+        notes.push('red scadi: develop or pay from deck to reach erosion 5-7 before attacking');
       }
       return notes.length
         ? { attackBeforeDeveloping, reserveDefendersDelta, minBattleEffectScoreDelta, notes }
@@ -200,6 +227,19 @@ export const redDikaiProfile: DeckAiProfile = {
           if (context.player?.isFirst && context.gameState?.turnCount === 1) score -= 35;
         }
       }
+      const scadiTarget = scadiDikaiTarget(context);
+      if (scadiTarget && context.player) {
+        const erosion = redErosionCount(context.player);
+        const cost = cardCost(card);
+        if (erosion < 5 && cost > 0 && context.player.deck.length > cost + 2) {
+          const projected = erosion + cost;
+          if (projected >= 5 && projected <= 7) score += 34;
+          else if (projected < 5) score += Math.min(18, cost * 7);
+          else score -= 20 + (projected - 7) * 8;
+        } else if (erosion >= 5 && erosion <= 7 && cost > 0 && erosion + cost > 7) {
+          score -= 24 + (erosion + cost - 7) * 10;
+        }
+      }
       if (card.id === '202000131') {
         const ownUnits = context.player?.unitZone.filter(Boolean) || [];
         const opponentUnits = context.opponent?.unitZone.filter(Boolean) || [];
@@ -224,6 +264,22 @@ export const redDikaiProfile: DeckAiProfile = {
       if (context.card.isrush) score += 3;
       if (opponentIs(context, 'control', 'engine', 'combo')) score += damage * 2;
       if (opponentHasTrait(context, 'large-defenders')) score += damage * 1.2;
+      if (scadiEquippedToCard(context, context.card) && context.player) {
+        const erosion = redErosionCount(context.player);
+        const lowPowerDefenders = context.opponent?.unitZone.filter(unit =>
+          unit &&
+          !unit.isExhausted &&
+          (unit.power || 0) < 2500 &&
+          !(unit as any).battleForbiddenByEffect
+        ).length || 0;
+        if (erosion >= 5 && erosion <= 7) {
+          score += 18 + lowPowerDefenders * 12;
+        } else if (erosion < 5 && context.gameState?.phase === 'BATTLE_DECLARATION') {
+          score -= 14 + (5 - erosion) * 5;
+        } else if (erosion > 7) {
+          score -= 6;
+        }
+      }
       return score;
     },
     adjustDefenseScore: context => {
@@ -311,15 +367,18 @@ export const redDikaiProfile: DeckAiProfile = {
         const isCurrentAttacker = !!battle?.attackers?.includes(context.card.gamecardId);
         const hasAttacked = !!context.card.hasAttackedThisTurn;
         const isOwnTurn = !!context.player?.uid && currentTurnUid === context.player.uid;
+        const spentByAttack = isOwnTurn && (isCurrentAttacker || hasAttacked);
 
         if (!context.card.isExhausted) {
-          score -= 80;
-        } else if (isOwnTurn && (isCurrentAttacker || hasAttacked)) {
+          score -= 95;
+        } else if (spentByAttack) {
           score += 55 + (opponentErosion(context) >= 6 ? 10 : 0);
         } else if (context.gameState?.phase === 'COUNTERING') {
-          score -= 35;
+          score -= 55;
+        } else if (context.gameState?.phase === 'MAIN') {
+          score -= 82;
         } else {
-          score -= 18;
+          score -= 45;
         }
       }
       if (effectHasTag(context, 'combat') || effectHasTag(context, 'finisher') || effectHasTag(context, 'buff')) score += 5;

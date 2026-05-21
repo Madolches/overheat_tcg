@@ -8,7 +8,11 @@ import { GameState, Card, CardEffect, TriggerLocation, GameEvent, PlayerState } 
 
 const isFullEffectSilencedThisTurn = (gameState: GameState | null, card: Card) =>
   !!gameState &&
-  (card as any).data?.fullEffectSilencedTurn === gameState.turnCount &&
+  (
+    (card as any).data?.permanentEffectSilenced ||
+    (card as any).data?.fullEffectSilencedUntilOwnStartUid ||
+    (card as any).data?.fullEffectSilencedTurn === gameState.turnCount
+  ) &&
   (
     !(card as any).data?.fullEffectSilencedZones ||
     (card as any).data.fullEffectSilencedZones.includes(card.cardlocation as TriggerLocation)
@@ -339,6 +343,17 @@ export const GameService = {
         omniColorCount++;
       } else if (cardInZone.color !== 'NONE') {
         availableColors[cardInZone.color] = (availableColors[cardInZone.color] || 0) + 1;
+      }
+      const extraColors = [
+        ...((cardInZone as any).temporaryExtraColors || []),
+        ...((cardInZone as any).persistentExtraColors || [])
+      ];
+      if (Array.isArray(extraColors)) {
+        extraColors.forEach(color => {
+          if (typeof color === 'string' && color !== cardInZone.color && color in availableColors) {
+            availableColors[color] = (availableColors[color] || 0) + 1;
+          }
+        });
       }
     });
 

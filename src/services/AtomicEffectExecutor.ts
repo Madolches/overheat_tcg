@@ -766,7 +766,8 @@ export class AtomicEffectExecutor {
 
       this.moveCard(gameState, ownerUid, currentZone, ownerUid, toZone, card.gamecardId, true, {
         effectSourcePlayerUid,
-        effectSourceCardId: sourceCard?.gamecardId
+        effectSourceCardId: sourceCard?.gamecardId,
+        faceDown: effect.faceDown
       });
 
       // If moving to unit zone from anywhere, mark as played this turn to ensure summon sickness applies
@@ -785,6 +786,14 @@ export class AtomicEffectExecutor {
 
     targets.forEach(card => {
       if (this.shouldSkipEffect(gameState, card, sourceCard)) return;
+      if (
+        direction === 'HORIZONTAL' &&
+        (card as any).data?.cannotExhaustUntilTurn !== undefined &&
+        (card as any).data.cannotExhaustUntilTurn >= gameState.turnCount
+      ) {
+        gameState.logs.push(`[${card.fullName}] 因 [${(card as any).data.cannotExhaustSourceName || '卡牌效果'}] 不能横置。`);
+        return;
+      }
 
       card.isExhausted = direction === 'HORIZONTAL';
       if (direction === 'VERTICAL') {
@@ -890,8 +899,29 @@ export class AtomicEffectExecutor {
     return undefined;
   }
 
+  private static isOpponentAcAtMost(gameState: GameState, target: Card, source: Card, maxAc: number, sourceUid?: string): boolean {
+    const targetUid = this.findCardOwnerKey(gameState, target.gamecardId);
+    const sourceOwnerUid = sourceUid || this.findCardOwnerKey(gameState, source.gamecardId);
+    return !!targetUid &&
+      !!sourceOwnerUid &&
+      targetUid !== sourceOwnerUid &&
+      Number(source.acValue || 0) <= maxAc;
+  }
+
   static matchesColor(card: Card, targetColor: string): boolean {
     if (card.color === targetColor) return true;
+
+    const extraColors = [
+      ...((card as any).temporaryExtraColors || []),
+      ...((card as any).persistentExtraColors || [])
+    ];
+    if (
+      ['UNIT', 'ITEM', 'EROSION_FRONT'].includes(card.cardlocation as string) &&
+      Array.isArray(extraColors) &&
+      extraColors.includes(targetColor)
+    ) {
+      return true;
+    }
 
     // Robust check for 105000481 (string/number safe)
     const isOmni = String(card.id) === '105000481' || (card.effects && card.effects.some(e => e.id === '105000481_omni'));
@@ -969,9 +999,25 @@ export class AtomicEffectExecutor {
           if (
             isChosenEffectTarget &&
             sourceCard &&
-            card.cardlocation === 'UNIT' &&
+            (card.cardlocation === 'UNIT' || card.cardlocation === 'ITEM') &&
             card.gamecardId !== sourceCard.gamecardId &&
-            (card as any).cannotBeEffectTargetByEffect
+            (
+              (card as any).cannotBeEffectTargetByEffect ||
+              (
+                (card as any).data?.cannotBeEffectTargetByOpponent &&
+                !!this.findCardOwnerKey(gameState, card.gamecardId) &&
+                !!this.findCardOwnerKey(gameState, sourceCard.gamecardId) &&
+                this.findCardOwnerKey(gameState, card.gamecardId) !== this.findCardOwnerKey(gameState, sourceCard.gamecardId)
+              ) ||
+              (
+                Array.isArray((card as any).data?.cannotBeEffectTargetColors) &&
+                (card as any).data.cannotBeEffectTargetColors.includes(sourceCard.color)
+              ) ||
+              (
+                (card as any).data?.cannotBeEffectTargetByOpponentAcLe !== undefined &&
+                this.isOpponentAcAtMost(gameState, card, sourceCard, Number((card as any).data.cannotBeEffectTargetByOpponentAcLe))
+              )
+            )
           ) {
             return;
           }
@@ -1022,6 +1068,34 @@ export class AtomicEffectExecutor {
     if (idx !== -1) {
       card = fromArray[idx]!;
       previousSourceCardId = card.gamecardId;
+      if (
+        isEffect &&
+        (fromZone === 'UNIT' || fromZone === 'ITEM') &&
+        !['UNIT', 'ITEM'].includes(toZone) &&
+        options?.effectSourcePlayerUid &&
+        options.effectSourcePlayerUid !== playerUid &&
+        (card as any).data?.cannotLeaveFieldByOpponentEffectTurn === gameState.turnCount
+      ) {
+        const sourceName = (card as any).data?.cannotLeaveFieldByOpponentEffectSourceName || '卡牌效果';
+        gameState.logs.push(`[${sourceName}] 防止了 [${card.fullName}] 因对手效果从战场离开。`);
+        return;
+      }
+      if (
+        isEffect &&
+        (fromZone === 'UNIT' || fromZone === 'ITEM') &&
+        !['UNIT', 'ITEM'].includes(toZone) &&
+        options?.effectSourceCardId
+      ) {
+        const sourceCard = this.findCardById(gameState, options.effectSourceCardId);
+        if (
+          sourceCard &&
+          (card as any).data?.cannotLeaveFieldByOpponentAcLe !== undefined &&
+          this.isOpponentAcAtMost(gameState, card, sourceCard, Number((card as any).data.cannotLeaveFieldByOpponentAcLe), options.effectSourcePlayerUid)
+        ) {
+          gameState.logs.push(`[${card.fullName}] cannot leave the field by opponent ACCESS ${(card as any).data.cannotLeaveFieldByOpponentAcLe} or less card effects.`);
+          return;
+        }
+      }
       if (['UNIT', 'ITEM', 'EROSION_FRONT', 'EROSION_BACK'].includes(fromZone)) {
         fromArray[idx] = null;
       } else {
@@ -1042,6 +1116,16 @@ export class AtomicEffectExecutor {
     if (toZone === 'GRAVE' && (card.id === '201000140' || card.id === '201000040' || card.fullName === '解放之光')) {
       toZone = 'EXILE';
       gameState.logs.push(`[替换效果] [${card.fullName}] 将要被送入墓地，改为放逐。`);
+    }
+
+    if (
+      (fromZone === 'UNIT' || fromZone === 'ITEM') &&
+      toZone !== 'EXILE' &&
+      !['UNIT', 'ITEM'].includes(toZone) &&
+      (card as any).data?.exileWhenLeavesFieldSourceName
+    ) {
+      toZone = 'EXILE';
+      gameState.logs.push(`[替换效果] [${card.fullName}] 离开战场时改为放逐。`);
     }
 
     if (
@@ -1078,6 +1162,8 @@ export class AtomicEffectExecutor {
       card.temporaryRush = false;
       card.temporaryHeroic = false;
       card.temporaryCanAttackAny = false;
+      delete (card as any).temporaryExtraColors;
+      delete (card as any).persistentExtraColors;
       card.temporaryBuffSources = {};
       card.temporaryBuffDetails = {};
       card.influencingEffects = [];
@@ -1466,6 +1552,45 @@ export class AtomicEffectExecutor {
       ) {
         const identity = getCardIdentity(gameState, targetOwnerUid, card);
         gameState.logs.push(`${identity} 不受对手宣言颜色的卡牌效果影响。`);
+        return true;
+      }
+    }
+
+    if (card && sourceCard && (card as any).data?.unaffectedByOpponentAcLe !== undefined) {
+      const maxAc = Number((card as any).data.unaffectedByOpponentAcLe);
+      if (this.isOpponentAcAtMost(gameState, card, sourceCard, maxAc)) {
+        const targetOwnerUid = this.findCardOwnerKey(gameState, card.gamecardId) || '';
+        const identity = targetOwnerUid ? getCardIdentity(gameState, targetOwnerUid, card) : `[${card.fullName}]`;
+        gameState.logs.push(`${identity} is unaffected by opponent ACCESS ${maxAc} or less card effects.`);
+        return true;
+      }
+    }
+
+    if (
+      card &&
+      sourceCard &&
+      (card as any).data?.cannotBeEffectTargetByOpponent
+    ) {
+      const targetOwnerUid = this.findCardOwnerKey(gameState, card.gamecardId);
+      const sourceOwnerUid = this.findCardOwnerKey(gameState, sourceCard.gamecardId);
+      if (targetOwnerUid && sourceOwnerUid && targetOwnerUid !== sourceOwnerUid) {
+        const identity = getCardIdentity(gameState, targetOwnerUid, card);
+        gameState.logs.push(`${identity} cannot be chosen as a target by opponent card effects.`);
+        return true;
+      }
+    }
+
+    if (
+      card &&
+      sourceCard &&
+      Array.isArray((card as any).data?.cannotBeEffectTargetColors) &&
+      (card as any).data.cannotBeEffectTargetColors.includes(sourceCard.color)
+    ) {
+      const targetOwnerUid = this.findCardOwnerKey(gameState, card.gamecardId);
+      const sourceOwnerUid = this.findCardOwnerKey(gameState, sourceCard.gamecardId);
+      if (targetOwnerUid && sourceOwnerUid && targetOwnerUid !== sourceOwnerUid) {
+        const identity = getCardIdentity(gameState, targetOwnerUid, card);
+        gameState.logs.push(`${identity} 不能成为该颜色卡牌效果的对象。`);
         return true;
       }
     }

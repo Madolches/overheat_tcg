@@ -1,18 +1,21 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { getOpponentUid, moveRandomGraveToDeckBottom } from './BaseUtil';
 
-/**
- * Auto-generated from Card.xlsx + Card2.xlsx.
- * Source CardID: 102070357
- * Card2 Row: 496
- * Card Row: 426
- * Source CardNo: BT06-R04
- * Package: BT06(C)
- * ID Source: card-xlsx
- * Keywords: N/A
- * Card Detail:
- * 【诱】{这个单位对对手造成战斗伤害时}：恢复1（随机将你的墓地中的1张卡，将其放置到你的卡组底）。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
- */
+const cardEffects: CardEffect[] = [{
+  id: '102070357_combat_damage_recover',
+  type: 'TRIGGER',
+  triggerLocation: ['UNIT'],
+  triggerEvent: 'COMBAT_DAMAGE_CAUSED',
+  description: '这张卡对对手造成战斗伤害时，恢复1。',
+  condition: (gameState, playerState, instance, event) =>
+    event?.playerUid === getOpponentUid(gameState, playerState.uid) &&
+    (event.data?.attackerIds || []).includes(instance.gamecardId) &&
+    playerState.grave.length > 0,
+  execute: async (instance, gameState, playerState) => {
+    moveRandomGraveToDeckBottom(gameState, playerState.uid, 1, instance);
+  }
+}];
+
 const card: Card = {
   id: '102070357',
   fullName: '异界狂蝠',
@@ -21,7 +24,7 @@ const card: Card = {
   color: 'RED',
   gamecardId: null as any,
   colorReq: {},
-  faction: '忒碧拉之门',
+  faction: '忒碧拉之间',
   acValue: 2,
   power: 2000,
   basePower: 2000,
@@ -34,7 +37,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'C',
   availableRarities: ['C'],
   cardPackage: 'BT06',

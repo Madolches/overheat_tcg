@@ -1,4 +1,85 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import { addInfluence, canPutUnitOntoBattlefield, createSelectCardQuery, ensureData, moveCard } from './BaseUtil';
+
+const kingdomHeavyTargets = (playerState: any) =>
+  playerState.deck.filter((card: Card) =>
+    card.id !== '101130377' &&
+    card.type === 'UNIT' &&
+    card.faction === '圣王国' &&
+    !card.godMark &&
+    (card.acValue || 0) <= 3 &&
+    canPutUnitOntoBattlefield(playerState, card)
+  );
+
+const cardEffects: CardEffect[] = [{
+  id: '101130377_first_battle_destroy_prevent',
+  type: 'CONTINUOUS',
+  triggerLocation: ['UNIT'],
+  description: '每个回合中第一次将要被战斗破坏时，防止那次破坏。',
+  applyContinuous: (_gameState, instance) => {
+    const data = ensureData(instance);
+    data.preventFirstBattleDestroyEachTurnSourceName = instance.fullName;
+    addInfluence(instance, instance, '每回合第一次将要被战斗破坏时防止');
+  }
+}, {
+  id: '101130377_recruit_alliance_partner',
+  type: 'TRIGGER',
+  triggerEvent: 'CARD_ATTACK_DECLARED',
+  triggerLocation: ['UNIT'],
+  limitCount: 1,
+  description: '1回合1次：这个单位宣言非联军攻击时，从卡组横置放置1张《王国重骑》以外AC+3以下<圣王国>非神蚀单位，视为与这个单位联军攻击。',
+  condition: (_gameState, playerState, instance, event) =>
+    event?.sourceCardId === instance.gamecardId &&
+    event.playerUid === playerState.uid &&
+    !event.data?.isAlliance &&
+    kingdomHeavyTargets(playerState).length > 0,
+  execute: async (instance, gameState, playerState) => {
+    const candidates = kingdomHeavyTargets(playerState);
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      candidates,
+      '选择联军伙伴',
+      '选择卡组中1张《王国重骑》以外ACCESS值+3以下的<圣王国>非神蚀单位，以横置状态放置到战场并视为参战。',
+      0,
+      1,
+      { sourceCardId: instance.gamecardId, effectId: '101130377_recruit_alliance_partner' },
+      () => 'DECK'
+    );
+  },
+  onQueryResolve: async (instance, gameState, playerState, selections) => {
+    const target = selections[0]
+      ? playerState.deck.find(card =>
+        card.gamecardId === selections[0] &&
+        card.id !== '101130377' &&
+        card.type === 'UNIT' &&
+        card.faction === '圣王国' &&
+        !card.godMark &&
+        (card.acValue || 0) <= 3
+      )
+      : undefined;
+    if (!target || !canPutUnitOntoBattlefield(playerState, target)) return;
+
+    const targetId = target.gamecardId;
+    moveCard(gameState, playerState.uid, target, 'UNIT', instance);
+    const live = AtomicEffectExecutor.findCardById(gameState, targetId);
+    if (!live) return;
+
+    live.isExhausted = true;
+    live.displayState = 'FRONT_UPRIGHT';
+    const battle = gameState.battleState;
+    if (battle?.attackers?.includes(instance.gamecardId) && !battle.attackers.includes(live.gamecardId)) {
+      battle.attackers.push(live.gamecardId);
+      battle.isAlliance = true;
+      battle.keepResetUnitIds = Array.from(new Set([...(battle.keepResetUnitIds || []), live.gamecardId]));
+      live.inAllianceGroup = true;
+      instance.inAllianceGroup = true;
+      addInfluence(live, instance, '被视为与王国重骑进行联军攻击');
+    }
+    await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'SHUFFLE_DECK' }, instance);
+  }
+}];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -35,7 +116,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'C',
   availableRarities: ['C'],
   cardPackage: 'BT07',

@@ -62,7 +62,7 @@ const card: Card = {
   basePower: 2000,
   damage: 1,
   baseDamage: 1,
-  godMark: true,
+  godMark: false,
   displayState: 'FRONT_UPRIGHT',
   isExhausted: false,
   isrush: false,
@@ -72,7 +72,7 @@ const card: Card = {
   effects: cardEffects,
   rarity: 'PR',
   availableRarities: ['PR'],
-  cardPackage: 'BT05',
+  cardPackage: 'PR',
   uniqueId: null as any,
 };
 

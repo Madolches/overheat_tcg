@@ -245,7 +245,19 @@ export const bigSalalaProfile: DeckAiProfile = {
     },
     adjustPaymentScore: context => {
       if (BIG_SALALA_CORE_IDS.has(context.card.id)) return 24;
-      if (context.card.id === '105000481') return 18;
+      if (context.card.id === '105000481') {
+        const readyDefendersCount = readyDefenders(context);
+        const incomingDamage = context.opponent?.unitZone
+          .filter(unit => !!unit && unit.canAttack !== false && (unit.damage || 0) > 0)
+          .reduce((sum, unit) => sum + Math.max(0, unit?.damage || 0), 0) || 0;
+        const ownErosionCount = context.player
+          ? (context.player.erosionFront || []).filter(Boolean).length +
+            (context.player.erosionBack || []).filter(Boolean).length
+          : 0;
+        return 18 +
+          (context.card.cardlocation === 'UNIT' ? 170 : 0) +
+          (readyDefendersCount <= 2 && incomingDamage >= Math.max(4, 10 - ownErosionCount) ? 80 : 0);
+      }
       if (context.card.godMark) return 10;
       return 0;
     },

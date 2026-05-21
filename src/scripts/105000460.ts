@@ -92,7 +92,7 @@ const card: Card = {
   effects: [effect_105000460_enter_discard],
   rarity: 'PR',
   availableRarities: ['PR'],
-  cardPackage: 'BT04',
+  cardPackage: 'PR',
   uniqueId: null as any,
 };
 

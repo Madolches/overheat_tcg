@@ -26,7 +26,7 @@ const SEVERITY_RANK: Record<Severity, number> = {
 
 const DEFAULT_EVALUATE_ARGS = {
   games: '1',
-  matchLimit: '5',
+  matchLimit: '12',
   maxSteps: '1000',
   maxTurns: '40',
   stepTimeoutMs: '5000',
@@ -107,6 +107,42 @@ const ISSUE_META: Record<string, { severity: Severity; recommendation: string }>
     severity: 'warning',
     recommendation: 'Raise the COUNTERING threshold or penalize setup/resource tags outside a concrete battle/chain payoff.',
   },
+  BAD_ATTACK_INTO_STRONG_DEFENDER: {
+    severity: 'warning',
+    recommendation: 'Tighten attack scoring when the opponent has ready defenders and the attack is not lethal, combo-enabling, or erosion-critical.',
+  },
+  BAD_ATTACK_LOST_UNIT: {
+    severity: 'warning',
+    recommendation: 'Protect high-value attackers from non-lethal trades; add a card-specific attack window if this unit needs a setup effect first.',
+  },
+  EFFECT_WITH_NO_PAYOFF: {
+    severity: 'warning',
+    recommendation: 'Add an effect timing override or require a concrete payoff tag before activating this effect in battle/counter windows.',
+  },
+  MISSED_COMBO_WINDOW: {
+    severity: 'warning',
+    recommendation: 'Convert the turn into a scenario and make the combo attack/effect line override generic development or single attacks.',
+  },
+  BAD_EQUIP_TARGET: {
+    severity: 'warning',
+    recommendation: 'Inspect the equip query choice and add a preferred host rule for the deck/card profile.',
+  },
+  BAD_ALLIANCE_CHOICE: {
+    severity: 'warning',
+    recommendation: 'Prefer the known alliance attack plan when its payoff is ready; penalize ordinary attacks that spend a combo attacker.',
+  },
+  OVERCOMMIT_BOARD: {
+    severity: 'warning',
+    recommendation: 'When the plan says attack before developing, move to battle before playing extra cards unless the card immediately creates lethal or defense.',
+  },
+  MISSED_ATTACK_WINDOW: {
+    severity: 'info',
+    recommendation: 'Inspect whether development, low score thresholds, or defender reservation prevented a planned attack window.',
+  },
+  WASTED_PROTECTION: {
+    severity: 'warning',
+    recommendation: 'Hold protection stories/effects until a valuable unit is actually threatened by battle, destruction, or a chain effect.',
+  },
   REPEATED_EFFECT_FAILURE: {
     severity: 'error',
     recommendation: 'Add a per-window failure skip or fix the effect condition/target precheck.',
@@ -153,6 +189,11 @@ function markdownTable(headers: string[], rows: Array<Array<string | number>>) {
   ].join('\n');
 }
 
+function hasTimingWarningText(text: string) {
+  if (/\bprefers\s+(?:MAIN|BATTLE|BATTLE_FREE|COUNTERING|DEFENSE_DECLARATION|DAMAGE_CALCULATION)\b/i.test(text)) return true;
+  return text.split(/[、,|]/).some(part => /timing\s+[^、,|]*-[0-9]/i.test(part));
+}
+
 function stringifyJson(value: unknown) {
   return JSON.stringify(value, null, 2);
 }
@@ -185,6 +226,64 @@ function detail(log: any, key: string) {
 function scoreOf(log: any) {
   const score = Number(log?.score);
   return Number.isFinite(score) ? score : undefined;
+}
+
+function numericDetail(log: any, key: string, fallback = 0) {
+  const value = Number(log?.details?.[key]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function booleanDetail(log: any, key: string) {
+  const value = log?.details?.[key];
+  return value === true || value === 'true' || value === 1 || value === '1';
+}
+
+function candidateText(log: any) {
+  if (!Array.isArray(log?.candidates)) return '';
+  return log.candidates
+    .slice(0, 5)
+    .map((candidate: any) => `${candidate?.name || ''} ${candidate?.score ?? ''}`)
+    .join(' ');
+}
+
+function decisionText(log: any, extraDetailKeys: string[] = []) {
+  const detailPart = extraDetailKeys.map(key => detail(log, key)).filter(Boolean).join(' ');
+  return `${log?.subject || ''} ${log?.reason || ''} ${detailPart} ${candidateText(log)}`;
+}
+
+function hasClearTacticalPayoff(text: string) {
+  return /lethal|closing|close|threat|save|saves|protect|prevent|counter|combat|battle|attack|defend|defender|damage|destroy|remove|removal|bounce|stun|silence|cannot defend|combo|alliance|reset|boost|tempo|pressure|race|magic spear|Dikai/i.test(text);
+}
+
+function looksLikeSetupOnly(text: string) {
+  return /draw|search|setup|engine|resource|cycle|recycle|revive|summon|develop|value|hand|deck.*hand|main-phase/i.test(text);
+}
+
+function looksLikeProtection(text: string) {
+  return /protect|prevent|prevent-destroy|indestructible|save|barrier|battle save|damage replacement/i.test(text);
+}
+
+function looksLikeEquip(text: string) {
+  return /equip|equip_universal|Scadi|War Song|host/i.test(text);
+}
+
+function isAttackAction(action: string) {
+  return action === 'ATTACK' || action === 'COMBO_ALLIANCE_ATTACK';
+}
+
+function isSubstantiveTurnAction(action: string) {
+  return [
+    'PLAY_CARD',
+    'ACTIVATE_EFFECT',
+    'PLAY_BATTLE_STORY',
+    'PLAY_CONFRONTATION_STORY',
+    'ENTER_BATTLE',
+    'ATTACK',
+    'COMBO_ALLIANCE_ATTACK',
+    'HOLD_ATTACKERS',
+    'RETURN_MAIN',
+    'END_TURN',
+  ].includes(action);
 }
 
 function severityFor(code: string, fallback: Severity = 'warning') {
@@ -241,7 +340,7 @@ function analyzeDiagnosis(findings: BehaviorFinding[], result: any) {
       ? 'STEP_TIMEOUT_COUNTERING'
       : 'STEP_TIMEOUT'
     : String(diagnosis.code || '');
-  if (diagnosis.severity === 'warning' || diagnosis.severity === 'error' || /^STEP_LIMIT/i.test(code)) {
+  if (code !== 'FINISHED' && (diagnosis.severity === 'warning' || diagnosis.severity === 'error' || /^STEP_LIMIT/i.test(code))) {
     addFinding(findings, result, code || 'MATCH_DIAGNOSIS', {
       severity: diagnosis.severity === 'error' ? 'error' : severityFor(code, 'warning'),
       detail: detailText,
@@ -256,6 +355,113 @@ function analyzeDiagnosis(findings: BehaviorFinding[], result: any) {
       severity: severityFor(metric, numeric >= 3 ? 'error' : 'warning'),
       detail: `${metric} occurred ${numeric} time(s) in decision diagnostics.`,
     });
+  }
+}
+
+function analyzeTurnWindows(findings: BehaviorFinding[], result: any) {
+  const logs = Array.isArray(result.aiDecisionLogs) ? result.aiDecisionLogs : [];
+  const grouped = new Map<string, { plan?: any; logs: any[] }>();
+
+  logs.forEach((rawLog: any, index: number) => {
+    if (rawLog?.turn === undefined || rawLog?.turn === null) return;
+    const log = { ...rawLog, __index: index };
+    const key = `${log.playerUid || log.playerName || log.profileId || 'unknown'}:${log.turn}`;
+    const entry = grouped.get(key) || { logs: [] };
+    entry.logs.push(log);
+    if (log.action === 'TURN_PLAN') entry.plan = log;
+    grouped.set(key, entry);
+  });
+
+  for (const trace of grouped.values()) {
+    const plan = trace.plan;
+    if (!plan) continue;
+    const deck = plan.playerName || plan.profileId || plan.playerUid;
+    const afterPlan = trace.logs.filter(log => log.__index > plan.__index);
+    const actionsAfterPlan = afterPlan.map(log => String(log.action || ''));
+    const ended = actionsAfterPlan.includes('END_TURN');
+    const attackLogs = afterPlan.filter(log => isAttackAction(String(log.action || '')));
+    const planText = decisionText(plan, ['notes', 'comboNotes', 'tacticalNotes', 'tacticalLine']);
+    const totalDamage = numericDetail(plan, 'totalDamage');
+    const damageToCritical = numericDetail(plan, 'damageToCritical');
+    const hasLikelyDefenders = plan.details?.likelyDefenders !== undefined && plan.details?.likelyDefenders !== null;
+    const likelyDefenders = hasLikelyDefenders ? numericDetail(plan, 'likelyDefenders') : Number.POSITIVE_INFINITY;
+    const damageThroughLikelyDefenders = numericDetail(plan, 'damageThroughLikelyDefenders');
+    const lethalWindow =
+      booleanDetail(plan, 'lethalWindow') ||
+      (likelyDefenders === 0 && damageToCritical > 0 && totalDamage >= damageToCritical && totalDamage > 0) ||
+      (damageThroughLikelyDefenders > 0 && damageToCritical > 0 && damageThroughLikelyDefenders >= damageToCritical);
+    const attackBeforeDeveloping = booleanDetail(plan, 'attackBeforeDeveloping');
+    const comboId = detail(plan, 'comboId');
+    const comboReady =
+      booleanDetail(plan, 'comboReady') ||
+      booleanDetail(plan, 'comboPayoffPlayable');
+    const usedCombo = afterPlan.some(log => {
+      const action = String(log.action || '');
+      const text = decisionText(log, ['comboId', 'reasons', 'notes']);
+      return action === 'COMBO_ALLIANCE_ATTACK' || (!!comboId && comboId !== 'none' && text.includes(comboId));
+    });
+    const firstSubstantive = afterPlan.find(log => isSubstantiveTurnAction(String(log.action || '')));
+
+    if (lethalWindow && ended && attackLogs.length === 0) {
+      addFinding(findings, result, 'MISSED_LETHAL', {
+        deck,
+        turn: plan.turn,
+        phase: plan.phase,
+        action: plan.action,
+        subject: plan.subject,
+        detail: `${deck} planned a closing window but ended without attacking: totalDamage=${totalDamage}, damageToCritical=${damageToCritical}, tactical=${detail(plan, 'tacticalLine') || plan.subject || ''}.`,
+      });
+    }
+
+    if (comboReady && ended && !usedCombo) {
+      addFinding(findings, result, 'MISSED_COMBO_WINDOW', {
+        deck,
+        turn: plan.turn,
+        phase: plan.phase,
+        action: plan.action,
+        subject: comboId || plan.subject,
+        detail: `${deck} had comboReady=${booleanDetail(plan, 'comboReady')} payoff=${booleanDetail(plan, 'comboPayoffPlayable')} combo=${comboId || 'none'} but did not take the combo line before ending the turn.`,
+      });
+    }
+
+    const regularAttackBeforeCombo = comboReady && !usedCombo && afterPlan.find(log => String(log.action || '') === 'ATTACK');
+    if (regularAttackBeforeCombo) {
+      addFinding(findings, result, 'BAD_ALLIANCE_CHOICE', {
+        deck,
+        turn: regularAttackBeforeCombo.turn,
+        phase: regularAttackBeforeCombo.phase,
+        action: regularAttackBeforeCombo.action,
+        subject: regularAttackBeforeCombo.subject,
+        detail: `${deck} made a regular attack while a known combo/alliance plan was ready: combo=${comboId || 'none'}, score=${scoreOf(regularAttackBeforeCombo) ?? 'n/a'}.`,
+      });
+    }
+
+    if (attackBeforeDeveloping && firstSubstantive) {
+      const action = String(firstSubstantive.action || '');
+      const firstText = decisionText(firstSubstantive, ['notes', 'effectId', 'type']);
+      const immediatePayoff = hasClearTacticalPayoff(firstText) && (scoreOf(firstSubstantive) ?? 0) >= 30;
+      if (['PLAY_CARD', 'ACTIVATE_EFFECT', 'PLAY_BATTLE_STORY'].includes(action) && !immediatePayoff) {
+        addFinding(findings, result, 'OVERCOMMIT_BOARD', {
+          deck,
+          turn: firstSubstantive.turn,
+          phase: firstSubstantive.phase,
+          action,
+          subject: firstSubstantive.subject,
+          detail: `${deck} plan asked to attack before developing, but first action was ${action} (${firstSubstantive.subject || ''}) with score=${scoreOf(firstSubstantive) ?? 'n/a'}.`,
+        });
+      }
+    }
+
+    if (attackBeforeDeveloping && ended && attackLogs.length === 0) {
+      addFinding(findings, result, 'MISSED_ATTACK_WINDOW', {
+        deck,
+        turn: plan.turn,
+        phase: plan.phase,
+        action: plan.action,
+        subject: plan.subject,
+        detail: `${deck} marked attackBeforeDeveloping but ended without an ATTACK or COMBO_ALLIANCE_ATTACK.`,
+      });
+    }
   }
 }
 
@@ -312,10 +518,86 @@ function analyzeDecisionLogs(findings: BehaviorFinding[], result: any) {
       });
     }
 
+    if (action === 'ATTACK') {
+      const likelyDefenders = numericDetail(log, 'likelyDefenders');
+      const lethalWindow = booleanDetail(log, 'lethalWindow');
+      const erosionPressureWindow = booleanDetail(log, 'erosionPressureWindow');
+      const reservedDefenders = numericDetail(log, 'reservedDefenders');
+      if (
+        likelyDefenders > 0 &&
+        !lethalWindow &&
+        !erosionPressureWindow &&
+        score !== undefined &&
+        score < 12
+      ) {
+        addFinding(findings, result, 'BAD_ATTACK_INTO_STRONG_DEFENDER', {
+          deck,
+          turn: log.turn,
+          phase: log.phase,
+          action,
+          subject: log.subject,
+          detail: `${deck} attacked into ${likelyDefenders} ready defender(s) without a closing window: score=${score.toFixed(1)}, reservedDefenders=${reservedDefenders}.`,
+        });
+      }
+      if (
+        likelyDefenders > 0 &&
+        !lethalWindow &&
+        score !== undefined &&
+        score < 24 &&
+        highValueName(`${log.subject || ''} ${candidateText(log)}`)
+      ) {
+        addFinding(findings, result, 'BAD_ATTACK_LOST_UNIT', {
+          deck,
+          turn: log.turn,
+          phase: log.phase,
+          action,
+          subject: log.subject,
+          detail: `${deck} risked a high-value attacker into ready defenders with a low score (${score.toFixed(1)}).`,
+        });
+      }
+    }
+
+    if (['ACTIVATE_EFFECT', 'PLAY_CONFRONTATION_STORY', 'PLAY_BATTLE_STORY'].includes(action)) {
+      const text = decisionText(log, ['notes', 'effectId', 'type', 'selected']);
+      const clearPayoff = hasClearTacticalPayoff(text);
+      const setupOnly = looksLikeSetupOnly(text);
+      const lowScore = score !== undefined && score < (log.phase === 'MAIN' ? 10 : 18);
+      if ((setupOnly && !clearPayoff && log.phase !== 'MAIN') || (lowScore && setupOnly && !clearPayoff)) {
+        addFinding(findings, result, 'EFFECT_WITH_NO_PAYOFF', {
+          deck,
+          turn: log.turn,
+          phase: log.phase,
+          action,
+          subject: log.subject,
+          detail: `${deck} used a setup/resource-looking action without a clear payoff: score=${score ?? 'n/a'}, text=${text.slice(0, 220)}.`,
+        });
+      }
+      if (looksLikeProtection(text) && score !== undefined && score < 35 && !/threat|destroy|damage|battle|combat|counter|chain|save/i.test(text)) {
+        addFinding(findings, result, 'WASTED_PROTECTION', {
+          deck,
+          turn: log.turn,
+          phase: log.phase,
+          action,
+          subject: log.subject,
+          detail: `${deck} used protection at a low score without an obvious threatened unit: score=${score.toFixed(1)}, text=${text.slice(0, 220)}.`,
+        });
+      }
+      if (looksLikeEquip(text) && score !== undefined && score < 20) {
+        addFinding(findings, result, 'BAD_EQUIP_TARGET', {
+          deck,
+          turn: log.turn,
+          phase: log.phase,
+          action,
+          subject: log.subject,
+          detail: `${deck} activated or chose an equip line at low value: score=${score.toFixed(1)}, text=${text.slice(0, 220)}.`,
+        });
+      }
+    }
+
     if (action === 'ACTIVATE_EFFECT') {
       const notes = `${detail(log, 'notes')} ${log.reason || ''}`;
       const hasClearPayoff = /lethal|close|closing|saves|beats|threat|combo|斩杀|保|威胁|magic spear reset/i.test(notes);
-      if (/prefers|timing .*-[0-9]/i.test(notes) && !(hasClearPayoff && score !== undefined && score >= 18)) {
+      if (hasTimingWarningText(notes) && !(hasClearPayoff && score !== undefined && score >= 18)) {
         addFinding(findings, result, 'BAD_EFFECT_TIMING', {
           deck,
           turn: log.turn,
@@ -446,6 +728,7 @@ function buildMarkdown(report: ReturnType<typeof buildBehaviorReport>) {
   lines.push('');
   lines.push('- Convert repeated warnings into focused scenarios in `script/test-hard-ai-scenarios.ts`.');
   lines.push('- Treat `STEP_LIMIT_*`, `QUERY_FAILED`, repeated `ACTIVATE_EFFECT_FAILED`, and low-score COUNTERING actions as first-priority fixes.');
+  lines.push('- Treat `BAD_ATTACK_*`, `EFFECT_WITH_NO_PAYOFF`, `MISSED_COMBO_WINDOW`, and `OVERCOMMIT_BOARD` as card-understanding gaps to feed back into deck hooks or effect timing knowledge.');
   lines.push('- Use `npm run ai:behavior-audit -- --no-run` to re-read the latest evaluation without running new games.');
 
   return lines.join('\n');
@@ -493,6 +776,7 @@ function main() {
   const findings: BehaviorFinding[] = [];
   for (const result of evalReport.results || []) {
     analyzeDiagnosis(findings, result);
+    analyzeTurnWindows(findings, result);
     analyzeDecisionLogs(findings, result);
     analyzeBattleLogText(findings, result);
   }

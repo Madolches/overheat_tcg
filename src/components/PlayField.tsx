@@ -4,8 +4,9 @@ import { Card, PlayerState, StackItem, GameState, GAME_TIMEOUTS } from '../types
 import { CardComponent } from './Card';
 import { StandardPopup } from './StandardPopup';
 import { KeywordBadges } from './KeywordBadges';
-import { ArrowDown, Shield, Sword, Zap, Trash2, Flag, BookOpen, Layers, AlertTriangle, Search, Play, X, LogOut } from 'lucide-react';
+import { ArrowDown, Shield, Sword, Zap, Trash2, Flag, BookOpen, Layers, AlertTriangle, Search, Play, X, LogOut, Coins } from 'lucide-react';
 import { cn, getCardImageUrl } from '../lib/utils';
+import { getPlayerWealthCount } from '../lib/wealth';
 
 interface PlayFieldProps {
   player: PlayerState;
@@ -220,10 +221,30 @@ const HandZoneSlot: React.FC<{
   </button>
 );
 
+const WealthCounter: React.FC<{
+  value: number;
+  isOpponent?: boolean;
+}> = ({ value, isOpponent }) => (
+  <div
+    className={cn(
+      "flex min-w-[48px] items-center justify-center gap-1 rounded-full border px-2 py-1 shadow-inner md:min-w-[58px] md:px-3",
+      value > 0
+        ? "border-amber-300/40 bg-amber-400/15 text-amber-200 shadow-amber-500/10"
+        : "border-white/5 bg-white/5 text-white/35",
+      isOpponent && "md:flex-row-reverse"
+    )}
+    title={isOpponent ? '对方财富指示物' : '我方财富指示物'}
+  >
+    <Coins className={cn("h-3.5 w-3.5 md:h-4 md:w-4", value > 0 ? "text-amber-300" : "text-white/35")} />
+    <span className="text-sm font-black italic tabular-nums md:text-base">{value}</span>
+  </div>
+);
+
 
 const PlayerHalf: React.FC<{
   player: PlayerState;
   isOpponent?: boolean;
+  wealthValue?: number;
   onCardClick?: (card: Card, zone: string, index?: number, e?: React.MouseEvent) => void;
   onPreviewCard?: (card: Card) => void;
   onHoverCard?: (card: Card | null) => void;
@@ -239,7 +260,7 @@ const PlayerHalf: React.FC<{
   setViewingZone?: (zone: { title: string, type: string, isOpponentZone?: boolean } | null) => void;
   highlightedCardIds?: Set<string>;
   isSpectator?: boolean;
-}> = ({ player, isOpponent, onCardClick, onPreviewCard, onHoverCard, onPlayCard, paymentSelection, pendingPlayCard, selectedAttackers, selectedDefender, game, allianceInitiator, cardBackUrl, viewingZone, setViewingZone, highlightedCardIds, isSpectator }) => {
+}> = ({ player, isOpponent, wealthValue = 0, onCardClick, onPreviewCard, onHoverCard, onPlayCard, paymentSelection, pendingPlayCard, selectedAttackers, selectedDefender, game, allianceInitiator, cardBackUrl, viewingZone, setViewingZone, highlightedCardIds, isSpectator }) => {
   if (!player) return null;
   const unitZoneOffsetClass = ""; // Removed horizontal offset to prevent blocking exile area
   const getMobileErosionCount = (playerState: PlayerState): number | string => {
@@ -291,7 +312,9 @@ const PlayerHalf: React.FC<{
               className="border-purple-900/30 scale-[0.8] md:scale-100" cardBackUrl={cardBackUrl}
               onClick={() => setViewingZone?.({ title: '放逐区', type: 'exile', isOpponentZone: !!isOpponent })}
               onHover={onHoverCard}
-              isFaceUp={true} isOpponent={isOpponent} displayMode="erosion_item"
+              isFaceUp={player.exile?.length > 0 ? player.exile[player.exile.length - 1]?.displayState !== 'FRONT_FACEDOWN' : true}
+              isOpponent={isOpponent}
+              displayMode="erosion_item"
             />
           </>
         ) : (
@@ -308,6 +331,9 @@ const PlayerHalf: React.FC<{
               isHighlighted={highlightedCardIds?.has((player.itemZone?.filter(Boolean).slice(-1)[0] as Card | undefined)?.gamecardId || '')}
               displayMode="erosion_item"
             />
+            <div className="pointer-events-none flex justify-center">
+              <WealthCounter value={wealthValue} />
+            </div>
             <CardSlot
               card={player.erosionFront?.filter(Boolean).slice(-1)[0] || player.erosionBack?.filter(Boolean).slice(-1)[0] || null}
               label="侵蚀区"
@@ -585,6 +611,9 @@ const PlayerHalf: React.FC<{
               isOpponent={isOpponent}
               displayMode="erosion_item"
             />
+            <div className={cn("pointer-events-none flex justify-center", isOpponent && "rotate-180")}>
+              <WealthCounter value={wealthValue} isOpponent={isOpponent} />
+            </div>
           </>
         ) : (
           // Player Right: Exile, Grave, Deck
@@ -595,7 +624,8 @@ const PlayerHalf: React.FC<{
               className="border-purple-900/30 scale-[0.8] md:scale-100" cardBackUrl={cardBackUrl}
               onClick={() => setViewingZone?.({ title: '放逐区', type: 'exile', isOpponentZone: !!isOpponent })}
               onHover={onHoverCard}
-              isFaceUp={true} displayMode="erosion_item"
+              isFaceUp={player.exile?.length > 0 ? player.exile[player.exile.length - 1]?.displayState !== 'FRONT_FACEDOWN' : true}
+              displayMode="erosion_item"
             />
             <CardSlot
               card={player.grave?.length > 0 ? player.grave[player.grave.length - 1] : null}
@@ -637,6 +667,9 @@ export const PlayField: React.FC<PlayFieldProps> = ({
 
   if (!player || !opponent || !game) return null;
   const isCurrentPlayer = !isSpectator && game.playerIds[game.currentTurnPlayer] === myUid;
+  const wealthContext = { turnCount: game.turnCount };
+  const playerWealth = getPlayerWealthCount(player, wealthContext);
+  const opponentWealth = getPlayerWealthCount(opponent, wealthContext);
   const phaseLabel =
     game.phase === 'COUNTERING' ? '对抗' :
       game.phase === 'MAIN' ? '主要' :
@@ -675,12 +708,13 @@ export const PlayField: React.FC<PlayFieldProps> = ({
         cardMeta={Object.fromEntries(
           viewingZoneCards.map(card => {
             const isFaceDown = viewingZone?.type === 'erosion' && viewingZoneErosionBackIds.includes(card.gamecardId);
+            const isHiddenExile = viewingZone?.type === 'exile' && card.displayState === 'FRONT_FACEDOWN';
             const isHiddenOpponentHand = !isSpectator && viewingZone?.type === 'hand' && viewingZone?.isOpponentZone && !viewingZoneOwner.isHandPublic;
             return [
               card.gamecardId || card.id,
               {
-                zoneLabel: isFaceDown ? '侵蚀区背面' : viewingZone?.title,
-                isFaceDown: isFaceDown || isHiddenOpponentHand
+                zoneLabel: isFaceDown ? '侵蚀区背面' : isHiddenExile ? '放逐区背面' : viewingZone?.title,
+                isFaceDown: isFaceDown || isHiddenExile || isHiddenOpponentHand
               }
             ];
           })
@@ -692,6 +726,8 @@ export const PlayField: React.FC<PlayFieldProps> = ({
               return;
             }
             const isHiddenErosionBack = viewingZone.type === 'erosion' && viewingZoneErosionBackIds.includes(card.gamecardId);
+            const isHiddenExile = viewingZone.type === 'exile' && card.displayState === 'FRONT_FACEDOWN';
+            if (isHiddenExile) return;
             const clickZone = viewingZone.type === 'erosion' ? (isHiddenErosionBack ? 'erosion_back' : 'erosion_front') : viewingZone.type;
             const index = viewingZoneCards.findIndex(c => c.gamecardId === card.gamecardId);
             onCardClick(card, clickZone, index, e);
@@ -731,6 +767,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
         <PlayerHalf
           player={opponent}
           isOpponent
+          wealthValue={opponentWealth}
           onCardClick={onCardClick}
           onPreviewCard={onPreviewCard}
           onHoverCard={setHoveredCard}
@@ -757,7 +794,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
         <div className="absolute inset-0 bg-gradient-to-r from-transparent via-[#f27d26]/10 to-transparent border-y border-white/5" />
 
         <div className="mx-auto flex w-fit max-w-[calc(100%-0.75rem)] flex-col items-center gap-1 rounded-2xl border border-white/10 bg-zinc-950/80 px-2 py-1 shadow-[0_20px_50px_rgba(0,0,0,0.5)] backdrop-blur-xl md:w-auto md:max-w-full md:flex-row md:gap-4 md:rounded-[2rem] md:px-4 md:py-2">
-          <div className="flex w-fit max-w-full items-center justify-center gap-2 md:w-auto md:gap-4">
+          <div className="flex w-fit max-w-full flex-wrap items-center justify-center gap-2 md:w-auto md:flex-nowrap md:gap-4">
             {/* Round & Surrender */}
             <div className="flex items-center gap-2 md:gap-4">
               <button
@@ -799,8 +836,6 @@ export const PlayField: React.FC<PlayFieldProps> = ({
                 </div>
               )}
             </div>
-
-            <div className="h-7 w-px bg-white/10 md:h-8" />
 
             {/* Phase transition */}
             <div
@@ -912,6 +947,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
       <div className="flex-1 min-h-0">
         <PlayerHalf
           player={player}
+          wealthValue={playerWealth}
           onCardClick={onCardClick}
           onPreviewCard={onPreviewCard}
           onHoverCard={setHoveredCard}

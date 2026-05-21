@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      allowedHosts: ['hsyoung.com', 'www.hsyoung.com'],
+      allowedHosts: ['hsyoung.com', 'www.hsyoung.com', 'frp-all.com'],
       proxy: {
         '/api': {
           target: 'http://localhost:3001',

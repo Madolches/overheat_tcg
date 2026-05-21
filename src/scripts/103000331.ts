@@ -1,4 +1,44 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { addPersistentExtraColor, createChoiceQuery, ensureData, markReturnToDeckBottomAtEnd } from './BaseUtil';
+
+const colorOptions = [
+  { id: 'WHITE', label: '白色' },
+  { id: 'RED', label: '红色' },
+  { id: 'BLUE', label: '蓝色' },
+  { id: 'GREEN', label: '绿色' },
+  { id: 'YELLOW', label: '黄色' }
+];
+
+const cardEffects: CardEffect[] = [{
+  id: '103000331_enter_color',
+  type: 'TRIGGER',
+  triggerEvent: 'CARD_ENTERED_ZONE',
+  triggerLocation: ['UNIT'],
+  description: '进入战场时，可以宣言1个颜色，这个单位也具备该颜色。若不是通过《极彩鸟》的效果放置，本回合结束时放置到持有者卡组底。',
+  condition: (_gameState, _playerState, instance, event) =>
+    event?.sourceCardId === instance.gamecardId && event.data?.zone === 'UNIT',
+  execute: async (instance, gameState, playerState) => {
+    createChoiceQuery(
+      gameState,
+      playerState.uid,
+      '宣言颜色',
+      '宣言1个颜色，这个单位也具备该颜色。',
+      colorOptions,
+      { sourceCardId: instance.gamecardId, effectId: '103000331_enter_color', step: 'COLOR' }
+    );
+  },
+  onQueryResolve: async (instance, gameState, playerState, selections) => {
+    const color = selections[0];
+    if (colorOptions.some(option => option.id === color)) {
+      addPersistentExtraColor(instance, color);
+      gameState.logs.push(`[${instance.fullName}] 也具备 ${color}。`);
+    }
+
+    if (!ensureData(instance).placedByIrodoriBirdTurn) {
+      markReturnToDeckBottomAtEnd(instance, instance, gameState, playerState.uid);
+    }
+  }
+}];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -11,7 +51,6 @@ import { Card } from '../types/game';
  * Keywords: N/A
  * Card Detail:
  * 【诱】{这个单位进入战场时，你可以宣言1个颜色}：这个单位也具备所宣言的颜色。若这个单位不是通过《极彩鸟》的效果放置到战场上，本回合结束时，讲这个单位放置到持有者卡组底。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '103000331',
@@ -34,7 +73,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'R',
   availableRarities: ['R'],
   cardPackage: 'BT06',

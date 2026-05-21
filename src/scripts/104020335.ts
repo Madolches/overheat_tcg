@@ -1,4 +1,5 @@
 import { Card } from '../types/game';
+import { wealthContinuous } from './BaseUtil';
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -11,7 +12,6 @@ import { Card } from '../types/game';
  * Keywords: N/A
  * Card Detail:
  * 【永】财富1（只要这个单位在战场上，你获得1个财富指示物）。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '104020335',
@@ -34,7 +34,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: [wealthContinuous('104020335_wealth_1', 1)],
   rarity: 'C',
   availableRarities: ['C'],
   cardPackage: 'BT06',

@@ -42,6 +42,7 @@ export type GameEventType =
   | 'GODDESS_EXIT'
   | 'EFFECT_COUNTERED'
   | 'CARD_SELECTED_TARGET'
+  | 'CARD_EQUIPPED'
   | 'CARD_EXILED'
   | 'CARD_LEFT_FIELD'
   | 'CARD_DISCARDED'
@@ -254,6 +255,7 @@ export interface CardEffect {
   triggerEvent?: GameEventType | GameEventType[];
   isMandatory?: boolean;
   isGlobal?: boolean; // If true, the effect triggers for any card meeting the criteria (e.g. any card entering), not just self.
+  sourceSnapshotOnLeftField?: boolean; // Allows a left-field trigger to be queued from the source snapshot before refreshed instance IDs are applied.
   triggerPriority?: number; // Higher priority triggers are queued first for the same event.
   condition?: (gameState: GameState, playerState: PlayerState, card: Card, event?: GameEvent) => boolean;
   cost?: (gameState: GameState, playerState: PlayerState, card: Card) => boolean | Promise<boolean>;
@@ -267,6 +269,7 @@ export interface CardEffect {
   targetSpec?: EffectTargetSpec;
   content?: string; // Description of the effect: Move, Draw, Add Power, etc.
   description: string; // Human readable text
+  wealthValue?: number;
   substitutionFilter?: CardFilter; // Filter for units this card can substitute/protect
   movementReplacementDestination?: TriggerLocation; // Destination if this card's movement is replaced
   erosionKeepReplacement?: boolean; // If true, allows keeping a card during erosion phase that would be moved to grave
@@ -323,6 +326,8 @@ export interface Card {
   temporaryAnnihilation?: boolean; // cleared at turn start
   temporaryHeroic?: boolean; // cleared at turn start
   temporaryCanAttackAny?: boolean; // cleared at turn start
+  temporaryExtraColors?: CardColor[]; // cleared at turn start
+  persistentExtraColors?: CardColor[]; // kept while this instance remains on field
   effects?: CardEffect[];
   influencingEffects?: { sourceCardName: string; description: string }[];
   inAllianceGroup?: boolean;
@@ -543,6 +548,7 @@ export interface GameState {
   };
   battleState?: {
     attackers: string[]; // gamecardIds
+    battleId?: string;
     defender?: string; // gamecardId
     unitTargetId?: string; // Explicit target for the attack (forces unit combat)
     defenseLockedToTargetId?: string; // If set, only this unit can be declared as defender for this battle

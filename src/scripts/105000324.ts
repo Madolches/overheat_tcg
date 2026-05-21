@@ -1,4 +1,31 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { addTempDamage, addTempPower, discardHandCost } from './BaseUtil';
+
+const addTemporaryColor = (card: Card, color: string) => {
+  card.temporaryExtraColors = Array.from(new Set([
+    ...(card.temporaryExtraColors || []),
+    color as any
+  ]));
+};
+
+const effect_105000324_boost_colors: CardEffect = {
+  id: '105000324_boost_colors',
+  type: 'ACTIVATE',
+  triggerLocation: ['UNIT'],
+  limitCount: 1,
+  description: '【启】1回合1次，舍弃1张手牌：本回合中，这个单位伤害+1、力量+500并也具备红色和蓝色。',
+  condition: (_gameState, playerState, instance) =>
+    instance.cardlocation === 'UNIT' &&
+    playerState.hand.some(card => card.gamecardId !== instance.gamecardId),
+  cost: discardHandCost(1),
+  execute: async (instance, gameState) => {
+    addTempDamage(instance, instance, 1);
+    addTempPower(instance, instance, 500);
+    addTemporaryColor(instance, 'RED');
+    addTemporaryColor(instance, 'BLUE');
+    gameState.logs.push(`[${instance.fullName}] 本回合也具备红色和蓝色。`);
+  }
+};
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -11,7 +38,6 @@ import { Card } from '../types/game';
  * Keywords: N/A
  * Card Detail:
  * 【启】〖1回合1次〗[舍弃1张手牌]：本回合中，这个单位〖+1〗〖+500〗并也具备红色和蓝色。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '105000324',
@@ -34,10 +60,10 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: [effect_105000324_boost_colors],
   rarity: 'R',
   availableRarities: ['R'],
-  cardPackage: 'BT06',
+  cardPackage: 'SP02',
   uniqueId: null as any,
 };
 

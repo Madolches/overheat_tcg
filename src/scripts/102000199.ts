@@ -57,7 +57,7 @@ const card: Card = {
   basePower: 500,
   damage: 0,
   baseDamage: 0,
-  godMark: true,
+  godMark: false,
   displayState: 'FRONT_UPRIGHT',
   isExhausted: false,
   isrush: false,

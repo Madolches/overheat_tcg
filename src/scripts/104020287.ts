@@ -1,14 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, canPutUnitOntoBattlefield, cardsInZones, discardHandCost, moveCard, nameContains, ownUnits, selectFromEntries } from './BaseUtil';
-
-const wealthCount = (units: Card[]) => units.reduce((total, unit) => {
-  const dataValue = Number((unit as any).data?.wealthValue || 0);
-  const textValue = Math.max(0, ...((unit.effects || [])
-    .map(effect => effect.description.match(/财富\s*(\d+)/)?.[1])
-    .filter(Boolean)
-    .map(Number)));
-  return total + dataValue + textValue;
-}, 0);
+import { AtomicEffectExecutor, canPutUnitOntoBattlefield, cardsInZones, discardHandCost, moveCard, nameContains, selectFromEntries, wealthCount } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
   id: '104020287_minotaur_recruit',
@@ -17,10 +8,10 @@ const cardEffects: CardEffect[] = [{
   limitCount: 1,
   cost: discardHandCost(2),
   description: '1回合1次：财富指示物2个以上，舍弃2张手牌，将卡组或侵蚀区1张卡名含有《牛头人》的非神蚀单位放置到战场。',
-  condition: (_gameState, playerState, instance) =>
+  condition: (gameState, playerState, instance) =>
     playerState.isTurn &&
     instance.cardlocation === 'UNIT' &&
-    wealthCount(ownUnits(playerState)) >= 2 &&
+    wealthCount(playerState, gameState) >= 2 &&
     canPutUnitOntoBattlefield(playerState, instance) &&
     cardsInZones(playerState, ['DECK', 'EROSION_FRONT'])
       .some(({ card }) => card.type === 'UNIT' && !card.godMark && nameContains(card, '牛头人') && canPutUnitOntoBattlefield(playerState, card)),
@@ -79,7 +70,7 @@ const card: Card = {
   effects: cardEffects,
   rarity: 'PR',
   availableRarities: ['PR'],
-  cardPackage: 'BT05',
+  cardPackage: 'PR',
   uniqueId: null as any,
 };
 

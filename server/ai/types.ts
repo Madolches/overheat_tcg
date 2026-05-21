@@ -147,6 +147,7 @@ export interface DeckAiTurnPlanSnapshot {
   opponentErosion: number;
   attackers: number;
   totalAvailableDamage: number;
+  damageThroughLikelyDefenders: number;
   likelyDefenders: number;
   opponentPotentialDamage: number;
   defendersNeededNextTurn: number;
