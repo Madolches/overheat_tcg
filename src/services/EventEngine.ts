@@ -716,6 +716,24 @@ export class EventEngine {
     };
     Object.values(gameState.players).forEach(applyEffects);
 
+    Object.values(gameState.players).forEach(player => {
+      player.hand.forEach(card => {
+        if (!card) return;
+        const costDetails = GameService.getEffectivePlayCostDetails(gameState, player, card);
+        if (!costDetails.description || costDetails.cost >= costDetails.baseCost) return;
+        if (!card.influencingEffects) card.influencingEffects = [];
+        if (!card.influencingEffects.some(effect =>
+          effect.sourceCardName === (costDetails.sourceCardName || card.fullName) &&
+          effect.description === costDetails.description
+        )) {
+          card.influencingEffects.push({
+            sourceCardName: costDetails.sourceCardName || card.fullName,
+            description: costDetails.description
+          });
+        }
+      });
+    });
+
     // 2.5 Apply post-processing locks that must override other stat changes.
     Object.values(gameState.players).forEach(player => {
       [...player.unitZone, ...player.itemZone, ...player.erosionFront].forEach(card => {

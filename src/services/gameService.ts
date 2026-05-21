@@ -80,39 +80,65 @@ const canUseStoryPaymentSubstitute = (paymentCard: Card | undefined, playingCard
   return false;
 };
 
-const getEffectivePlayCost = (gameState: GameState | null, player: PlayerState, card: Card) => {
+type EffectivePlayCostDetails = {
+  baseCost: number;
+  cost: number;
+  sourceCardName?: string;
+  description?: string;
+};
+
+const costReductionDescription = (baseCost: number, cost: number, reason?: string) => {
+  if (cost >= baseCost) return undefined;
+  const change = cost <= 0 ? 'ACCESS值变为0' : `ACCESS值-${baseCost - cost}`;
+  return reason ? `${reason}：${change}` : change;
+};
+
+const costDetails = (
+  baseCost: number,
+  cost: number,
+  sourceCardName: string | undefined,
+  reason?: string
+): EffectivePlayCostDetails => ({
+  baseCost,
+  cost,
+  sourceCardName,
+  description: costReductionDescription(baseCost, cost, reason)
+});
+
+const getEffectivePlayCostDetails = (gameState: GameState | null, player: PlayerState, card: Card): EffectivePlayCostDetails => {
   const baseCost = card.id === '202000080' ? 6 : (card.baseAcValue ?? card.acValue ?? 0);
   if (card.id === '101140062') {
     const unitCount = player.unitZone.filter(c => c !== null).length;
-    return Math.max(0, baseCost - unitCount);
+    return costDetails(baseCost, Math.max(0, baseCost - unitCount), card.fullName);
   }
   if (card.id === '202050034' && player.isGoddessMode) {
-    return 0;
+    return costDetails(baseCost, 0, card.fullName, '女神化');
   }
   if (card.id === '105000117') {
     const hasUnits = player.unitZone.some(cardInZone => cardInZone !== null);
     const hasFaceUpErosion = player.erosionFront.some(cardInZone => cardInZone !== null && cardInZone.displayState === 'FRONT_UPRIGHT');
-    if (!hasUnits && !hasFaceUpErosion) return 0;
+    if (!hasUnits && !hasFaceUpErosion) return costDetails(baseCost, 0, card.fullName, '没有单位且没有正面侵蚀');
   }
   if (card.id === '205110063') {
     const itemCount = player.itemZone.filter(c => c !== null).length;
-    return Math.max(0, baseCost - itemCount);
+    return costDetails(baseCost, Math.max(0, baseCost - itemCount), card.fullName);
   }
   if (card.id === '103090247') {
     const xenobuCount = player.unitZone.filter(unit => unit?.faction === '瑟诺布').length;
-    return Math.max(0, baseCost - xenobuCount);
+    return costDetails(baseCost, Math.max(0, baseCost - xenobuCount), card.fullName);
   }
   if (
     (card.id === '201000140' || card.id === '201000040' || card.fullName === '解放之光') &&
     player.exile.some(c => c.id === card.id || c.id === '201000140' || c.id === '201000040' || c.fullName === card.fullName)
   ) {
-    return 0;
+    return costDetails(baseCost, 0, '解放之光', '放逐区有《解放之光》');
   }
   if (card.id === '202000080' && player.unitZone.some(unit => unit?.isShenyi)) {
-    return Math.max(0, baseCost - 4);
+    const source = player.unitZone.find(unit => unit?.isShenyi);
+    return costDetails(baseCost, Math.max(0, baseCost - 4), source?.fullName || '神依单位');
   }
   if ((card as any).data?.spiritCostTarget103080185) {
-    return 0;
+    return costDetails(baseCost, 0, '天鬼图腾「暴龙」', '指定天鬼图腾「暴龙」');
   }
   if (
     card.type === 'UNIT' &&
@@ -120,9 +146,14 @@ const getEffectivePlayCost = (gameState: GameState | null, player: PlayerState, 
     (player as any).holyKingdomUnitDiscountUsedTurn !== gameState?.turnCount &&
     player.unitZone.some(unit => unit?.id === '101130153')
   ) {
-    return Math.max(0, baseCost - 1);
+    const source = player.unitZone.find(unit => unit?.id === '101130153');
+    return costDetails(baseCost, Math.max(0, baseCost - 1), source?.fullName || '祷告的群众', '每回合第1张<圣王国>单位');
   }
-  return baseCost;
+  return { baseCost, cost: baseCost };
+};
+
+const getEffectivePlayCost = (gameState: GameState | null, player: PlayerState, card: Card) => {
+  return getEffectivePlayCostDetails(gameState, player, card).cost;
 };
 
 const hasGlobalDisableAllActivated = (gameState: GameState | null, affectedPlayerUid?: string) => {
@@ -196,6 +227,10 @@ export const GameService = {
 
   getEffectivePlayCost(gameState: GameState | null, player: PlayerState, card: Card) {
     return getEffectivePlayCost(gameState, player, card);
+  },
+
+  getEffectivePlayCostDetails(gameState: GameState | null, player: PlayerState, card: Card) {
+    return getEffectivePlayCostDetails(gameState, player, card);
   },
 
   async advancePhase(gameId: string, action?: any) {

@@ -73,7 +73,8 @@ const effect_101000501_turn_end: CardEffect = {
     if (context?.effectId !== '101000501_turn_end' || selections.length === 0) return;
     await AtomicEffectExecutor.execute(gameState, context.targetUid, {
       type: 'BANISH_CARD',
-      targetFilter: { gamecardId: selections[0], type: 'UNIT' }
+      targetFilter: { gamecardId: selections[0], type: 'UNIT' },
+      faceDown: false
     }, instance);
   }
 };
@@ -101,7 +102,7 @@ const effect_101000501_battle_exile_return: CardEffect = {
       return;
     }
 
-    moveCard(gameState, playerState.uid, liveSelf, 'EXILE', liveSelf);
+    moveCard(gameState, playerState.uid, liveSelf, 'EXILE', liveSelf, { faceDown: false });
 
     const exiledSelf = playerState.exile.find(card => card?.gamecardId === liveSelf.gamecardId);
     if (exiledSelf) {

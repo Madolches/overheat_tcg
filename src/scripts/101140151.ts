@@ -10,7 +10,7 @@ const cardEffects: CardEffect[] = [{
   isMandatory: false,
   limitCount: 1,
   limitNameType: true,
-  description: '进入战场时，放逐战场上1张其他卡。下一个自己的结束阶段，那张卡横置回场。',
+  description: '进入战场时，放逐战场上1张其他卡。发动者的对方回合结束时，那张卡横置回场。',
   condition: (gameState, _playerState, instance, event?: GameEvent) =>
     event?.sourceCardId === instance.gamecardId &&
     event.data?.zone === 'UNIT' &&
@@ -24,16 +24,25 @@ const cardEffects: CardEffect[] = [{
     const ownerUid = ownerUidOf(gameState, target);
     if (!ownerUid) return;
     const originalZone = target.cardlocation;
-    moveCard(gameState, ownerUid, target, 'EXILE', instance);
+    const currentTurnPlayerUid = gameState.playerIds[gameState.currentTurnPlayer];
+    const returnTurn = gameState.turnCount + (currentTurnPlayerUid === playerState.uid ? 1 : 0);
+    moveCard(gameState, ownerUid, target, 'EXILE', instance, { faceDown: false });
     ensureData(target).escortReturn = {
       ownerUid,
       zone: originalZone,
-      returnOnOwnEndAfterTurn: gameState.turnCount,
-      sourceName: instance.fullName
+      returnOnOpponentEndTurn: returnTurn,
+      sourceName: instance.fullName,
+      sourceCardId: instance.gamecardId
     };
-    addInfluence(target, instance, '下一个自己的结束阶段横置回场');
+    addInfluence(target, instance, '发动者的对方回合结束时横置回场');
     const returns = ((playerState as any).escortReturns || []) as any[];
-    returns.push({ cardId: target.gamecardId, ownerUid, zone: originalZone, afterTurn: gameState.turnCount });
+    returns.push({
+      cardId: target.gamecardId,
+      ownerUid,
+      zone: originalZone,
+      sourceCardId: instance.gamecardId,
+      returnTurn
+    });
     (playerState as any).escortReturns = returns;
   }
 }, {
@@ -42,16 +51,20 @@ const cardEffects: CardEffect[] = [{
   triggerEvent: 'TURN_END' as any,
   triggerLocation: ['UNIT', 'GRAVE', 'EXILE', 'HAND', 'DECK'],
   isMandatory: true,
-  description: '下一个自己的结束阶段，将押送放逐的卡横置放回其持有者战场。',
-  condition: (gameState, playerState, _instance, event) =>
-    event?.playerUid === playerState.uid &&
-    ((playerState as any).escortReturns || []).some((entry: any) => gameState.turnCount >= entry.afterTurn),
+  description: '发动者的对方回合结束时，将押送放逐的卡横置放回其持有者战场。',
+  condition: (gameState, playerState, instance, event) =>
+    event?.playerUid !== playerState.uid &&
+    ((playerState as any).escortReturns || []).some((entry: any) =>
+      entry.sourceCardId === instance.gamecardId &&
+      gameState.turnCount >= (entry.returnTurn ?? Number.POSITIVE_INFINITY)
+    ),
   execute: async (instance, gameState, playerState) => {
     const returns = ((playerState as any).escortReturns || []) as any[];
     if (returns.length === 0) return;
     const remaining: any[] = [];
     for (const entry of returns) {
-      if (gameState.turnCount < entry.afterTurn) {
+      const returnTurn = entry.returnTurn ?? Number.POSITIVE_INFINITY;
+      if (entry.sourceCardId !== instance.gamecardId || gameState.turnCount < returnTurn) {
         remaining.push(entry);
         continue;
       }

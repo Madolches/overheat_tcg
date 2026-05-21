@@ -246,6 +246,69 @@ const WealthCounter: React.FC<{
   </div>
 );
 
+const withEffectiveCostInfluence = (gameState: GameState | undefined, player: PlayerState | undefined, card: Card) => {
+  if (!player) return { effectiveAcValue: card.acValue ?? 0, card };
+  const baseCost = card.id === '202000080' ? 6 : (card.baseAcValue ?? card.acValue ?? 0);
+  let effectiveAcValue = baseCost;
+  let sourceCardName = card.fullName;
+  let reason = '';
+
+  if (card.id === '101140062') {
+    const unitCount = player.unitZone.filter(Boolean).length;
+    effectiveAcValue = Math.max(0, baseCost - unitCount);
+  } else if (card.id === '202050034' && player.isGoddessMode) {
+    effectiveAcValue = 0;
+    reason = '女神化';
+  } else if (card.id === '105000117') {
+    const hasUnits = player.unitZone.some(Boolean);
+    const hasFaceUpErosion = player.erosionFront.some(erosionCard => !!erosionCard && erosionCard.displayState === 'FRONT_UPRIGHT');
+    if (!hasUnits && !hasFaceUpErosion) {
+      effectiveAcValue = 0;
+      reason = '没有单位且没有正面侵蚀';
+    }
+  } else if (card.id === '205110063') {
+    const itemCount = player.itemZone.filter(Boolean).length;
+    effectiveAcValue = Math.max(0, baseCost - itemCount);
+  } else if (card.id === '103090247') {
+    const xenobuCount = player.unitZone.filter(unit => unit?.faction === '瑟诺布').length;
+    effectiveAcValue = Math.max(0, baseCost - xenobuCount);
+  } else if (card.id === '202000080' && player.unitZone.some(unit => unit?.isShenyi)) {
+    const source = player.unitZone.find(unit => unit?.isShenyi);
+    effectiveAcValue = Math.max(0, baseCost - 4);
+    sourceCardName = source?.fullName || '神依单位';
+  } else if ((card as any).data?.spiritCostTarget103080185) {
+    effectiveAcValue = 0;
+    sourceCardName = '天鬼图腾「暴龙」';
+    reason = '指定天鬼图腾「暴龙」';
+  } else if (
+    (card.id === '201000140' || card.id === '201000040' || card.fullName === '解放之光') &&
+    player.exile.some(exiled => exiled.id === card.id || exiled.id === '201000140' || exiled.id === '201000040' || exiled.fullName === card.fullName)
+  ) {
+    effectiveAcValue = 0;
+    sourceCardName = '解放之光';
+    reason = '放逐区有《解放之光》';
+  } else if (
+    card.type === 'UNIT' &&
+    card.faction === '圣王国' &&
+    (player as any).holyKingdomUnitDiscountUsedTurn !== gameState?.turnCount &&
+    player.unitZone.some(unit => unit?.id === '101130153')
+  ) {
+    const source = player.unitZone.find(unit => unit?.id === '101130153');
+    effectiveAcValue = Math.max(0, baseCost - 1);
+    sourceCardName = source?.fullName || '祷告的群众';
+    reason = '每回合第1张<圣王国>单位';
+  }
+
+  if (effectiveAcValue >= baseCost) return { effectiveAcValue, card };
+
+  const change = effectiveAcValue <= 0 ? 'ACCESS值变为0' : `ACCESS值-${baseCost - effectiveAcValue}`;
+  const description = reason ? `${reason}：${change}` : change;
+  const influencingEffects = [...(card.influencingEffects || [])];
+  if (!influencingEffects.some(effect => effect.sourceCardName === sourceCardName && effect.description === description)) {
+    influencingEffects.push({ sourceCardName, description });
+  }
+  return { effectiveAcValue, card: { ...card, influencingEffects } };
+};
 
 const PlayerHalf: React.FC<{
   player: PlayerState;
@@ -268,6 +331,7 @@ const PlayerHalf: React.FC<{
   isSpectator?: boolean;
 }> = ({ player, isOpponent, wealthValue = 0, onCardClick, onPreviewCard, onHoverCard, onPlayCard, paymentSelection, pendingPlayCard, selectedAttackers, selectedDefender, game, allianceInitiator, cardBackUrl, viewingZone, setViewingZone, highlightedCardIds, isSpectator }) => {
   if (!player) return null;
+  const getCardCostDisplay = (card: Card) => withEffectiveCostInfluence(game, player, card);
   const unitZoneOffsetClass = ""; // Removed horizontal offset to prevent blocking exile area
   const getMobileErosionCount = (playerState: PlayerState): number | string => {
     const frontCount = playerState.erosionFront?.filter(Boolean).length || 0;
@@ -383,17 +447,20 @@ const PlayerHalf: React.FC<{
                     onClick={canViewHand ? openHandZone : undefined}
                   />
                 ) : isSpectator ? (
-                  player.hand?.map((card, i) => (
-                    <div
-                      key={card.gamecardId || i}
-                      className="w-10 md:w-[76.8px] shrink-0 cursor-pointer shadow-lg drop-shadow-md transition-all hover:-translate-y-1"
-                      onClick={(e) => onCardClick?.(card, 'hand', i, e)}
-                      onMouseEnter={() => onHoverCard?.(card)}
-                      onMouseLeave={() => onHoverCard?.(null)}
-                    >
-                      <CardComponent card={card} cardBackUrl={cardBackUrl} disableZoom displayMode="hand" />
-                    </div>
-                  ))
+                  player.hand?.map((card, i) => {
+                    const costDisplay = getCardCostDisplay(card);
+                    return (
+                      <div
+                        key={card.gamecardId || i}
+                        className="w-10 md:w-[76.8px] shrink-0 cursor-pointer shadow-lg drop-shadow-md transition-all hover:-translate-y-1"
+                        onClick={(e) => onCardClick?.(costDisplay.card, 'hand', i, e)}
+                        onMouseEnter={() => onHoverCard?.(costDisplay.card)}
+                        onMouseLeave={() => onHoverCard?.(null)}
+                      >
+                        <CardComponent card={costDisplay.card} cardBackUrl={cardBackUrl} disableZoom displayMode="hand" effectiveAcValue={costDisplay.effectiveAcValue} />
+                      </div>
+                    );
+                  })
                 ) : (
                   player.hand?.map((card, i) => (
                     <div
@@ -541,6 +608,7 @@ const PlayerHalf: React.FC<{
                 {shouldUseHandSlot ? (
                   <HandZoneSlot count={player.hand?.length || 0} onClick={openHandZone} />
                 ) : player.hand?.map((card, i) => {
+                  const costDisplay = getCardCostDisplay(card);
                   const total = player.hand.length;
                   const middle = (total - 1) / 2;
                   const offset = i - middle;
@@ -556,12 +624,13 @@ const PlayerHalf: React.FC<{
                         zIndex: isFeijingSelected ? 100 : i,
                         bottom: window.innerWidth < 768 ? '10px' : '0px'
                       }}
-                      onClick={(e) => onCardClick?.(card, 'hand', i, e)}
-                      onMouseEnter={() => onHoverCard?.(card)}
+                      onClick={(e) => onCardClick?.(costDisplay.card, 'hand', i, e)}
+                      onMouseEnter={() => onHoverCard?.(costDisplay.card)}
                       onMouseLeave={() => onHoverCard?.(null)}
                     >
                       <CardComponent
-                        card={card} disableZoom displayMode="hand" cardBackUrl={cardBackUrl}
+                        card={costDisplay.card} disableZoom displayMode="hand" cardBackUrl={cardBackUrl}
+                        effectiveAcValue={costDisplay.effectiveAcValue}
                         isHighlighted={highlightedCardIds?.has(card.gamecardId)}
                         className={cn("shadow-2xl transition-all duration-300", isFeijingSelected && "shadow-[#f27d26]/60 ring-2 ring-[#f27d26]")}
                       />
@@ -700,6 +769,9 @@ export const PlayField: React.FC<PlayFieldProps> = ({
   const viewingZoneErosionBackIds = viewingZone?.type === 'erosion'
     ? (viewingZoneOwner.erosionBack?.filter((c): c is Card => c !== null).map(card => card.gamecardId) || [])
     : [];
+  const viewingZoneDisplayCards = viewingZone?.type === 'hand'
+    ? viewingZoneCards.map(card => withEffectiveCostInfluence(game, viewingZoneOwner, card).card)
+    : viewingZoneCards;
   return (
     <div className="relative w-full h-full max-w-full lg:max-w-7xl mx-auto bg-[#0a0a0a] border-y md:border-2 border-[#1a1a1a] md:rounded-xl shadow-2xl font-sans text-white select-none flex flex-col">
       {/* Background Overlay */}
@@ -710,17 +782,19 @@ export const PlayField: React.FC<PlayFieldProps> = ({
         onClose={() => setViewingZone?.(null)}
         title={viewingZone?.title || ''}
         mode="card_display"
-        cards={viewingZoneCards}
+        cards={viewingZoneDisplayCards}
         cardMeta={Object.fromEntries(
-          viewingZoneCards.map(card => {
+          viewingZoneDisplayCards.map(card => {
             const isFaceDown = viewingZone?.type === 'erosion' && viewingZoneErosionBackIds.includes(card.gamecardId);
             const isHiddenExile = viewingZone?.type === 'exile' && card.displayState === 'FRONT_FACEDOWN';
             const isHiddenOpponentHand = !isSpectator && viewingZone?.type === 'hand' && viewingZone?.isOpponentZone && !viewingZoneOwner.isHandPublic;
+            const costDisplay = viewingZone?.type === 'hand' ? withEffectiveCostInfluence(game, viewingZoneOwner, card) : undefined;
             return [
               card.gamecardId || card.id,
               {
                 zoneLabel: isFaceDown ? '侵蚀区背面' : isHiddenExile ? '放逐区背面' : viewingZone?.title,
-                isFaceDown: isFaceDown || isHiddenExile || isHiddenOpponentHand
+                isFaceDown: isFaceDown || isHiddenExile || isHiddenOpponentHand,
+                effectiveAcValue: costDisplay?.effectiveAcValue
               }
             ];
           })

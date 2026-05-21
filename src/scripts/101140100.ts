@@ -1,5 +1,5 @@
 import { Card, CardEffect, TriggerLocation } from '../types/game';
-import { AtomicEffectExecutor, addInfluence, allCardsOnField, createSelectCardQuery, ensureData, exileByEffect, moveCard, ownUnits, ownerUidOf } from './BaseUtil';
+import { AtomicEffectExecutor, addInfluence, allCardsOnField, createSelectCardQuery, ensureData, moveCard, ownUnits, ownerUidOf } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
     id: '101140100_blink',
@@ -30,18 +30,21 @@ const cardEffects: CardEffect[] = [{
       const ownerUid = ownerUidOf(gameState, target);
       const zone = target.cardlocation as TriggerLocation;
       const id = target.gamecardId;
-      exileByEffect(gameState, target, instance);
+      moveCard(gameState, ownerUid, target, 'EXILE', instance, { faceDown: false });
       const exiled = AtomicEffectExecutor.findCardById(gameState, id);
       if (exiled) {
         ensureData(exiled).returnAtOwnEndSourceName = instance.fullName;
-        addInfluence(exiled, instance, '在回合结束时回归战场');
+        addInfluence(exiled, instance, '在下一个回合结束时回归战场');
       }
+      const currentTurnPlayerUid = gameState.playerIds[gameState.currentTurnPlayer];
+      const returnTurn = gameState.turnCount + (currentTurnPlayerUid === playerState.uid ? 2 : 1);
       const returns = (playerState as any).blinkReturns || [];
       returns.push({
         cardId: id,
         ownerUid,
         zone,
-        afterTurn: gameState.turnCount,
+        sourceCardId: instance.gamecardId,
+        afterTurn: returnTurn,
         sourceName: instance.fullName
       });
       (playerState as any).blinkReturns = returns;
@@ -53,14 +56,17 @@ const cardEffects: CardEffect[] = [{
     triggerLocation: ['UNIT', 'GRAVE', 'EXILE', 'HAND', 'DECK'],
     isMandatory: true,
     description: '下一次你的回合结束时，将此效果放逐的卡放回其持有者的战场。',
-    condition: (gameState, playerState, _instance, event) =>
+    condition: (gameState, playerState, instance, event) =>
       event?.playerUid === playerState.uid &&
-      ((playerState as any).blinkReturns || []).some((entry: any) => gameState.turnCount >= entry.afterTurn),
+      ((playerState as any).blinkReturns || []).some((entry: any) =>
+        entry.sourceCardId === instance.gamecardId &&
+        gameState.turnCount >= entry.afterTurn
+      ),
     execute: async (instance, gameState, playerState) => {
       const returns = ((playerState as any).blinkReturns || []) as any[];
       const remaining: any[] = [];
       returns.forEach(entry => {
-        if (gameState.turnCount < entry.afterTurn) {
+        if (entry.sourceCardId !== instance.gamecardId || gameState.turnCount < entry.afterTurn) {
           remaining.push(entry);
           return;
         }

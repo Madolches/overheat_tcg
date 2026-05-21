@@ -89,7 +89,7 @@ const cardEffects: CardEffect[] = [{
       const ownerUid = target ? AtomicEffectExecutor.findCardOwnerKey(gameState, target.gamecardId) : undefined;
       if (!target || !ownerUid) return;
       const exiledId = target.gamecardId;
-      moveCard(gameState, ownerUid, target, 'EXILE', instance);
+      moveCard(gameState, ownerUid, target, 'EXILE', instance, { faceDown: false });
       const exiled = AtomicEffectExecutor.findCardById(gameState, exiledId);
       if (exiled) {
         const data = ensureData(exiled);
@@ -115,7 +115,7 @@ const cardEffects: CardEffect[] = [{
       selections.forEach(id => {
         const cost = AtomicEffectExecutor.findCardById(gameState, id);
         const ownerUid = cost ? AtomicEffectExecutor.findCardOwnerKey(gameState, cost.gamecardId) : undefined;
-        if (cost && ownerUid) moveCard(gameState, ownerUid, cost, 'EXILE', instance);
+        if (cost && ownerUid) moveCard(gameState, ownerUid, cost, 'EXILE', instance, { faceDown: false });
       });
       const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
       createSelectCardQuery(gameState, playerState.uid, opponent.unitZone.filter((unit): unit is Card => !!unit), '选择放逐单位', '选择对手的1个单位放逐，回合结束时回到持有者战场。', 1, 1, {
@@ -129,7 +129,7 @@ const cardEffects: CardEffect[] = [{
     const ownerUid = target ? AtomicEffectExecutor.findCardOwnerKey(gameState, target.gamecardId) : undefined;
     if (!target || !ownerUid) return;
     const exiledId = target.gamecardId;
-    moveCard(gameState, ownerUid, target, 'EXILE', instance);
+    moveCard(gameState, ownerUid, target, 'EXILE', instance, { faceDown: false });
     const exiled = AtomicEffectExecutor.findCardById(gameState, exiledId);
     if (exiled) {
       const data = ensureData(exiled);

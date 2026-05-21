@@ -53,6 +53,7 @@ const card: Card = {
           const targetId = selections[0];
           const target = AtomicEffectExecutor.findCardById(gameState, targetId);
           if (!target) return;
+          if (!playerState.unitZone.some(unit => unit?.gamecardId === target.gamecardId)) return;
 
           const isFuhua = target.specialName === '风花';
           
@@ -109,6 +110,7 @@ const card: Card = {
         minSelections: 1,
         maxSelections: 1,
         zones: ['UNIT'],
+        controller: 'SELF',
         step: '1',
         getCandidates: (_gameState, playerState) => playerState.unitZone
           .filter((card): card is Card => !!card)

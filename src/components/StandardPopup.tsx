@@ -133,7 +133,7 @@ interface StandardPopupProps {
   
   // Card Selection & Display props
   cards?: Card[];
-  cardMeta?: Record<string, { ownerName?: string; slotLabel?: string; zoneLabel?: string; isMine?: boolean; isFaceDown?: boolean }>;
+  cardMeta?: Record<string, { ownerName?: string; slotLabel?: string; zoneLabel?: string; isMine?: boolean; isFaceDown?: boolean; effectiveAcValue?: number }>;
   options?: PopupOption[];
   selectedIds?: string[];
   highlightedIds?: string[];
@@ -589,7 +589,7 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
                           : cn("border-white/5 opacity-80 hover:opacity-100", "cursor-pointer")
                       )}
                     >
-                      <CardComponent card={card} isBack={isFaceDown} disableZoom={true} cardBackUrl={cardBackUrl} />
+                      <CardComponent card={card} isBack={isFaceDown} disableZoom={true} cardBackUrl={cardBackUrl} effectiveAcValue={meta.effectiveAcValue} />
                       {locationText && (
                         <div className="absolute left-2 top-2 max-w-[calc(100%-1rem)] rounded-lg bg-black/80 px-2 py-1 text-[10px] font-black leading-tight text-white shadow-lg ring-1 ring-white/10">
                           {locationText}

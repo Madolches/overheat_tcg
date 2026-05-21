@@ -1635,6 +1635,8 @@ export const ServerGameService = {
     card.cardlocation = targetZone;
     if (options?.faceDown !== undefined) {
       card.displayState = options.faceDown ? 'FRONT_FACEDOWN' : 'FRONT_UPRIGHT';
+    } else if (targetZone === 'EXILE') {
+      card.displayState = 'FRONT_UPRIGHT';
     }
     if (targetZone === 'GRAVE') {
       card.displayState = 'FRONT_UPRIGHT';
@@ -2744,7 +2746,8 @@ export const ServerGameService = {
               replaceToExile ? {
                 isEffect: true,
                 effectSourcePlayerUid: stackItem.ownerUid,
-                effectSourceCardId: card.gamecardId
+                effectSourceCardId: card.gamecardId,
+                faceDown: false
               } : undefined
             );
           }
@@ -2796,7 +2799,8 @@ export const ServerGameService = {
                 replaceToExile ? {
                   isEffect: true,
                   effectSourcePlayerUid: stackItem.ownerUid,
-                  effectSourceCardId: card.gamecardId
+                  effectSourceCardId: card.gamecardId,
+                  faceDown: false
                 } : undefined
               );
             }

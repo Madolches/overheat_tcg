@@ -192,7 +192,7 @@ const MulliganRevealOverlay: React.FC<{
                     <CardComponent isBack cardBackUrl={cardBackUrl} disableZoom />
                   </motion.div>
                   <div className="relative z-10">
-                    <CardComponent card={card} cardBackUrl={cardBackUrl} displayMode="hand" disableZoom effectiveAcValue={getEffectiveCardCost(card)} />
+                    <CardComponent card={card} cardBackUrl={cardBackUrl} displayMode="hand" disableZoom />
                   </div>
                   <div className="mt-2 line-clamp-1 text-[10px] font-black text-white/70 transition-colors group-hover:text-white">
                     {card.fullName}
@@ -322,10 +322,6 @@ export const BattleField: React.FC = () => {
 
   const getPreviewFullImage = (card: Card) =>
     card.fullImageUrl || getCardImageUrl(card.id, card.rarity, false, card.availableRarities);
-  const previewEffectiveColors = previewCard ? getEffectiveCardColors(previewCard) : [];
-
-
-
   const isSpectator = seat === 'spectator' || (!!game && !!myUid && !game.players[myUid.toString()] && (game.spectatorIds || []).map(String).includes(myUid.toString()));
   const spectatorAnchorUid = useMemo(() => game?.playerIds?.[0]?.toString(), [game?.playerIds]);
   const effectiveMyUid = isSpectator ? spectatorAnchorUid : myUid;
@@ -921,42 +917,81 @@ export const BattleField: React.FC = () => {
   const getPaymentExcludedExhaustIds = () =>
     (game.pendingQuery?.context?.paymentOptions?.excludeExhaustUnitIds || []) as string[];
 
-  const getEffectiveCardCost = (card: Card, player: PlayerState | null = me) => {
+  const getEffectiveCardCostDetails = (card: Card, player: PlayerState | null = me) => {
+    if (!player) {
+      return { effectiveAcValue: card.acValue ?? 0, card };
+    }
     const baseCost = card.id === '202000080' ? 6 : (card.baseAcValue ?? card.acValue ?? 0);
-    if (card.id === '101140062' && player) {
+    let effectiveAcValue = baseCost;
+    let sourceCardName = card.fullName;
+    let reason = '';
+
+    if (card.id === '101140062') {
       const unitCount = player.unitZone.filter(Boolean).length;
-      return Math.max(0, baseCost - unitCount);
-    }
-    if (card.id === '202050034' && player?.isGoddessMode) {
-      return 0;
-    }
-    if (card.id === '105000117' && player) {
+      effectiveAcValue = Math.max(0, baseCost - unitCount);
+    } else if (card.id === '202050034' && player.isGoddessMode) {
+      effectiveAcValue = 0;
+      reason = '女神化';
+    } else if (card.id === '105000117') {
       const hasUnits = player.unitZone.some(Boolean);
       const hasFaceUpErosion = player.erosionFront.some(erosionCard => !!erosionCard && erosionCard.displayState === 'FRONT_UPRIGHT');
-      if (!hasUnits && !hasFaceUpErosion) return 0;
-    }
-    if (card.id === '205110063' && player) {
+      if (!hasUnits && !hasFaceUpErosion) {
+        effectiveAcValue = 0;
+        reason = '没有单位且没有正面侵蚀';
+      }
+    } else if (card.id === '205110063') {
       const itemCount = player.itemZone.filter(Boolean).length;
-      return Math.max(0, baseCost - itemCount);
-    }
-    if (card.id === '103090247' && player) {
+      effectiveAcValue = Math.max(0, baseCost - itemCount);
+    } else if (card.id === '103090247') {
       const xenobuCount = player.unitZone.filter(unit => unit?.faction === '瑟诺布').length;
-      return Math.max(0, baseCost - xenobuCount);
-    }
-    if (card.id === '202000080' && player?.unitZone.some(unit => unit?.isShenyi)) {
-      return Math.max(0, baseCost - 4);
-    }
-    if ((card as any).data?.spiritCostTarget103080185) {
-      return 0;
-    }
-    if (
+      effectiveAcValue = Math.max(0, baseCost - xenobuCount);
+    } else if (card.id === '202000080' && player.unitZone.some(unit => unit?.isShenyi)) {
+      const source = player.unitZone.find(unit => unit?.isShenyi);
+      effectiveAcValue = Math.max(0, baseCost - 4);
+      sourceCardName = source?.fullName || '神依单位';
+    } else if ((card as any).data?.spiritCostTarget103080185) {
+      effectiveAcValue = 0;
+      sourceCardName = '天鬼图腾「暴龙」';
+      reason = '指定天鬼图腾「暴龙」';
+    } else if (
       (card.id === '201000140' || card.id === '201000040' || card.fullName === '解放之光') &&
-      player?.exile.some(exiled => exiled.id === card.id || exiled.id === '201000140' || exiled.id === '201000040' || exiled.fullName === card.fullName)
+      player.exile.some(exiled => exiled.id === card.id || exiled.id === '201000140' || exiled.id === '201000040' || exiled.fullName === card.fullName)
     ) {
-      return 0;
+      effectiveAcValue = 0;
+      sourceCardName = '解放之光';
+      reason = '放逐区有《解放之光》';
+    } else if (
+      card.type === 'UNIT' &&
+      card.faction === '圣王国' &&
+      (player as any).holyKingdomUnitDiscountUsedTurn !== game?.turnCount &&
+      player.unitZone.some(unit => unit?.id === '101130153')
+    ) {
+      const source = player.unitZone.find(unit => unit?.id === '101130153');
+      effectiveAcValue = Math.max(0, baseCost - 1);
+      sourceCardName = source?.fullName || '祷告的群众';
+      reason = '每回合第1张<圣王国>单位';
     }
-    return baseCost;
+
+    if (effectiveAcValue >= baseCost) {
+      return { effectiveAcValue, card };
+    }
+
+    const change = effectiveAcValue <= 0 ? 'ACCESS值变为0' : `ACCESS值-${baseCost - effectiveAcValue}`;
+    const description = reason ? `${reason}：${change}` : change;
+    const influencingEffects = [...(card.influencingEffects || [])];
+    if (!influencingEffects.some(effect => effect.sourceCardName === sourceCardName && effect.description === description)) {
+      influencingEffects.push({ sourceCardName, description });
+    }
+    return { effectiveAcValue, card: { ...card, influencingEffects } };
   };
+
+  const getEffectiveCardCost = (card: Card, player: PlayerState | null = me) => {
+    return getEffectiveCardCostDetails(card, player).effectiveAcValue;
+  };
+
+  const previewCostDisplay = previewCard?.cardlocation === 'HAND' ? getEffectiveCardCostDetails(previewCard) : undefined;
+  const displayedPreviewCard = previewCostDisplay?.card || previewCard;
+  const previewEffectiveColors = displayedPreviewCard ? getEffectiveCardColors(displayedPreviewCard) : [];
 
   const pendingQuery = game?.pendingQuery;
   const normalizedPendingQueryType = pendingQuery?.type?.replace(/-/g, '_').toUpperCase();
@@ -1972,37 +2007,37 @@ export const BattleField: React.FC = () => {
               <div className="flex max-h-[90vh] w-full max-w-4xl flex-col gap-5 overflow-y-auto rounded-3xl border border-white/10 bg-zinc-950 p-4 shadow-2xl md:grid md:grid-cols-[320px_1fr] md:p-6" onClick={e => e.stopPropagation()}>
                 <img
                   src={getPreviewFullImage(previewCard)}
-                  alt={previewCard.fullName}
+                  alt={displayedPreviewCard.fullName}
                   className="aspect-[3/4] w-full rounded-2xl bg-black/40 object-contain"
                   draggable={false}
                   referrerPolicy="no-referrer"
                 />
                 <div className="flex min-h-0 flex-col gap-4 text-white">
                   <div>
-                    <div className="text-[10px] font-black tracking-[0.2em] text-[#f27d26]">{previewCard.id}</div>
-                    <div className="mt-1 text-2xl font-black italic tracking-tight">{previewCard.fullName}</div>
+                    <div className="text-[10px] font-black tracking-[0.2em] text-[#f27d26]">{displayedPreviewCard.id}</div>
+                    <div className="mt-1 text-2xl font-black italic tracking-tight">{displayedPreviewCard.fullName}</div>
                     <div className="mt-2 text-[10px] font-bold tracking-widest text-white/45">
-                      {getCardTypeLabel(previewCard.type)} / {getCardColorLabel(previewCard.color)}
+                      {getCardTypeLabel(displayedPreviewCard.type)} / {getCardColorLabel(displayedPreviewCard.color)}
                     </div>
                   </div>
                   <div className="grid grid-cols-3 gap-2">
                     <div className="rounded-2xl border border-white/5 bg-white/5 p-3 text-center">
                       <div className="text-[9px] font-black text-white/40">AC</div>
-                      <div className="text-xl font-black">{previewCard.acValue ?? '-'}</div>
+                      <div className="text-xl font-black">{displayedPreviewCard.acValue ?? '-'}</div>
                     </div>
                     <div className="rounded-2xl border border-white/5 bg-white/5 p-3 text-center">
                       <div className="text-[9px] font-black text-white/40">力量</div>
-                      <div className="text-xl font-black">{previewCard.type === 'UNIT' ? previewCard.power : '-'}</div>
+                      <div className="text-xl font-black">{displayedPreviewCard.type === 'UNIT' ? displayedPreviewCard.power : '-'}</div>
                     </div>
                     <div className="rounded-2xl border border-white/5 bg-white/5 p-3 text-center">
                       <div className="text-[9px] font-black text-white/40">伤害</div>
-                      <div className="text-xl font-black">{previewCard.type === 'UNIT' ? previewCard.damage : '-'}</div>
+                      <div className="text-xl font-black">{displayedPreviewCard.type === 'UNIT' ? displayedPreviewCard.damage : '-'}</div>
                     </div>
                   </div>
                   <KeywordBadges card={previewCard} variant="detail" />
-                  {previewCard.description && (
+                  {displayedPreviewCard.description && (
                     <div className="rounded-2xl border border-white/5 bg-white/5 p-4 text-sm leading-relaxed text-white/75">
-                      {previewCard.description}
+                      {displayedPreviewCard.description}
                     </div>
                   )}
                 </div>
@@ -2047,7 +2082,7 @@ export const BattleField: React.FC = () => {
             >
               <img
                 src={getPreviewFullImage(previewCard)}
-                alt={previewCard.fullName}
+                alt={displayedPreviewCard.fullName}
                 className="max-h-[92vh] max-w-[92vw] rounded-2xl bg-black/40 object-contain shadow-2xl"
                 draggable={false}
                 referrerPolicy="no-referrer"
@@ -3887,12 +3922,12 @@ export const BattleField: React.FC = () => {
               {/* Left: Card Name & Image */}
               <div className="w-full md:w-2/5 p-4 md:p-8 flex flex-col items-center">
                 <h2 className="text-2xl md:text-5xl font-black italic text-white uppercase tracking-tighter mb-4 text-center md:hidden">
-                  {previewCard.fullName}
+                  {displayedPreviewCard.fullName}
                 </h2>
                 <div className="relative aspect-[3/4] w-full max-w-[240px] md:max-w-none rounded-2xl overflow-hidden shadow-2xl ring-2 ring-[#f27d26]/30 bg-black/40">
                   <img
-                    src={previewCard.fullImageUrl || getCardImageUrl(previewCard.id, previewCard.rarity, false, previewCard.availableRarities)}
-                    alt={previewCard.fullName}
+                    src={displayedPreviewCard.fullImageUrl || getCardImageUrl(displayedPreviewCard.id, displayedPreviewCard.rarity, false, displayedPreviewCard.availableRarities)}
+                    alt={displayedPreviewCard.fullName}
                     className="w-full h-full object-contain"
                     referrerPolicy="no-referrer"
                   />
@@ -3904,12 +3939,12 @@ export const BattleField: React.FC = () => {
                 <div className="hidden md:flex justify-between items-start mb-6">
                   <div className="space-y-1">
                     <div className="flex items-center gap-3">
-                      <span className="text-[10px] font-black text-[#f27d26] uppercase tracking-[0.2em]">{previewCard.id}</span>
+                      <span className="text-[10px] font-black text-[#f27d26] uppercase tracking-[0.2em]">{displayedPreviewCard.id}</span>
                       <div className="h-px w-12 bg-[#f27d26]/30" />
-                      <span className="text-[10px] font-black text-white/40 tracking-[0.2em]">{getCardTypeLabel(previewCard.type)}</span>
+                      <span className="text-[10px] font-black text-white/40 tracking-[0.2em]">{getCardTypeLabel(displayedPreviewCard.type)}</span>
                     </div>
                     <h2 className="text-5xl font-black italic text-white uppercase tracking-tighter leading-none">
-                      {previewCard.fullName}
+                      {displayedPreviewCard.fullName}
                     </h2>
                   </div>
                 </div>
@@ -3926,13 +3961,13 @@ export const BattleField: React.FC = () => {
                       {/* Type Box */}
                       <div className="bg-zinc-900/80 border border-white/5 rounded-2xl p-4 md:p-5 flex items-center justify-between">
                         <span className="text-[9px] md:text-[10px] font-black text-zinc-500 uppercase tracking-widest">类型</span>
-                        <span className="text-lg md:text-xl font-black italic text-orange-500">{getCardTypeLabel(previewCard.type)}</span>
+                        <span className="text-lg md:text-xl font-black italic text-orange-500">{getCardTypeLabel(displayedPreviewCard.type)}</span>
                       </div>
 
                       <div className="bg-zinc-900/80 border border-white/5 rounded-2xl p-4 md:p-5 flex items-center justify-between gap-4">
                         <span className="text-[9px] md:text-[10px] font-black text-zinc-500 uppercase tracking-widest">颜色</span>
                         <div className="flex flex-wrap justify-end gap-1.5">
-                          {(previewEffectiveColors.length > 0 ? previewEffectiveColors : [previewCard.color]).map(color => (
+                          {(previewEffectiveColors.length > 0 ? previewEffectiveColors : [displayedPreviewCard.color]).map(color => (
                             <span
                               key={color}
                               className="flex h-7 min-w-7 items-center justify-center rounded-lg border border-white/15 bg-white/10 px-2 text-sm font-black text-white shadow-lg"
@@ -3950,33 +3985,33 @@ export const BattleField: React.FC = () => {
                           <span className="text-[9px] md:text-[10px] font-black text-zinc-500 tracking-widest">ACESS值</span>
                         </div>
                         <span className="text-xl md:text-2xl font-black text-white">
-                          {previewCard.cardlocation === 'HAND' ? getEffectiveCardCost(previewCard) : previewCard.acValue}
+                          {displayedPreviewCard.cardlocation === 'HAND' ? getEffectiveCardCost(previewCard) : displayedPreviewCard.acValue}
                         </span>
                       </div>
 
                       {/* God Mark Box */}
                       <div className="bg-zinc-900/80 border border-white/5 rounded-2xl p-4 md:p-5 flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                          <Zap className={cn("w-4 h-4 md:w-5 md:h-5", previewCard.godMark ? "text-red-500" : "text-zinc-600")} />
+                          <Zap className={cn("w-4 h-4 md:w-5 md:h-5", displayedPreviewCard.godMark ? "text-red-500" : "text-zinc-600")} />
                           <span className="text-[9px] md:text-[10px] font-black text-zinc-500 uppercase tracking-widest">神蚀标记</span>
                         </div>
-                        <span className={cn("text-lg md:text-xl font-black italic uppercase", previewCard.godMark ? "text-red-500" : "text-zinc-600")}>
-                          {previewCard.godMark ? '已激活' : '未激活'}
+                        <span className={cn("text-lg md:text-xl font-black italic uppercase", displayedPreviewCard.godMark ? "text-red-500" : "text-zinc-600")}>
+                          {displayedPreviewCard.godMark ? '已激活' : '未激活'}
                         </span>
                       </div>
                     </div>
                   </div>
 
                   {/* Stats Grid (Only for Units) */}
-                  {previewCard.type === 'UNIT' && (
+                  {displayedPreviewCard.type === 'UNIT' && (
                     <div className="grid grid-cols-2 gap-2">
                       <div className="bg-zinc-800/40 border border-white/5 rounded-2xl p-4 flex flex-col items-center">
                         <span className="text-[9px] font-black text-zinc-500 uppercase mb-1">力量</span>
-                        <span className="text-2xl md:text-3xl font-black text-blue-400">{previewCard.power}</span>
+                        <span className="text-2xl md:text-3xl font-black text-blue-400">{displayedPreviewCard.power}</span>
                       </div>
                       <div className="bg-zinc-800/40 border border-white/5 rounded-2xl p-4 flex flex-col items-center">
                         <span className="text-[9px] font-black text-zinc-500 uppercase mb-1">伤害</span>
-                        <span className="text-2xl md:text-3xl font-black text-red-500">{previewCard.damage}</span>
+                        <span className="text-2xl md:text-3xl font-black text-red-500">{displayedPreviewCard.damage}</span>
                       </div>
                     </div>
                   )}
@@ -3990,14 +4025,14 @@ export const BattleField: React.FC = () => {
                   </div>
 
                   {/* Influencing Effects Section (Renamed and Promoted) */}
-                  {previewCard.influencingEffects && previewCard.influencingEffects.length > 0 ? (
+                  {displayedPreviewCard.influencingEffects && displayedPreviewCard.influencingEffects.length > 0 ? (
                     <div className="space-y-4 pt-4">
                       <h3 className="text-[11px] font-black text-blue-400 uppercase tracking-[0.3em] flex items-center gap-3">
-                        作用于 {previewCard.fullName} 的效果
+                        作用于 {displayedPreviewCard.fullName} 的效果
                         <div className="h-px flex-1 bg-gradient-to-r from-blue-400/20 to-transparent" />
                       </h3>
                       <div className="grid gap-3">
-                        {previewCard.influencingEffects.map((item, i) => (
+                        {displayedPreviewCard.influencingEffects.map((item, i) => (
                           <div key={i} className="bg-blue-500/5 rounded-2xl p-4 md:p-5 border border-blue-500/10 space-y-2 group hover:bg-blue-500/10 transition-all">
                             <div className="flex items-center justify-between">
                               <span className="text-[9px] md:text-[10px] font-black px-3 py-1 bg-blue-500/20 border border-blue-500/40 text-blue-300 rounded-full italic tracking-widest uppercase">
@@ -4018,10 +4053,10 @@ export const BattleField: React.FC = () => {
                   )}
 
                   {/* Footer: Description */}
-                  {previewCard.description && (
+                  {displayedPreviewCard.description && (
                     <div className="pt-8 border-t border-white/5 opacity-40">
                       <p className="text-[10px] md:text-[11px] font-medium leading-relaxed italic text-zinc-400">
-                        {previewCard.description}
+                        {displayedPreviewCard.description}
                       </p>
                     </div>
                   )}

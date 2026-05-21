@@ -1269,6 +1269,8 @@ export class AtomicEffectExecutor {
 
     if (options?.faceDown !== undefined) {
       card.displayState = options.faceDown ? 'FRONT_FACEDOWN' : 'FRONT_UPRIGHT';
+    } else if (toZone === 'EXILE') {
+      card.displayState = 'FRONT_UPRIGHT';
     } else if (toZone === 'EROSION_FRONT') {
       card.displayState = 'FRONT_UPRIGHT';
     } else if (toZone === 'EROSION_BACK') {

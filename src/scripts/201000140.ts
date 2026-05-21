@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { addInfluence, createSelectCardQuery, moveCardsToBottom, ownerOf, story } from './BaseUtil';
+import { createSelectCardQuery, moveCardsToBottom, ownerOf, story } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
   id: '201000140_exile_replacement',
@@ -17,7 +17,6 @@ const cardEffects: CardEffect[] = [{
     const owner = ownerOf(gameState, instance);
     if (!owner?.exile.some(card => card.id === instance.id || card.id === '201000040' || card.fullName === instance.fullName)) return;
     instance.acValue = 0;
-    addInfluence(instance, instance, 'ACCESS值变为0费');
   }
 }, story('201000140_release', '同名1回合1次：选择墓地8张卡放置到卡组底。若你的放逐区有《解放之光》，这张卡0费。', async (instance, gameState, playerState) => {
   if (playerState.grave.length < 8) return;
