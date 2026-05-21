@@ -192,7 +192,7 @@ const MulliganRevealOverlay: React.FC<{
                     <CardComponent isBack cardBackUrl={cardBackUrl} disableZoom />
                   </motion.div>
                   <div className="relative z-10">
-                    <CardComponent card={card} cardBackUrl={cardBackUrl} displayMode="hand" disableZoom />
+                    <CardComponent card={card} cardBackUrl={cardBackUrl} displayMode="hand" disableZoom effectiveAcValue={getEffectiveCardCost(card)} />
                   </div>
                   <div className="mt-2 line-clamp-1 text-[10px] font-black text-white/70 transition-colors group-hover:text-white">
                     {card.fullName}
@@ -3453,7 +3453,7 @@ export const BattleField: React.FC = () => {
                         )}
                       >
                         <div className="relative h-full w-full">
-                          <CardComponent card={card} disableZoom displayMode="hand" cardBackUrl={cardBackUrl} />
+                          <CardComponent card={card} disableZoom displayMode="hand" cardBackUrl={cardBackUrl} effectiveAcValue={getEffectiveCardCost(card)} />
                           <div className="absolute left-2 top-2 rounded-lg bg-black/75 px-2 py-1 text-[10px] font-black text-white shadow-lg">
                             {getOwnedCardLocationLabel(card)}
                           </div>
@@ -3949,7 +3949,9 @@ export const BattleField: React.FC = () => {
                           <Shield className="w-4 h-4 md:w-5 md:h-5 text-blue-500" />
                           <span className="text-[9px] md:text-[10px] font-black text-zinc-500 tracking-widest">ACESS值</span>
                         </div>
-                        <span className="text-xl md:text-2xl font-black text-white">{previewCard.acValue}</span>
+                        <span className="text-xl md:text-2xl font-black text-white">
+                          {previewCard.cardlocation === 'HAND' ? getEffectiveCardCost(previewCard) : previewCard.acValue}
+                        </span>
                       </div>
 
                       {/* God Mark Box */}

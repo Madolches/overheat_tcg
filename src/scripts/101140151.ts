@@ -1,5 +1,5 @@
 import { Card, CardEffect, GameEvent } from '../types/game';
-import { addInfluence, allCardsOnField, createSelectCardQuery, ensureData, getOpponentUid, moveCard, ownerUidOf } from './BaseUtil';
+import { addInfluence, allCardsOnField, createSelectCardQuery, ensureData, moveCard, ownerUidOf } from './BaseUtil';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 
 const cardEffects: CardEffect[] = [{
@@ -10,7 +10,7 @@ const cardEffects: CardEffect[] = [{
   isMandatory: false,
   limitCount: 1,
   limitNameType: true,
-  description: '进入战场时，放逐战场上1张其他卡，对手回合结束时横置回场。',
+  description: '进入战场时，放逐战场上1张其他卡。下一个自己的结束阶段，那张卡横置回场。',
   condition: (gameState, _playerState, instance, event?: GameEvent) =>
     event?.sourceCardId === instance.gamecardId &&
     event.data?.zone === 'UNIT' &&
@@ -28,10 +28,10 @@ const cardEffects: CardEffect[] = [{
     ensureData(target).escortReturn = {
       ownerUid,
       zone: originalZone,
-      returnOnOpponentEndAfterTurn: gameState.turnCount,
+      returnOnOwnEndAfterTurn: gameState.turnCount,
       sourceName: instance.fullName
     };
-    addInfluence(target, instance, '对手回合结束时横置回场');
+    addInfluence(target, instance, '下一个自己的结束阶段横置回场');
     const returns = ((playerState as any).escortReturns || []) as any[];
     returns.push({ cardId: target.gamecardId, ownerUid, zone: originalZone, afterTurn: gameState.turnCount });
     (playerState as any).escortReturns = returns;
@@ -42,9 +42,9 @@ const cardEffects: CardEffect[] = [{
   triggerEvent: 'TURN_END' as any,
   triggerLocation: ['UNIT', 'GRAVE', 'EXILE', 'HAND', 'DECK'],
   isMandatory: true,
-  description: '对手回合结束时，将押送放逐的卡横置放回其持有者战场。',
+  description: '下一个自己的结束阶段，将押送放逐的卡横置放回其持有者战场。',
   condition: (gameState, playerState, _instance, event) =>
-    event?.playerUid === getOpponentUid(gameState, playerState.uid) &&
+    event?.playerUid === playerState.uid &&
     ((playerState as any).escortReturns || []).some((entry: any) => gameState.turnCount >= entry.afterTurn),
   execute: async (instance, gameState, playerState) => {
     const returns = ((playerState as any).escortReturns || []) as any[];

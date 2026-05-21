@@ -1,5 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import { addInfluence } from './BaseUtil';
 
 const effect_105000117_continuous: CardEffect = {
   id: '105000117_continuous',
@@ -18,11 +19,7 @@ const effect_105000117_continuous: CardEffect = {
     if (hasUnits || hasFaceUpErosion) return;
 
     instance.acValue = 0;
-    instance.influencingEffects = instance.influencingEffects || [];
-    instance.influencingEffects.push({
-      sourceCardName: instance.fullName,
-      description: '没有单位且没有正面侵蚀：AC变为0'
-    });
+    addInfluence(instance, instance, '没有单位且没有正面侵蚀：ACCESS值变为0');
   }
 };
 
@@ -49,6 +46,7 @@ const card: Card = {
   colorReq: {},
   faction: '无',
   acValue: 2,
+  baseAcValue: 2,
   power: 2000,
   basePower: 2000,
   damage: 1,

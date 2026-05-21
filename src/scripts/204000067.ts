@@ -47,9 +47,9 @@ const card: Card = {
         };
       },
       onQueryResolve: async (card, gameState, playerState, selections, context) => {
-        const step = context?.step || 1;
+        const step = String(context?.step ?? '1');
 
-        if (step === 1) {
+        if (step === '1') {
           const targetId = selections[0];
           const target = AtomicEffectExecutor.findCardById(gameState, targetId);
           if (!target) return;
@@ -86,7 +86,7 @@ const card: Card = {
               }
             }
           }
-        } else if (step === 2) {
+        } else if (step === '2') {
           const targetId = selections[0];
           
           await AtomicEffectExecutor.execute(gameState, playerState.uid, {

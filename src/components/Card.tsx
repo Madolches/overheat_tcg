@@ -21,6 +21,7 @@ interface CardProps {
   cardBackUrl?: string;
   isHighlighted?: boolean;
   hideKeywords?: boolean;
+  effectiveAcValue?: number;
 }
 
 const getRarityClass = (rarity: Rarity) => {
@@ -63,7 +64,8 @@ const CardComponentImpl: React.FC<CardProps> = ({
   displayMode,
   cardBackUrl,
   isHighlighted,
-  hideKeywords = false
+  hideKeywords = false,
+  effectiveAcValue
 }) => {
   if (isBack || !card) {
     const backExhausted = !!isExhausted;
@@ -91,7 +93,8 @@ const CardComponentImpl: React.FC<CardProps> = ({
     );
   }
 
-  const isNegativeCost = card.acValue < 0;
+  const displayedAcValue = effectiveAcValue ?? card.acValue;
+  const isNegativeCost = displayedAcValue < 0;
   const fullImageUrl = card.fullImageUrl || getCardImageUrl(card.id, card.rarity, false, card.availableRarities);
   const imageUrl = card.imageUrl || fullImageUrl;
   const exhausted = isExhausted ?? !!card.isExhausted;
@@ -179,7 +182,7 @@ const CardComponentImpl: React.FC<CardProps> = ({
           >
             <span className="text-[4px] md:text-[6px] leading-none opacity-80 font-black">AC</span>
             <span className="text-[10px] md:text-xs leading-none mt-0 md:mt-0.5">
-              {isHand ? Math.abs(card.acValue) : card.acValue >= 0 ? `+${card.acValue}` : card.acValue}
+              {isHand ? Math.abs(displayedAcValue) : displayedAcValue >= 0 ? `+${displayedAcValue}` : displayedAcValue}
             </span>
           </div>
         </div>
