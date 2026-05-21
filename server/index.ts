@@ -58,6 +58,8 @@ const STARTER_COINS = 100000;
 const STARTER_CARD_CRYSTALS = 100000;
 const TIMER_BROADCAST_INTERVAL_MS = Number(process.env.TIMER_BROADCAST_INTERVAL_MS || 1000);
 const ACTIVE_GAME_SCAN_WINDOW_MS = Number(process.env.ACTIVE_GAME_SCAN_WINDOW_MS || 6 * 60 * 60 * 1000);
+const SLOW_GAME_ACTION_MS = Number(process.env.SLOW_GAME_ACTION_MS || 500);
+const SLOW_STATE_SYNC_MS = Number(process.env.SLOW_STATE_SYNC_MS || 250);
 const FORCE_LOGOUT_REASON = '账号已在其他设备登录';
 
 async function insertGame(gameId: string, gameState: any, status = 0) {
@@ -75,6 +77,31 @@ async function persistGameState(gameId: string, gameState: any, status?: number)
         return;
     }
     await pool.query('UPDATE games SET state = ?, status = ?, updated_at = ? WHERE id = ?', [JSON.stringify(gameState), status, now, gameId]);
+}
+
+function formatMb(bytes: number) {
+    return `${Math.round(bytes / 1024 / 1024)}MB`;
+}
+
+function getMemorySnapshot() {
+    const memory = process.memoryUsage();
+    return {
+        heapUsed: formatMb(memory.heapUsed),
+        heapTotal: formatMb(memory.heapTotal),
+        rss: formatMb(memory.rss)
+    };
+}
+
+function elapsedMs(start: bigint) {
+    return Number(process.hrtime.bigint() - start) / 1_000_000;
+}
+
+function canSkipFinalRecalcForAction(action: string) {
+    return action === 'CHAT_MESSAGE' ||
+        action === 'RPS_CHOICE' ||
+        action === 'CHOOSE_FIRST_PLAYER' ||
+        action === 'MULLIGAN' ||
+        action === 'SET_CONFRONTATION_STRATEGY';
 }
 
 function getDefaultTurnTime(gameState: any) {
@@ -882,8 +909,15 @@ async function saveMatchLog(gameState: any, gameId?: string): Promise<boolean> {
     return false;
 }
 
-async function syncAndSaveState(gameId: string, gameState: any) {
+type SyncStateOptions = {
+    recalc?: boolean;
+    source?: string;
+};
+
+async function syncAndSaveState(gameId: string, gameState: any, options: SyncStateOptions = {}) {
     if (!gameState) return;
+    const totalStart = process.hrtime.bigint();
+    const timings: Record<string, number> = {};
 
     // Ensure gameId is always set for client identification
     gameState.gameId = gameId;
@@ -891,8 +925,14 @@ async function syncAndSaveState(gameId: string, gameState: any) {
     // Ensure logs exist
     if (!gameState.logs) gameState.logs = [];
 
-    EventEngine.recalculateContinuousEffects(gameState);
+    if (options.recalc !== false) {
+        const recalcStart = process.hrtime.bigint();
+        EventEngine.recalculateContinuousEffects(gameState);
+        timings.recalcMs = elapsedMs(recalcStart);
+    }
+    const normalizeStart = process.hrtime.bigint();
     normalizeBattleLogs(gameState);
+    timings.normalizeLogsMs = elapsedMs(normalizeStart);
 
     // 1. Get or create history for this match
     let history = matchLogHistory.get(gameId) || [];
@@ -907,7 +947,9 @@ async function syncAndSaveState(gameId: string, gameState: any) {
     }
 
     // 3. Emit full state to clients (they need logs for display)
+    const emitStart = process.hrtime.bigint();
     io.to(gameId).emit('gameStateUpdate', gameState);
+    timings.emitMs = elapsedMs(emitStart);
 
     // 4. Prune logs in gameState to keep the DB 'state' blob small
     // satisfies "It should not be pushed to the backend (DB)"
@@ -934,7 +976,9 @@ async function syncAndSaveState(gameId: string, gameState: any) {
     }
 
     // 5. Persist the pruned state to MariaDB
+    const persistStart = process.hrtime.bigint();
     await persistGameState(gameId, gameState, gameState.gameStatus === 2 ? 2 : undefined);
+    timings.persistMs = elapsedMs(persistStart);
 
     // 6. If game ended, write full history to file
     if (gameState.gameStatus === 2) {
@@ -942,6 +986,18 @@ async function syncAndSaveState(gameId: string, gameState: any) {
         if (cleanedUp) {
             clearGameRuntime(gameId);
         }
+    }
+
+    const totalMs = elapsedMs(totalStart);
+    if (totalMs >= SLOW_STATE_SYNC_MS) {
+        console.warn('[Perf] slow state sync', {
+            gameId,
+            source: options.source || 'unknown',
+            phase: gameState.phase,
+            totalMs: Math.round(totalMs),
+            ...Object.fromEntries(Object.entries(timings).map(([key, value]) => [key, Math.round(value)])),
+            memory: getMemorySnapshot()
+        });
     }
 }
 
@@ -3591,15 +3647,26 @@ io.on('connection', (socket) => {
         if (!user) return;
 
         const { gameId, action, payload } = data;
+        const actionStart = process.hrtime.bigint();
+        const actionTimings: Record<string, number> = {};
+        let actionPhase = 'UNKNOWN';
         // console.log(`[Socket] received gameAction: ${action} for game ${gameId}`, payload);
 
         await withGameLock(gameId, async () => {
             try {
+                const loadStart = process.hrtime.bigint();
                 const rows = await pool.query('SELECT state FROM games WHERE id = ?', [gameId]);
                 if (rows.length === 0) return;
+                actionTimings.loadStateMs = elapsedMs(loadStart);
 
+                const parseStart = process.hrtime.bigint();
                 let gameState = typeof rows[0].state === 'string' ? JSON.parse(rows[0].state) : rows[0].state;
+                actionTimings.parseStateMs = elapsedMs(parseStart);
+
+                const hydrateStart = process.hrtime.bigint();
                 ServerGameService.hydrateGameState(gameState);
+                actionTimings.hydrateMs = elapsedMs(hydrateStart);
+                actionPhase = gameState.phase;
                 const myUid = user.userId.toString();
 
                 if (action === 'CHAT_MESSAGE') {
@@ -3623,7 +3690,7 @@ io.on('connection', (socket) => {
                         text: `[系统]${actorName}：${content}`,
                         metadata: { content }
                     });
-                    await syncAndSaveState(gameId, gameState);
+                    await syncAndSaveState(gameId, gameState, { recalc: false, source: action });
                     return;
                 }
 
@@ -3634,9 +3701,10 @@ io.on('connection', (socket) => {
                 }
 
                 const syncCallback = async (state: GameState) => {
-                    await syncAndSaveState(gameId, state);
+                    await syncAndSaveState(gameId, state, { source: `${action}:callback` });
                 };
 
+                const executeStart = process.hrtime.bigint();
                 if (action === 'RPS_CHOICE') {
                     submitRpsChoice(gameState, myUid, payload?.choice);
                 } else if (action === 'CHOOSE_FIRST_PLAYER') {
@@ -3694,7 +3762,11 @@ io.on('connection', (socket) => {
                             }
                         });
 
-                        await syncAndSaveState(gameId, gameState);
+                        actionTimings.executeActionMs = elapsedMs(executeStart);
+                        await syncAndSaveState(gameId, gameState, {
+                            recalc: !canSkipFinalRecalcForAction(action),
+                            source: action
+                        });
                         finishMulliganAfterReveal(gameId, startedAt);
                         return;
                     }
@@ -3747,7 +3819,11 @@ io.on('connection', (socket) => {
                         if (!gameState.pendingQuery) {
                             await ServerGameService.applyConfrontationStrategy(gameState, syncCallback);
                         }
-                        await syncAndSaveState(gameId, gameState);
+                        actionTimings.executeActionMs = elapsedMs(executeStart);
+                        await syncAndSaveState(gameId, gameState, {
+                            recalc: !canSkipFinalRecalcForAction(action),
+                            source: action
+                        });
                         if (gameState.gameStatus !== 2) {
                             triggerBotIfNeeded(gameState, gameId);
                         }
@@ -3756,7 +3832,9 @@ io.on('connection', (socket) => {
                 } else if (action === 'SURRENDER') {
                     await ServerGameService.surrender(gameState, myUid);
                 }
+                actionTimings.executeActionMs = elapsedMs(executeStart);
 
+                const postActionStart = process.hrtime.bigint();
                 if (!gameState.pendingQuery) {
                     await ServerGameService.applyConfrontationStrategy(gameState, syncCallback);
                 }
@@ -3768,15 +3846,33 @@ io.on('connection', (socket) => {
                         await ServerGameService.applyConfrontationStrategy(gameState, syncCallback);
                     }
                 }
+                actionTimings.postActionMs = elapsedMs(postActionStart);
 
                 // Final state sync and save
-                await syncAndSaveState(gameId, gameState);
+                const finalSyncStart = process.hrtime.bigint();
+                await syncAndSaveState(gameId, gameState, {
+                    recalc: !canSkipFinalRecalcForAction(action),
+                    source: action
+                });
+                actionTimings.finalSyncMs = elapsedMs(finalSyncStart);
                 if (gameState.gameStatus !== 2) {
                     triggerBotIfNeeded(gameState, gameId);
                 }
             } catch (err: any) {
                 console.error('[Socket] Game action error:', err);
                 socket.emit('error', { message: err.message || 'Unknown game error' });
+            } finally {
+                const totalMs = elapsedMs(actionStart);
+                if (totalMs >= SLOW_GAME_ACTION_MS) {
+                    console.warn('[Perf] slow game action', {
+                        gameId,
+                        action,
+                        phase: actionPhase,
+                        totalMs: Math.round(totalMs),
+                        ...Object.fromEntries(Object.entries(actionTimings).map(([key, value]) => [key, Math.round(value)])),
+                        memory: getMemorySnapshot()
+                    });
+                }
             }
         });
     });

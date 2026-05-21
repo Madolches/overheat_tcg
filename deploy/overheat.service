@@ -8,6 +8,7 @@ WorkingDirectory=/home/ubuntu/overheat_test
 Environment=NODE_ENV=production
 Environment=PORT=3001
 Environment=DB_CONNECTION_LIMIT=4
+Environment=NODE_OPTIONS=--max-old-space-size=1024
 Environment=PATH=/home/ubuntu/.nvm/versions/node/v25.8.1/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=/home/ubuntu/.nvm/versions/node/v25.8.1/bin/npm run start
 Restart=always
