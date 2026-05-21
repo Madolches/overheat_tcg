@@ -49,9 +49,28 @@ export const ServerGameService = {
     return (gameState as any).skipResolutionDelay === true || mode === 'ai-selfplay' || mode === 'ai-evaluation';
   },
 
+  getVisualDelayMs(envKey: string, fallbackMs: number) {
+    const raw = Number(process.env[envKey]);
+    return Number.isFinite(raw) && raw >= 0 ? raw : fallbackMs;
+  },
+
+  getTriggerVisualDelayMs() {
+    return ServerGameService.getVisualDelayMs('TRIGGER_VISUAL_DELAY_MS', 1500);
+  },
+
+  getStackVisualDelayMs() {
+    return ServerGameService.getVisualDelayMs('STACK_VISUAL_DELAY_MS', 1500);
+  },
+
+  getStackBetweenItemsDelayMs() {
+    return ServerGameService.getVisualDelayMs('STACK_BETWEEN_ITEMS_DELAY_MS', 1500);
+  },
+
   async waitForVisualDelay(gameState: GameState, ms: number) {
+    const delayMs = Math.max(0, Number(ms) || 0);
+    if (delayMs <= 0) return;
     if (ServerGameService.shouldSkipVisualDelay(gameState)) return;
-    await new Promise(resolve => setTimeout(resolve, ms));
+    await new Promise(resolve => setTimeout(resolve, delayMs));
   },
 
   clearAllianceAttackMarkers(gameState: GameState, attackerIds?: string[]) {
@@ -1248,10 +1267,11 @@ export const ServerGameService = {
       card: target,
       ownerUid: defenderPlayerId,
       effectIndex: 1,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      data: { isTriggeredEffect: true }
     };
     if (onUpdate) await onUpdate(gameState);
-    await ServerGameService.waitForVisualDelay(gameState, 1500);
+    await ServerGameService.waitForVisualDelay(gameState, ServerGameService.getTriggerVisualDelayMs());
     gameState.currentProcessingItem = null;
     if (onUpdate) await onUpdate(gameState);
     EventEngine.recalculateContinuousEffects(gameState);
@@ -2687,8 +2707,8 @@ export const ServerGameService = {
       gameState.currentProcessingItem = topItem;
       if (onUpdate) await onUpdate(gameState);
 
-      // Wait for the front-end to display the effect
-      await ServerGameService.waitForVisualDelay(gameState, 1500);
+      // Keep the visual highlight readable after it has been broadcast to clients.
+      await ServerGameService.waitForVisualDelay(gameState, ServerGameService.getStackVisualDelayMs());
 
       const stackItem = gameState.counterStack.pop();
       if (!stackItem) continue;
@@ -2865,7 +2885,7 @@ export const ServerGameService = {
 
       // Small pause between multiple items
       if (gameState.counterStack.length > 0) {
-        await ServerGameService.waitForVisualDelay(gameState, 500);
+        await ServerGameService.waitForVisualDelay(gameState, ServerGameService.getStackBetweenItemsDelayMs());
       }
     }
 
@@ -6074,7 +6094,7 @@ export const ServerGameService = {
       ownerUid: playerUid,
       effectIndex,
       timestamp: Date.now(),
-      data: { event }
+      data: { event, isTriggeredEffect: true }
     };
     if (onUpdate) await onUpdate(gameState);
 
@@ -6087,8 +6107,8 @@ export const ServerGameService = {
       }
     }
 
-    // Small pause for visual feedback
-    await ServerGameService.waitForVisualDelay(gameState, 1500);
+    // Keep triggered effects readable while normal stack resolution stays fast.
+    await ServerGameService.waitForVisualDelay(gameState, ServerGameService.getTriggerVisualDelayMs());
 
     // 4. Atomic Effects
     if (effect.atomicEffects) {

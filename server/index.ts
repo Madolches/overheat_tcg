@@ -280,7 +280,7 @@ async function handleBotMove(gameState: any, gameId: string) {
                     ServerGameService.hydrateGameState(currentGameState);
 
                     const syncCallback = async (state: any) => {
-                        await syncAndSaveState(gameId, state);
+                        await syncGameStateForCallback(gameId, state, 'botMove:callback');
                     };
 
                     await ServerGameService.botMove(currentGameState, syncCallback);
@@ -912,6 +912,7 @@ async function saveMatchLog(gameState: any, gameId?: string): Promise<boolean> {
 type SyncStateOptions = {
     recalc?: boolean;
     source?: string;
+    persist?: boolean;
 };
 
 async function syncAndSaveState(gameId: string, gameState: any, options: SyncStateOptions = {}) {
@@ -950,6 +951,21 @@ async function syncAndSaveState(gameId: string, gameState: any, options: SyncSta
     const emitStart = process.hrtime.bigint();
     io.to(gameId).emit('gameStateUpdate', gameState);
     timings.emitMs = elapsedMs(emitStart);
+
+    if (options.persist === false) {
+        const totalMs = elapsedMs(totalStart);
+        if (totalMs >= SLOW_STATE_SYNC_MS) {
+            console.warn('[Perf] slow state sync', {
+                gameId,
+                source: options.source || 'unknown',
+                phase: gameState.phase,
+                totalMs: Math.round(totalMs),
+                ...Object.fromEntries(Object.entries(timings).map(([key, value]) => [key, Math.round(value)])),
+                memory: getMemorySnapshot()
+            });
+        }
+        return;
+    }
 
     // 4. Prune logs in gameState to keep the DB 'state' blob small
     // satisfies "It should not be pushed to the backend (DB)"
@@ -1001,6 +1017,15 @@ async function syncAndSaveState(gameId: string, gameState: any, options: SyncSta
     }
 }
 
+async function syncGameStateForCallback(gameId: string, gameState: any, source: string) {
+    const isVisualFrame = !!gameState?.currentProcessingItem || (!!gameState?.isResolvingStack && gameState?.counterStack?.length > 0);
+    await syncAndSaveState(gameId, gameState, {
+        source,
+        recalc: !isVisualFrame,
+        persist: !isVisualFrame
+    });
+}
+
 function emitTimerUpdate(gameId: string, gameState: any) {
     const now = Date.now();
     const lastBroadcastAt = lastTimerBroadcast.get(gameId) || 0;
@@ -1018,10 +1043,10 @@ async function advancePhase(gameState: any, gameId: string, playerId?: string, s
     try {
         // console.log(`[Socket] advancePhase for game ${gameId}, action: ${action}, playerId: ${playerId}`);
         await ServerGameService.advancePhase(gameState, action, playerId, async (state) => {
-            await syncAndSaveState(gameId, state);
+            await syncGameStateForCallback(gameId, state, 'advancePhase:callback');
         });
         await ServerGameService.applyConfrontationStrategy(gameState, async (state) => {
-            await syncAndSaveState(gameId, state);
+            await syncGameStateForCallback(gameId, state, 'advancePhase:confrontationCallback');
         });
 
         await syncAndSaveState(gameId, gameState);
@@ -1126,7 +1151,7 @@ setInterval(async () => {
                 const isBotDefending = gameState.phase === 'DEFENSE_DECLARATION' && !gameState.players['BOT_PLAYER']?.isTurn;
                 if (isBotQuery || (!gameState.pendingQuery && (currentPlayerId === 'BOT_PLAYER' || gameState.priorityPlayerId === 'BOT_PLAYER' || isBotDefending))) {
                     const syncCallback = async (state: any) => {
-                        await syncAndSaveState(gameId, state);
+                        await syncGameStateForCallback(gameId, state, 'timer:callback');
                     };
                     handleBotMove(gameState, gameId); // handleBotMove already does its own lock/fetch
                 }
@@ -3701,7 +3726,7 @@ io.on('connection', (socket) => {
                 }
 
                 const syncCallback = async (state: GameState) => {
-                    await syncAndSaveState(gameId, state, { source: `${action}:callback` });
+                    await syncGameStateForCallback(gameId, state, `${action}:callback`);
                 };
 
                 const executeStart = process.hrtime.bigint();
