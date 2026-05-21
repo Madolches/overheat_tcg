@@ -15,7 +15,7 @@ import { Rulebook } from './Rulebook';
 import { motion, AnimatePresence } from 'motion/react';
 import { StandardPopup } from './StandardPopup';
 import { Flag, Trophy, Frown, Home, Sword, Shield, Zap, LogOut, BookOpen, Send, Loader2, Trash2, X, Play, Search, ChevronRight, ShieldCheck, Layers, Sparkles, Flame, AlertTriangle, PackagePlus, Scissors, Circle, FileText } from 'lucide-react';
-import { cn, getCardColorLabel, getCardImageUrl, getCardIdentity, getCardTypeLabel, getLocationLabel, getPhaseLabel } from '../lib/utils';
+import { cn, getCardColorHanzi, getCardColorLabel, getCardImageUrl, getCardIdentity, getCardTypeLabel, getEffectiveCardColors, getLocationLabel, getPhaseLabel } from '../lib/utils';
 import { KeywordBadges } from './KeywordBadges';
 import { BattleLogPanel } from './BattleLogPanel';
 import { battleLogText } from '../lib/battleLog';
@@ -322,6 +322,7 @@ export const BattleField: React.FC = () => {
 
   const getPreviewFullImage = (card: Card) =>
     card.fullImageUrl || getCardImageUrl(card.id, card.rarity, false, card.availableRarities);
+  const previewEffectiveColors = previewCard ? getEffectiveCardColors(previewCard) : [];
 
 
 
@@ -3942,6 +3943,20 @@ export const BattleField: React.FC = () => {
                       <div className="bg-zinc-900/80 border border-white/5 rounded-2xl p-4 md:p-5 flex items-center justify-between">
                         <span className="text-[9px] md:text-[10px] font-black text-zinc-500 uppercase tracking-widest">类型</span>
                         <span className="text-lg md:text-xl font-black italic text-orange-500">{getCardTypeLabel(previewCard.type)}</span>
+                      </div>
+
+                      <div className="bg-zinc-900/80 border border-white/5 rounded-2xl p-4 md:p-5 flex items-center justify-between gap-4">
+                        <span className="text-[9px] md:text-[10px] font-black text-zinc-500 uppercase tracking-widest">颜色</span>
+                        <div className="flex flex-wrap justify-end gap-1.5">
+                          {(previewEffectiveColors.length > 0 ? previewEffectiveColors : [previewCard.color]).map(color => (
+                            <span
+                              key={color}
+                              className="flex h-7 min-w-7 items-center justify-center rounded-lg border border-white/15 bg-white/10 px-2 text-sm font-black text-white shadow-lg"
+                            >
+                              {getCardColorHanzi(color)}
+                            </span>
+                          ))}
+                        </div>
                       </div>
 
                       {/* AC Value Box */}

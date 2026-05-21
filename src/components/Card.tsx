@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { Card as CardType, Rarity } from '../types/game';
 import { clsx } from 'clsx';
 import { Sword, Shield, Zap, Plus } from 'lucide-react';
-import { getCardImageUrl } from '../lib/utils';
+import { cn, getCardColorHanzi, getCardImageUrl, getGainedCardColors } from '../lib/utils';
 import { KeywordBadges } from './KeywordBadges';
 import { DEFAULT_CARD_BACK_URL } from '../data/customization';
 
@@ -41,6 +41,14 @@ const getRarityClass = (rarity: Rarity) => {
     default:
       return 'border-zinc-700';
   }
+};
+
+const colorBadgeClass: Record<string, string> = {
+  RED: 'border-red-200/80 bg-red-600/90 text-white',
+  YELLOW: 'border-yellow-100/80 bg-yellow-400/95 text-zinc-950',
+  WHITE: 'border-white/90 bg-zinc-100/95 text-zinc-950',
+  GREEN: 'border-green-100/80 bg-green-600/90 text-white',
+  BLUE: 'border-sky-100/80 bg-blue-600/90 text-white'
 };
 
 const CardComponentImpl: React.FC<CardProps> = ({
@@ -91,6 +99,9 @@ const CardComponentImpl: React.FC<CardProps> = ({
   const showAC = showStats && (displayMode === 'hand' || displayMode === 'deck' || displayMode === 'erosion_item');
   const showUnitStats = showStats && displayMode === 'unit' && card.type === 'UNIT';
   const isHand = displayMode === 'hand';
+  const gainedColors = card.type === 'UNIT' && displayMode === 'unit'
+    ? getGainedCardColors(card)
+    : [];
 
   const handleCardClick = (_e: React.MouseEvent) => {
     // Zoom logic removed
@@ -139,6 +150,22 @@ const CardComponentImpl: React.FC<CardProps> = ({
       {!hideKeywords && (
         <div className="absolute top-0.5 right-0.5 md:top-1 md:right-1 z-10 flex flex-col items-end gap-0.5">
           <KeywordBadges card={card} />
+        </div>
+      )}
+
+      {gainedColors.length > 0 && (
+        <div className="pointer-events-none absolute top-0.5 left-0.5 z-20 flex max-h-[calc(100%-0.25rem)] flex-col gap-0.5 md:top-1 md:left-1">
+          {gainedColors.map(color => (
+            <span
+              key={color}
+              className={cn(
+                'flex h-4 min-w-4 items-center justify-center rounded-sm border px-0.5 text-[9px] font-black leading-none shadow-lg md:h-5 md:min-w-5 md:text-[10px]',
+                colorBadgeClass[color]
+              )}
+            >
+              {getCardColorHanzi(color)}
+            </span>
+          ))}
         </div>
       )}
 

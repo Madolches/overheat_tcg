@@ -1,16 +1,27 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { canPutUnitOntoBattlefield, cardsInZones, createSelectCardQuery, ensureData, moveCardAsCost, putUnitOntoField, story } from './BaseUtil';
+import { cardsInZones, createSelectCardQuery, ensureData, moveCardAsCost, putUnitOntoField, story } from './BaseUtil';
 
 const ownUnits = (playerState: any) =>
   playerState.unitZone.filter((unit: Card | null): unit is Card => !!unit);
 
-const shingiTargets = (playerState: any) =>
+const canPutUnitAfterUnitCost = (playerState: any, card: Card, unitCostCount: number) => {
+  const currentUnits = ownUnits(playerState);
+  const availableSlotsAfterCost = playerState.unitZone.length - currentUnits.length + unitCostCount;
+  const sameSpecialNameUnits = card.specialName
+    ? currentUnits.filter(unit => unit?.specialName === card.specialName).length
+    : 0;
+  return card.type === 'UNIT' &&
+    availableSlotsAfterCost > 0 &&
+    sameSpecialNameUnits <= unitCostCount;
+};
+
+const shingiTargets = (playerState: any, pendingUnitCostCount = 0) =>
   cardsInZones(playerState, ['HAND', 'DECK']).filter(({ card }) =>
     card.type === 'UNIT' &&
     AtomicEffectExecutor.matchesColor(card, 'WHITE') &&
     (card.acValue || 0) >= 5 &&
-    canPutUnitOntoBattlefield(playerState, card)
+    canPutUnitAfterUnitCost(playerState, card, pendingUnitCostCount)
   );
 
 const markPlacedByShingi = (gameState: any, target: Card, source: Card) => {
@@ -39,7 +50,7 @@ const cardEffects: CardEffect[] = [story('201140100_angel_advent', '只能在你
     playerState.isTurn &&
     gameState.phase === 'MAIN' &&
     ownUnits(playerState).length >= 3 &&
-    shingiTargets(playerState).length > 0,
+    shingiTargets(playerState, 3).length > 0,
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'EXILE_UNITS') {
       const selected = selections

@@ -558,11 +558,12 @@ async function testAngelAdventPlacesShingiMarkedUnit(): Promise<ScenarioResult> 
   const name = 'BT06-W08 Angel Advent places AC5+ white unit with Shingi marker';
   const storyCard = cloneScriptCard(bt06W08 as Card, 'HAND');
   const fodder = [0, 1, 2].map(index => testCard({ id: `W08_FODDER_${index}`, fullName: `Fodder ${index}`, cardlocation: 'UNIT' }));
+  const extraFodder = [3, 4, 5].map(index => testCard({ id: `W08_FODDER_${index}`, fullName: `Fodder ${index}`, cardlocation: 'UNIT' }));
   const target = cloneScriptCard(bt06W11 as Card, 'DECK');
   const state = game({
     hand: [storyCard],
     deck: [target, ...deckCards(5, 'BOT_FILL')],
-    unitZone: [fodder[0], fodder[1], fodder[2], null, null, null],
+    unitZone: [fodder[0], fodder[1], fodder[2], extraFodder[0], extraFodder[1], extraFodder[2]],
   });
 
   await playStoryAndResolve(state, 'BOT', storyCard);
@@ -585,6 +586,7 @@ async function testDawnRitualPlacesGoddessChurchAc3(): Promise<ScenarioResult> {
   const name = 'BT06-W09 Dawn Ritual places Betis or Goddess Church AC3 unit';
   const storyCard = cloneScriptCard(bt06W09 as Card, 'HAND');
   const fodder = [0, 1, 2].map(index => testCard({ id: `W09_FODDER_${index}`, fullName: `Fodder ${index}`, cardlocation: 'UNIT' }));
+  const extraFodder = [3, 4, 5].map(index => testCard({ id: `W09_FODDER_${index}`, fullName: `Fodder ${index}`, cardlocation: 'UNIT' }));
   const target = testCard({
     id: 'W09_TARGET',
     fullName: '女神教会目标',
@@ -597,7 +599,7 @@ async function testDawnRitualPlacesGoddessChurchAc3(): Promise<ScenarioResult> {
   const state = game({
     hand: [storyCard],
     deck: [target, ...deckCards(5, 'BOT_FILL')],
-    unitZone: [fodder[0], fodder[1], fodder[2], null, null, null],
+    unitZone: [fodder[0], fodder[1], fodder[2], extraFodder[0], extraFodder[1], extraFodder[2]],
   });
 
   await playStoryAndResolve(state, 'BOT', storyCard);
@@ -1160,14 +1162,35 @@ async function testGreenBirdSalalaAndAccordion(): Promise<ScenarioResult> {
   const liveFeather = birdState.players.BOT.unitZone.find((unit: Card | null) => unit?.id === bt06G05.id);
   const featherPlaced = !!liveFeather && liveFeather.isExhausted && !(liveFeather as any).data?.returnToDeckBottomAtTurnEnd;
   const featherColorBeforeTurnEnd = !!(liveFeather as any)?.persistentExtraColors?.includes('RED');
-  if (liveFeather) {
-    await ServerGameService.executeEndPhase(birdState, birdState.players.BOT);
-  }
-  const featherColorAfterTurnEnd = !!(liveFeather as any)?.persistentExtraColors?.includes('RED');
   const featherPaysRedRequirement = !!liveFeather && ServerGameService.getColorRequirementResult(
     birdState.players.BOT,
     { RED: 1 }
   ).valid;
+  const redRequirementCard = testCard({
+    id: 'G05_RED_REQ',
+    fullName: 'Feather Red Requirement',
+    type: 'STORY',
+    color: 'RED',
+    colorReq: { RED: 1 },
+    baseColorReq: { RED: 1 },
+    acValue: 0,
+    baseAcValue: 0,
+    cardlocation: 'HAND',
+    effects: [],
+  });
+  birdState.players.BOT.hand.push(redRequirementCard);
+  let featherCanPlayRedRequirement = false;
+  try {
+    await ServerGameService.playCard(birdState, 'BOT', redRequirementCard.gamecardId, {});
+    await ServerGameService.passConfrontation(birdState, birdState.priorityPlayerId);
+    featherCanPlayRedRequirement = birdState.players.BOT.grave.some((card: Card) => card.gamecardId === redRequirementCard.gamecardId);
+  } catch {
+    featherCanPlayRedRequirement = false;
+  }
+  if (liveFeather) {
+    await ServerGameService.executeEndPhase(birdState, birdState.players.BOT);
+  }
+  const featherColorAfterTurnEnd = !!(liveFeather as any)?.persistentExtraColors?.includes('RED');
 
   const salala = cloneScriptCard(bt06G07 as Card, 'UNIT');
   const chimeraCost = cloneScriptCard(bt06G11 as Card, 'GRAVE');
@@ -1218,9 +1241,9 @@ async function testGreenBirdSalalaAndAccordion(): Promise<ScenarioResult> {
   }
   const silenced = target.silencedEffectIds?.includes('G10_DUMMY_ACTIVATE') === true;
 
-  return featherPlaced && featherColorBeforeTurnEnd && featherColorAfterTurnEnd && featherPaysRedRequirement && lockedAndRecovered && silenced
-    ? pass(name, `feather=${featherPlaced}, color=${featherColorAfterTurnEnd}, lockedRecovered=${lockedAndRecovered}, silenced=${silenced}`)
-    : fail(name, `feather=${featherPlaced}, colorBefore=${featherColorBeforeTurnEnd}, colorAfter=${featherColorAfterTurnEnd}, pays=${featherPaysRedRequirement}, lockedRecovered=${lockedAndRecovered}, silenced=${silenced}`);
+  return featherPlaced && featherColorBeforeTurnEnd && featherColorAfterTurnEnd && featherPaysRedRequirement && featherCanPlayRedRequirement && lockedAndRecovered && silenced
+    ? pass(name, `feather=${featherPlaced}, color=${featherColorAfterTurnEnd}, play=${featherCanPlayRedRequirement}, lockedRecovered=${lockedAndRecovered}, silenced=${silenced}`)
+    : fail(name, `feather=${featherPlaced}, colorBefore=${featherColorBeforeTurnEnd}, colorAfter=${featherColorAfterTurnEnd}, pays=${featherPaysRedRequirement}, play=${featherCanPlayRedRequirement}, lockedRecovered=${lockedAndRecovered}, silenced=${silenced}`);
 }
 
 async function testCannotExhaustUnitIsNotAvailableDefender(): Promise<ScenarioResult> {
@@ -1723,6 +1746,7 @@ async function testYellowHighAlchemyChipAndGiant(): Promise<ScenarioResult> {
   const chipPowered = chipLive?.power === 3000;
   const chipCostExiled = state.players.BOT.exile.some((card: Card) => card.gamecardId === feijingCost.gamecardId);
   const chipCopyExhausted = !!chipCopyLive?.isExhausted;
+  const chipCopyFromDeck = chipCopyLive?.cardlocation === 'UNIT';
   const storyResolved = state.players.BOT.grave.some((card: Card) => card.gamecardId === storyCard.gamecardId);
 
   const giantSource = cloneScriptCard(bt06Y09 as Card, 'GRAVE');
@@ -1745,9 +1769,9 @@ async function testYellowHighAlchemyChipAndGiant(): Promise<ScenarioResult> {
   EventEngine.recalculateContinuousEffects(giantState);
   const giantBoosted = liveGiant?.power === 4000 && !!liveGiant?.isHeroic;
 
-  return chipPowered && chipCostExiled && chipCopyExhausted && storyResolved && giantBoosted
+  return chipPowered && chipCostExiled && chipCopyExhausted && chipCopyFromDeck && storyResolved && giantBoosted
     ? pass(name, `chip=${chipPowered}, copy=${chipCopyExhausted}, giant=${giantBoosted}`)
-    : fail(name, `chip=${chipPowered}, cost=${chipCostExiled}, copy=${chipCopyExhausted}, story=${storyResolved}, giant=${giantBoosted}`);
+    : fail(name, `chip=${chipPowered}, cost=${chipCostExiled}, copy=${chipCopyExhausted}/${chipCopyFromDeck}, story=${storyResolved}, giant=${giantBoosted}`);
 }
 
 async function testAcademyFeijingMerchantLeaveTrigger(): Promise<ScenarioResult> {

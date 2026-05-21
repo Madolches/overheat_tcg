@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import type { Card, CardColor } from '../types/game';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -81,6 +82,68 @@ export function getCardTypeLabel(type?: string | null): string {
 export function getCardColorLabel(color?: string | null): string {
   if (!color) return '未知';
   return CARD_COLOR_LABELS[color] || color;
+}
+
+const EFFECTIVE_COLOR_ORDER: CardColor[] = ['RED', 'YELLOW', 'WHITE', 'GREEN', 'BLUE'];
+
+const CARD_COLOR_HANZI: Record<CardColor, string> = {
+  RED: '红',
+  YELLOW: '黄',
+  WHITE: '白',
+  GREEN: '绿',
+  BLUE: '蓝',
+  NONE: '无'
+};
+
+export function getEffectiveCardColors(card?: Card | null): CardColor[] {
+  if (!card) return [];
+  const colors = new Set<CardColor>();
+  if (card.color && card.color !== 'NONE') colors.add(card.color);
+
+  const extraColors = [
+    ...(card.temporaryExtraColors || []),
+    ...(card.persistentExtraColors || [])
+  ];
+  extraColors.forEach(color => {
+    if (color && color !== 'NONE') colors.add(color);
+  });
+
+  const isOmni =
+    String(card.id) === '105000481' ||
+    !!card.effects?.some(effect => effect.id === '105000481_omni');
+  if (isOmni && ['UNIT', 'EROSION_FRONT'].includes(card.cardlocation || '')) {
+    EFFECTIVE_COLOR_ORDER.forEach(color => colors.add(color));
+  }
+
+  return EFFECTIVE_COLOR_ORDER.filter(color => colors.has(color));
+}
+
+export function getGainedCardColors(card?: Card | null): CardColor[] {
+  if (!card) return [];
+  const gained = new Set<CardColor>();
+
+  const extraColors = [
+    ...(card.temporaryExtraColors || []),
+    ...(card.persistentExtraColors || [])
+  ];
+  extraColors.forEach(color => {
+    if (color && color !== 'NONE' && color !== card.color) gained.add(color);
+  });
+
+  const isOmni =
+    String(card.id) === '105000481' ||
+    !!card.effects?.some(effect => effect.id === '105000481_omni');
+  if (isOmni && ['UNIT', 'EROSION_FRONT'].includes(card.cardlocation || '')) {
+    EFFECTIVE_COLOR_ORDER.forEach(color => {
+      if (color !== card.color) gained.add(color);
+    });
+  }
+
+  return EFFECTIVE_COLOR_ORDER.filter(color => gained.has(color));
+}
+
+export function getCardColorHanzi(color?: string | null): string {
+  return color ? CARD_COLOR_HANZI[color as CardColor] || color : '未知';
 }
 
 export function getPhaseLabel(phase?: string | null): string {

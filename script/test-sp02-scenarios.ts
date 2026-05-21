@@ -2,6 +2,7 @@ import { ServerGameService } from '../server/ServerGameService';
 import { EventEngine } from '../src/services/EventEngine';
 import { Card, CardEffect, TriggerLocation } from '../src/types/game';
 import sp02W03 from '../src/scripts/101000282';
+import judgeNekomata from '../src/scripts/103000274';
 import sp02Y01 from '../src/scripts/105110284';
 import sp02Y03 from '../src/scripts/105000323';
 import sp02Y09 from '../src/scripts/105000325';
@@ -345,6 +346,46 @@ async function testManagerCopiesOneShotActivate(): Promise<ScenarioResult> {
     : fail(name, `executed=${executed}, secondBlocked=${secondActivationBlocked}, query=${state.pendingQuery?.callbackKey}`);
 }
 
+async function testJudgeNekomataDeclaredColorPaysRequirement(): Promise<ScenarioResult> {
+  const name = 'SP02-G03 Judge Nekomata declared color pays color requirement';
+  const nekomata = cloneScriptCard(judgeNekomata as Card, 'UNIT');
+  const redCard = testCard({
+    id: 'NEKOMATA_RED_REQ',
+    fullName: 'Nekomata Red Requirement',
+    type: 'STORY',
+    color: 'RED',
+    colorReq: { RED: 1 },
+    baseColorReq: { RED: 1 },
+    acValue: 0,
+    baseAcValue: 0,
+    cardlocation: 'HAND',
+    effects: [],
+  });
+  const state = game({
+    hand: [redCard],
+    unitZone: [nekomata, null, null, null, null, null],
+  });
+
+  await activateAndResolveByOpponentPass(state, 'BOT', nekomata, 0);
+  if (state.pendingQuery?.context?.effectId === '103000274_declare_color') {
+    await answerPendingQuery(state, 'BOT', ['RED']);
+  }
+
+  const colorCheck = ServerGameService.getColorRequirementResult(state.players.BOT, { RED: 1 }).valid;
+  let played = false;
+  try {
+    await ServerGameService.playCard(state, 'BOT', redCard.gamecardId, {});
+    await ServerGameService.passConfrontation(state, state.priorityPlayerId);
+    played = state.players.BOT.grave.some((card: Card) => card.gamecardId === redCard.gamecardId);
+  } catch {
+    played = false;
+  }
+
+  return colorCheck && played
+    ? pass(name, `color=${colorCheck}, played=${played}`)
+    : fail(name, `color=${colorCheck}, played=${played}, query=${state.pendingQuery?.callbackKey}, phase=${state.phase}`);
+}
+
 async function testTruthResetAndExtraTurn(): Promise<ScenarioResult> {
   const name = 'SP02-Y09 enters from hand, resets zones, locks attacks, and queues extra turn';
   const truth = cloneScriptCard(sp02Y09 as Card, 'HAND');
@@ -401,6 +442,7 @@ const scenarios: { name: string; run: ScenarioRun }[] = [
   { name: 'SP02-Y01 red reveal mills opponent after creation-scar cost', run: testStephanieRedBranch },
   { name: 'SP02-Y01 yellow reveal asks opponent to discard and resolves', run: testStephanieYellowBranch },
   { name: 'SP02-Y03 copies an eligible activate effect for one use', run: testManagerCopiesOneShotActivate },
+  { name: 'SP02-G03 Judge Nekomata declared color pays color requirement', run: testJudgeNekomataDeclaredColorPaysRequirement },
   { name: 'SP02-Y09 enters from hand, resets zones, locks attacks, and queues extra turn', run: testTruthResetAndExtraTurn },
 ];
 

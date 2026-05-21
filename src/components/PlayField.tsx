@@ -129,15 +129,6 @@ const CardSlot: React.FC<{
           </span>
         )}
 
-        {slotLabel && (
-          <div className={cn(
-            "absolute z-20 rounded-full border border-white/15 bg-black/75 px-2 py-0.5 text-[10px] font-black text-white shadow-lg backdrop-blur-sm",
-            isOpponent ? "bottom-1 left-1 rotate-180" : "top-1 left-1"
-          )}>
-            {slotLabel}
-          </div>
-        )}
-
         {card && isFaceUp && isOpponent && (
           <div className="pointer-events-none absolute bottom-0.5 right-0.5 z-20 md:bottom-1 md:right-1">
             <KeywordBadges card={card} />
@@ -188,6 +179,21 @@ const CardSlot: React.FC<{
           </div>
         )}
       </div>
+
+      {slotLabel && (
+        <div className={cn(
+          "pointer-events-none absolute z-40 flex h-5 min-w-5 items-center justify-center rounded-full border border-white/20 bg-black/80 px-1.5 text-[10px] font-black leading-none text-white shadow-xl backdrop-blur-sm md:h-6 md:min-w-6 md:text-[11px]",
+          displayMode === 'unit'
+            ? isOpponent
+              ? "-bottom-1 -left-1 rotate-180 md:-bottom-2 md:-left-2"
+              : "-top-1 -left-1 md:-top-2 md:-left-2"
+            : isOpponent
+              ? "bottom-1 left-1 rotate-180"
+              : "top-1 left-1"
+        )}>
+          {slotLabel}
+        </div>
+      )}
     </div>
   );
 };
