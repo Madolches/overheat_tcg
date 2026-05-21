@@ -271,6 +271,9 @@ export interface CardEffect {
   description: string; // Human readable text
   wealthValue?: number;
   substitutionFilter?: CardFilter; // Filter for units this card can substitute/protect
+  substitutionAction?: 'DESTROY_SELF' | 'SEND_SELF_TO_GRAVE' | 'EXHAUST_SELF';
+  substitutionOnlyEffect?: boolean;
+  substitutionOnlyOpponent?: boolean;
   movementReplacementDestination?: TriggerLocation; // Destination if this card's movement is replaced
   erosionKeepReplacement?: boolean; // If true, allows keeping a card during erosion phase that would be moved to grave
   limitGodmarkCount?: number; // New: Limit on the number of Godmark units on the field

@@ -486,6 +486,17 @@ export class AtomicEffectExecutor {
     }
 
     if (
+      source === 'EFFECT' &&
+      targetPlayerUid !== dealerPlayerUid &&
+      (player as any).preventOpponentEffectDamageTurn === gameState.turnCount
+    ) {
+      gameState.logs.push(`[${(player as any).preventOpponentEffectDamageSourceName || '伤害防止'}] 防止了 ${player.displayName} 将要受到的 ${amount} 点对手效果伤害。`);
+      (player as any).preventedOpponentEffectDamageThisTurn = Number((player as any).preventedOpponentEffectDamageThisTurn || 0) + amount;
+      this.bottomGraveCardsForPreventedEffectDamage(gameState, targetPlayerUid, amount, sourceCard);
+      return;
+    }
+
+    if (
       source === 'BATTLE' &&
       (player as any).preventBattleDamageUpToTurn === gameState.turnCount &&
       amount <= Number((player as any).preventBattleDamageUpToAmount || 0)
@@ -670,6 +681,30 @@ export class AtomicEffectExecutor {
       playerUid: targetPlayerUid,
       data: { amount: finalAmount, destination: finalDestination }
     });
+  }
+
+  private static bottomGraveCardsForPreventedEffectDamage(gameState: GameState, playerUid: string, amount: number, sourceCard?: Card) {
+    const player = gameState.players[playerUid];
+    if (!player || amount <= 0) return;
+    const sourceName = (player as any).preventOpponentEffectDamageSourceName || sourceCard?.fullName || '伤害防止';
+    const cards = player.grave.slice(0, Math.min(amount, player.grave.length));
+    cards.forEach(card => this.moveCard(
+      gameState,
+      playerUid,
+      'GRAVE',
+      playerUid,
+      'DECK',
+      card.gamecardId,
+      true,
+      {
+        insertAtBottom: true,
+        effectSourcePlayerUid: playerUid,
+        effectSourceCardId: (player as any).preventOpponentEffectDamageSourceCardId || sourceCard?.gamecardId
+      }
+    ));
+    if (cards.length > 0) {
+      gameState.logs.push(`[${sourceName}] 将墓地 ${cards.length} 张卡放置到卡组底。`);
+    }
   }
 
   private static async destroyCards(gameState: GameState, playerUid: string, effect: AtomicEffect, sourceCard?: Card, querySelections?: string[]) {

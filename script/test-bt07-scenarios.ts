@@ -1,5 +1,6 @@
 import { ServerGameService } from '../server/ServerGameService';
 import { EventEngine } from '../src/services/EventEngine';
+import { AtomicEffectExecutor } from '../src/services/AtomicEffectExecutor';
 import { Card, TriggerLocation } from '../src/types/game';
 import bt07W01 from '../src/scripts/101140374';
 import bt07W02 from '../src/scripts/101130375';
@@ -9,6 +10,10 @@ import bt07W05 from '../src/scripts/101130378';
 import bt07W06 from '../src/scripts/101000379';
 import bt07W07 from '../src/scripts/201130109';
 import bt07W08 from '../src/scripts/201000110';
+import bt07W09 from '../src/scripts/301140059';
+import bt07W10 from '../src/scripts/301130060';
+import bt07W11 from '../src/scripts/101130380';
+import bt07W12 from '../src/scripts/201000114';
 import { moveCardAsCost } from '../src/scripts/BaseUtil';
 
 type ScenarioResult = {
@@ -494,6 +499,201 @@ async function testTempleOrderCountersBlueLowNonGodPlay(): Promise<ScenarioResul
     : fail(name, `negated=${negated}`);
 }
 
+async function testDawnChapelDrawsAndBlocksConfrontingShingi(): Promise<ScenarioResult> {
+  const name = 'BT07-W09 Dawn Chapel makes Shingi plays uncounterable and draws on Shingi entry';
+  const uncounterChapel = cloneScriptCard(bt07W09 as Card, 'ITEM');
+  const shingi = testCard({ id: 'SHINGI_PLAY', fullName: '神仪：测试', type: 'STORY', color: 'WHITE', cardlocation: 'HAND', acValue: 0 });
+  const uncounterState = game({
+    hand: [shingi],
+    itemZone: [uncounterChapel],
+  }, {}, {
+    phase: 'MAIN',
+    turnCount: 6,
+  });
+
+  await ServerGameService.playCard(uncounterState, 'BOT', shingi.gamecardId, {});
+  const uncounterable = uncounterState.phase === 'COUNTERING' && uncounterState.priorityPlayerId === 'BOT';
+
+  const chapel = cloneScriptCard(bt07W09 as Card, 'ITEM');
+  const shingiSource = testCard({ id: 'SHINGI_SOURCE', fullName: '神仪：测试', type: 'STORY', cardlocation: 'GRAVE' });
+  const placed = testCard({
+    id: 'SHINGI_PLACED',
+    fullName: 'Shingi Placed',
+    type: 'UNIT',
+    color: 'WHITE',
+    cardlocation: 'DECK',
+    data: { placedByShingiEffectSourceName: '神仪：测试' },
+  } as any);
+  const state = game({
+    grave: [shingiSource],
+    deck: [placed, ...deckCards(3, 'W09_DRAW_FILL')],
+    itemZone: [chapel],
+  }, {}, {
+    phase: 'MAIN',
+    turnCount: 6,
+  });
+
+  ServerGameService.moveCard(state, 'BOT', 'DECK', 'BOT', 'UNIT', placed.gamecardId, {
+    isEffect: true,
+    effectSourcePlayerUid: 'BOT',
+    effectSourceCardId: shingiSource.gamecardId,
+  });
+  await confirmTrigger(state, 'BOT');
+
+  const drew = state.players.BOT.hand.length === 1;
+  return uncounterable && drew
+    ? pass(name, `priority=${uncounterState.priorityPlayerId}, hand=${state.players.BOT.hand.length}`)
+    : fail(name, `priority=${uncounterState.priorityPlayerId}, hand=${state.players.BOT.hand.length}`);
+}
+
+async function testDuskBarracksRecruitAndSubstitute(): Promise<ScenarioResult> {
+  const name = 'BT07-W10 Dusk Barracks recruits and exhausts to substitute opponent effect destroy';
+  const barracks = cloneScriptCard(bt07W10 as Card, 'ITEM');
+  const discard = testCard({ id: 'W10_DISCARD', fullName: 'Discard', cardlocation: 'HAND' });
+  const recruit = testCard({ id: 'W10_RECRUIT', fullName: '圣王国 Recruit', faction: '圣王国', acValue: 3, godMark: false, cardlocation: 'DECK' });
+  const high = testCard({ id: 'W10_HIGH', fullName: '圣王国 High', faction: '圣王国', acValue: 4, godMark: false, cardlocation: 'DECK' });
+  const state = game({
+    hand: [discard],
+    deck: [recruit, high, ...deckCards(3, 'W10_FILL')],
+    itemZone: [barracks],
+  });
+  const effectIndex = barracks.effects?.findIndex(effect => effect.id === '301130060_recruit_holy_kingdom') ?? -1;
+  await ServerGameService.activateEffect(state, 'BOT', barracks.gamecardId, effectIndex);
+  if (state.pendingQuery?.callbackKey === 'ACTIVATE_COST_RESOLVE') {
+    await answerPendingQuery(state, 'BOT', [discard.gamecardId]);
+  }
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
+  if (state.pendingQuery?.context?.effectId === '301130060_recruit_holy_kingdom') {
+    const optionIds = (state.pendingQuery.options || []).map((option: any) => option.card.gamecardId);
+    if (!optionIds.includes(recruit.gamecardId) || optionIds.includes(high.gamecardId)) {
+      return fail(name, `recruit options=${optionIds.join(',')}`);
+    }
+    await answerPendingQuery(state, 'BOT', [recruit.gamecardId]);
+  }
+  const recruited = state.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === recruit.gamecardId);
+
+  const substituteBarracks = cloneScriptCard(bt07W10 as Card, 'ITEM');
+  const units = [0, 1, 2].map(index => testCard({ id: `W10_UNIT_${index}`, fullName: `圣王国 Unit ${index}`, faction: '圣王国', cardlocation: 'UNIT' }));
+  const victim = testCard({ id: 'W10_VICTIM', fullName: 'Victim', faction: 'Other', cardlocation: 'UNIT' });
+  const destroySource = testCard({ id: 'W10_SOURCE', fullName: 'Opponent Destroy', cardlocation: 'UNIT' });
+  const subState = game({
+    unitZone: [victim, ...units, null, null],
+    itemZone: [substituteBarracks],
+    erosionFront: [
+      testCard({ id: 'W10_EF_0', cardlocation: 'EROSION_FRONT' }),
+      testCard({ id: 'W10_EF_1', cardlocation: 'EROSION_FRONT' }),
+      testCard({ id: 'W10_EF_2', cardlocation: 'EROSION_FRONT' }),
+    ],
+  }, {
+    unitZone: [destroySource, null, null, null, null, null],
+  });
+  EventEngine.recalculateContinuousEffects(subState);
+  await ServerGameService.destroyUnit(subState, 'BOT', victim.gamecardId, true, 'P1');
+  if (subState.pendingQuery?.callbackKey === 'SUBSTITUTION_CHOICE') {
+    await answerPendingQuery(subState, 'BOT', ['YES']);
+  }
+  const protectedVictim = subState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === victim.gamecardId);
+  const barracksExhausted = substituteBarracks.isExhausted;
+
+  return recruited && protectedVictim && barracksExhausted
+    ? pass(name, `recruited=${recruited}, protected=${protectedVictim}, exhausted=${barracksExhausted}`)
+    : fail(name, `recruited=${recruited}, protected=${protectedVictim}, exhausted=${barracksExhausted}`);
+}
+
+async function testYukatiaAllianceProtectionAndDestroy(): Promise<ScenarioResult> {
+  const name = 'BT07-W11 Yukatia protects itself on alliance attack and destroys non-god field card';
+  const yukatia = cloneScriptCard(bt07W11 as Card, 'UNIT');
+  const partner = testCard({ id: 'W11_PARTNER', fullName: '圣王国 Partner', faction: '圣王国', cardlocation: 'UNIT' });
+  const target = testCard({ id: 'W11_TARGET', fullName: 'Target Item', type: 'ITEM', godMark: false, cardlocation: 'ITEM' });
+  const godTarget = testCard({ id: 'W11_GOD', fullName: 'God Target', type: 'ITEM', godMark: true, cardlocation: 'ITEM' });
+  const state = game({
+    unitZone: [yukatia, partner, null, null, null, null],
+    erosionFront: [
+      testCard({ id: 'W11_EF_0', cardlocation: 'EROSION_FRONT' }),
+      testCard({ id: 'W11_EF_1', cardlocation: 'EROSION_FRONT' }),
+    ],
+  }, {
+    itemZone: [target, godTarget],
+  }, {
+    phase: 'BATTLE_DECLARATION',
+  });
+  await ServerGameService.declareAttack(state, 'BOT', [yukatia.gamecardId, partner.gamecardId], true, 'NO_PROMPT', true);
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
+  await confirmTrigger(state, 'BOT');
+  if (state.pendingQuery?.callbackKey === 'TRIGGER_CHOICE') {
+    await answerPendingQuery(state, 'BOT', ['YES']);
+  }
+  const protectedUntil = (yukatia as any).data?.preventNextBattleDestroyUntilTurn;
+  const effectIndex = yukatia.effects?.findIndex(effect => effect.id === '101130380_alliance_destroy') ?? -1;
+  await ServerGameService.activateEffect(state, 'BOT', yukatia.gamecardId, effectIndex);
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
+  if (state.pendingQuery?.context?.effectId === '101130380_alliance_destroy') {
+    const optionIds = (state.pendingQuery.options || []).map((option: any) => option.card.gamecardId);
+    if (!optionIds.includes(target.gamecardId) || optionIds.includes(godTarget.gamecardId)) {
+      return fail(name, `destroy options=${optionIds.join(',')}`);
+    }
+    await answerPendingQuery(state, 'BOT', [target.gamecardId]);
+  }
+  const destroyed = state.players.P1.grave.some((card: Card) => card.gamecardId === target.gamecardId);
+  return protectedUntil !== undefined && destroyed
+    ? pass(name, `protectedUntil=${protectedUntil}, destroyed=${destroyed}`)
+    : fail(name, `protectedUntil=${protectedUntil}, destroyed=${destroyed}`);
+}
+
+async function testEmptyFantasyRecoverAndPreventEffectDamage(): Promise<ScenarioResult> {
+  const name = 'BT07-02W Empty Fantasy recovers or prevents opponent effect damage';
+  const fantasy = cloneScriptCard(bt07W12 as Card, 'PLAY');
+  const whiteDiscard = testCard({ id: 'W12_WHITE', fullName: 'White Discard', color: 'WHITE', cardlocation: 'HAND' });
+  const erosionCards = [0, 1, 2, 3].map(index => testCard({ id: `W12_EROSION_${index}`, cardlocation: 'EROSION_FRONT' }));
+  const recoverState = game({
+    hand: [whiteDiscard],
+    playZone: [fantasy],
+    erosionFront: erosionCards,
+  });
+  const effect = fantasy.effects?.[0];
+  if (!effect?.execute) return fail(name, 'missing Empty Fantasy effect');
+  await effect.execute(fantasy, recoverState, recoverState.players.BOT);
+  if (recoverState.pendingQuery?.context?.step === 'MODE') {
+    const optionId = recoverState.pendingQuery.options?.find((option: any) => option.value === 'RECOVER_4' || option.id === 'RECOVER_4')?.id || 'RECOVER_4';
+    await answerPendingQuery(recoverState, 'BOT', [optionId]);
+  }
+  if (recoverState.pendingQuery?.context?.step === 'DISCARD') {
+    await answerPendingQuery(recoverState, 'BOT', [whiteDiscard.gamecardId]);
+  }
+  const recovered = recoverState.players.BOT.deck.some((card: Card) => card.id === 'W12_EROSION_0');
+  const exiled = recoverState.players.BOT.exile.some((card: Card) => card.gamecardId === fantasy.gamecardId);
+
+  const preventFantasy = cloneScriptCard(bt07W12 as Card, 'PLAY');
+  const discard = testCard({ id: 'W12_ANY', fullName: 'Any Discard', color: 'RED', cardlocation: 'HAND' });
+  const graveCards = [0, 1].map(index => testCard({ id: `W12_GRAVE_${index}`, cardlocation: 'GRAVE' }));
+  const damageSource = testCard({ id: 'W12_DAMAGE', fullName: 'Opponent Damage', cardlocation: 'UNIT' });
+  const preventState = game({
+    hand: [discard],
+    grave: graveCards,
+    playZone: [preventFantasy],
+  }, {
+    unitZone: [damageSource, null, null, null, null, null],
+  });
+  const preventEffect = preventFantasy.effects?.[0];
+  await preventEffect?.execute?.(preventFantasy, preventState, preventState.players.BOT);
+  if (preventState.pendingQuery?.context?.step === 'MODE') {
+    const optionId = preventState.pendingQuery.options?.find((option: any) => option.value === 'PREVENT_EFFECT_DAMAGE' || option.id === 'PREVENT_EFFECT_DAMAGE')?.id || 'PREVENT_EFFECT_DAMAGE';
+    await answerPendingQuery(preventState, 'BOT', [optionId]);
+  }
+  if (preventState.pendingQuery?.context?.step === 'DISCARD') {
+    await answerPendingQuery(preventState, 'BOT', [discard.gamecardId]);
+  }
+  const beforeDeck = preventState.players.BOT.deck.length;
+  await AtomicEffectExecutor.execute(preventState, 'P1', { type: 'DEAL_EFFECT_DAMAGE', value: 2 } as any, damageSource);
+  const prevented = preventState.players.BOT.deck.length === beforeDeck + 2 &&
+    Number((preventState.players.BOT as any).preventedOpponentEffectDamageThisTurn || 0) === 2 &&
+    preventState.players.BOT.grave.length === 1;
+
+  return recovered && exiled && prevented
+    ? pass(name, `recovered=${recovered}, exiled=${exiled}, prevented=${prevented}`)
+    : fail(name, `recovered=${recovered}, exiled=${exiled}, prevented=${prevented}`);
+}
+
 const scenarios: ScenarioRun[] = [
   testPrepWorkerDestroysAfterShingiCostExile,
   testTwilightGuardProtectsAlliance,
@@ -506,6 +706,10 @@ const scenarios: ScenarioRun[] = [
   testDefenseShieldPreventsOnlyNextBattleDestroy,
   testTempleOrderDestroysBlueLowNonGod,
   testTempleOrderCountersBlueLowNonGodPlay,
+  testDawnChapelDrawsAndBlocksConfrontingShingi,
+  testDuskBarracksRecruitAndSubstitute,
+  testYukatiaAllianceProtectionAndDestroy,
+  testEmptyFantasyRecoverAndPreventEffectDamage,
 ];
 
 const results: ScenarioResult[] = [];
