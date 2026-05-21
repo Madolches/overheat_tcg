@@ -15,15 +15,20 @@ const IRODORI_CARD_IDS = new Set([
   '103000275',
   '104000298',
   '104000368',
-  '105000296'
+  '105000296',
+  '105110284'
 ]);
 
-const hasIrodori = (card: Card) =>
+const hasIrodoriByText = (card: Card) =>
   IRODORI_CARD_IDS.has(String(card.id)) ||
   card.effects?.some(effect =>
     effect.id?.toLowerCase().includes('irodori') ||
     effect.description?.includes('异彩')
   );
+
+const hasIrodori = (card: Card) =>
+  IRODORI_CARD_IDS.has(String(card.id)) ||
+  card.effects?.some(effect => effect.id?.toLowerCase().includes('irodori'));
 
 const addTemporaryColor = (card: Card, color: string) => {
   (card as any).temporaryExtraColors = Array.from(new Set([

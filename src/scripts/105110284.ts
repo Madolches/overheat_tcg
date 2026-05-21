@@ -1,6 +1,76 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { createSelectCardQuery, getOpponentUid, getTopDeckCards, millTop, moveCard, moveRandomGraveToDeckBottom, revealDeckCards } from './BaseUtil';
+import {
+  canPutUnitOntoBattlefield,
+  createSelectCardQuery,
+  getOpponentUid,
+  getTopDeckCards,
+  millTop,
+  moveCard,
+  moveCardAsCost,
+  moveRandomGraveToDeckBottom,
+  putUnitOntoField,
+  revealDeckCards
+} from './BaseUtil';
+
+const differentColorNonGodUnitsInGrave = (playerState: any) =>
+  playerState.grave.filter((card: Card) => card.type === 'UNIT' && !card.godMark);
+
+const hasIrodoriThreeCost = (playerState: any) =>
+  new Set(differentColorNonGodUnitsInGrave(playerState).map((card: Card) => card.color)).size >= 3;
+
+const payIrodoriThreeCost = (gameState: any, playerState: any, instance: Card, selections: string[]) => {
+  const selected = selections
+    .map(id => playerState.grave.find((card: Card) => card.gamecardId === id))
+    .filter((card: Card | undefined): card is Card => !!card && card.type === 'UNIT' && !card.godMark);
+  const colors = new Set(selected.map(card => card.color));
+  if (selected.length !== 3 || colors.size !== 3) return false;
+
+  selected.forEach(card => moveCardAsCost(gameState, playerState.uid, card, 'EXILE', instance));
+  return true;
+};
+
+const effect_105110284_irodori_enter: CardEffect = {
+  id: '105110284_irodori_enter',
+  type: 'ACTIVATE',
+  triggerLocation: ['HAND'],
+  limitCount: 1,
+  limitNameType: true,
+  description: '【启】同名1回合1次，异彩3：将墓地3种颜色的非神蚀单位各1张放逐，将手牌中的这张卡放置到战场上。',
+  condition: (_gameState, playerState, instance) =>
+    instance.cardlocation === 'HAND' &&
+    playerState.isTurn &&
+    canPutUnitOntoBattlefield(playerState, instance) &&
+    hasIrodoriThreeCost(playerState),
+  cost: async (gameState, playerState, instance) => {
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      differentColorNonGodUnitsInGrave(playerState),
+      '选择异彩费用',
+      '选择墓地中3种颜色的非神蚀单位卡各1张放逐。',
+      3,
+      3,
+      { sourceCardId: instance.gamecardId, effectId: '105110284_irodori_enter', costType: 'SP02_Y01_IRODORI3' },
+      () => 'GRAVE'
+    );
+    return true;
+  },
+  execute: async (instance, gameState, playerState) => {
+    if (putUnitOntoField(gameState, playerState.uid, instance, instance)) {
+      (instance as any).data = {
+        ...((instance as any).data || {}),
+        enteredByIrodoriTurn: gameState.turnCount
+      };
+    }
+  },
+  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.costType !== 'SP02_Y01_IRODORI3') return;
+    if (!payIrodoriThreeCost(gameState, playerState, instance, selections)) {
+      context.cancelActivation = true;
+    }
+  }
+};
 
 const effect_105110284_creation_scar: CardEffect = {
   id: '105110284_creation_scar',
@@ -111,7 +181,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [effect_105110284_creation_scar],
+  effects: [effect_105110284_irodori_enter, effect_105110284_creation_scar],
   rarity: 'SR',
   availableRarities: ['SR'],
   cardPackage: 'SP02',

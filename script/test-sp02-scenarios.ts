@@ -2,6 +2,7 @@ import { ServerGameService } from '../server/ServerGameService';
 import { EventEngine } from '../src/services/EventEngine';
 import { Card, CardEffect, TriggerLocation } from '../src/types/game';
 import sp02W03 from '../src/scripts/101000282';
+import foxReporter from '../src/scripts/103000272';
 import judgeNekomata from '../src/scripts/103000274';
 import sp02Y01 from '../src/scripts/105110284';
 import sp02Y03 from '../src/scripts/105000323';
@@ -160,6 +161,43 @@ async function activateAndResolveByOpponentPass(state: any, playerUid: string, c
   await ServerGameService.passConfrontation(state, state.priorityPlayerId);
 }
 
+async function testStephanieIrodoriFromHand(): Promise<ScenarioResult> {
+  const name = 'SP02-Y01 can enter from hand by irodori 3';
+  const stephanie = cloneScriptCard(sp02Y01 as Card, 'HAND');
+  const redCost = testCard({ id: 'STEPH_RED_COST', fullName: 'Stephanie Red Cost', color: 'RED', cardlocation: 'GRAVE' });
+  const whiteCost = testCard({ id: 'STEPH_WHITE_COST', fullName: 'Stephanie White Cost', color: 'WHITE', cardlocation: 'GRAVE' });
+  const greenCost = testCard({ id: 'STEPH_GREEN_COST', fullName: 'Stephanie Green Cost', color: 'GREEN', cardlocation: 'GRAVE' });
+  const state = game({
+    hand: [stephanie],
+    grave: [redCost, whiteCost, greenCost],
+  });
+
+  const check = ServerGameService.checkEffectLimitsAndReqs(state, 'BOT', stephanie, stephanie.effects![0], 'HAND');
+  if (!check.valid) {
+    return fail(name, `expected irodori effect valid, got ${check.reason}`);
+  }
+
+  await ServerGameService.activateEffect(state, 'BOT', stephanie.gamecardId, 0);
+  if (state.pendingQuery?.callbackKey !== 'ACTIVATE_COST_RESOLVE') {
+    return fail(name, `expected irodori cost query, got ${state.pendingQuery?.callbackKey || 'none'}`);
+  }
+
+  await answerPendingQuery(state, 'BOT', [redCost.gamecardId, whiteCost.gamecardId, greenCost.gamecardId]);
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
+
+  const entered = state.players.BOT.unitZone.some((unit: Card | null) =>
+    unit?.gamecardId === stephanie.gamecardId &&
+    (unit as any).data?.enteredByIrodoriTurn === state.turnCount
+  );
+  const costsExiled = [redCost, whiteCost, greenCost].every(cost =>
+    state.players.BOT.exile.some((card: Card) => card.gamecardId === cost.gamecardId)
+  );
+
+  return entered && costsExiled && state.players.BOT.hand.length === 0 && !state.pendingQuery
+    ? pass(name, `unitZone=${state.players.BOT.unitZone.filter(Boolean).length}, exile=${state.players.BOT.exile.length}`)
+    : fail(name, `entered=${entered}, costsExiled=${costsExiled}, hand=${state.players.BOT.hand.length}, exile=${state.players.BOT.exile.length}, query=${state.pendingQuery?.callbackKey || 'none'}`);
+}
+
 async function testStephanieRedBranch(): Promise<ScenarioResult> {
   const name = 'SP02-Y01 red reveal mills opponent after creation-scar cost';
   const stephanie = cloneScriptCard(sp02Y01 as Card, 'UNIT', { playedTurn: 1 });
@@ -176,7 +214,7 @@ async function testStephanieRedBranch(): Promise<ScenarioResult> {
     }
   );
 
-  await activateAndResolveByOpponentPass(state, 'BOT', stephanie, 0);
+  await activateAndResolveByOpponentPass(state, 'BOT', stephanie, 1);
 
   const condition =
     state.players.BOT.exile.some((card: Card) => card.id === 'COST_FACE_DOWN' && card.displayState === 'FRONT_FACEDOWN') &&
@@ -254,7 +292,7 @@ async function testStephanieYellowBranch(): Promise<ScenarioResult> {
     }
   );
 
-  await activateAndResolveByOpponentPass(state, 'BOT', stephanie, 0);
+  await activateAndResolveByOpponentPass(state, 'BOT', stephanie, 1);
   const openedDiscardQuery =
     state.pendingQuery?.playerUid === 'P1' &&
     state.pendingQuery?.callbackKey === 'EFFECT_RESOLVE' &&
@@ -344,6 +382,54 @@ async function testManagerCopiesOneShotActivate(): Promise<ScenarioResult> {
   return executed && secondActivationBlocked
     ? pass(name, `copiedIndex=${copiedIndex}, exile=${state.players.BOT.exile.length}`)
     : fail(name, `executed=${executed}, secondBlocked=${secondActivationBlocked}, query=${state.pendingQuery?.callbackKey}`);
+}
+
+async function testFoxReporterDoesNotSearchItself(): Promise<ScenarioResult> {
+  const name = 'SP02-G01 Fox Reporter does not search non-irodori copies of itself';
+  const reporter = cloneScriptCard(foxReporter as Card, 'UNIT');
+  const discard = testCard({ id: 'FOX_DISCARD_COST', fullName: 'Fox Discard Cost', cardlocation: 'HAND' });
+  const reporterInDeck = cloneScriptCard(foxReporter as Card, 'DECK');
+  const irodoriTarget = cloneScriptCard(sp02Y01 as Card, 'DECK');
+  const state = game({
+    hand: [discard],
+    deck: [reporterInDeck, irodoriTarget],
+    unitZone: [reporter, null, null, null, null, null],
+  });
+
+  const trigger = reporter.effects?.[0];
+  if (!trigger?.condition?.(state, state.players.BOT, reporter, {
+    type: 'CARD_ENTERED_ZONE',
+    sourceCardId: reporter.gamecardId,
+    playerUid: 'BOT',
+    data: { zone: 'UNIT' },
+  } as any)) {
+    return fail(name, 'enter search trigger condition was false');
+  }
+
+  await trigger.cost?.(state, state.players.BOT, reporter);
+  await answerPendingQuery(state, 'BOT', [discard.gamecardId]);
+  await trigger.execute?.(reporter, state, state.players.BOT, {
+    type: 'CARD_ENTERED_ZONE',
+    sourceCardId: reporter.gamecardId,
+    playerUid: 'BOT',
+    data: { zone: 'UNIT' },
+  } as any);
+
+  const optionIds = new Set((state.pendingQuery?.options || []).map((option: any) => option.id));
+  const excludesReporter = !optionIds.has(reporterInDeck.gamecardId);
+  const includesIrodori = optionIds.has(irodoriTarget.gamecardId);
+
+  if (!excludesReporter || !includesIrodori) {
+    return fail(name, `options=${Array.from(optionIds).join(',')}, excludesReporter=${excludesReporter}, includesIrodori=${includesIrodori}`);
+  }
+
+  await answerPendingQuery(state, 'BOT', [irodoriTarget.gamecardId]);
+  const searchedIrodori = state.players.BOT.hand.some((card: Card) => card.gamecardId === irodoriTarget.gamecardId);
+  const reporterStillInDeck = state.players.BOT.deck.some((card: Card) => card.gamecardId === reporterInDeck.gamecardId);
+
+  return searchedIrodori && reporterStillInDeck
+    ? pass(name, `searched=${irodoriTarget.id}, reporterStillInDeck=${reporterStillInDeck}`)
+    : fail(name, `searchedIrodori=${searchedIrodori}, reporterStillInDeck=${reporterStillInDeck}, query=${state.pendingQuery?.callbackKey || 'none'}`);
 }
 
 async function testJudgeNekomataDeclaredColorPaysRequirement(): Promise<ScenarioResult> {
@@ -439,9 +525,11 @@ async function testTruthResetAndExtraTurn(): Promise<ScenarioResult> {
 
 const scenarios: { name: string; run: ScenarioRun }[] = [
   { name: 'SP02-W03 Ethel keeps grave exile cost targets selectable after declared target', run: testEthelGraveCostTargetsRemainSelectable },
+  { name: 'SP02-Y01 can enter from hand by irodori 3', run: testStephanieIrodoriFromHand },
   { name: 'SP02-Y01 red reveal mills opponent after creation-scar cost', run: testStephanieRedBranch },
   { name: 'SP02-Y01 yellow reveal asks opponent to discard and resolves', run: testStephanieYellowBranch },
   { name: 'SP02-Y03 copies an eligible activate effect for one use', run: testManagerCopiesOneShotActivate },
+  { name: 'SP02-G01 Fox Reporter does not search non-irodori copies of itself', run: testFoxReporterDoesNotSearchItself },
   { name: 'SP02-G03 Judge Nekomata declared color pays color requirement', run: testJudgeNekomataDeclaredColorPaysRequirement },
   { name: 'SP02-Y09 enters from hand, resets zones, locks attacks, and queues extra turn', run: testTruthResetAndExtraTurn },
 ];
