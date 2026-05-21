@@ -2070,7 +2070,7 @@ export const BattleField: React.FC = () => {
 
   return (
     <div
-      className="battle-field h-screen pt-16 bg-[#050505] flex flex-col overflow-hidden select-none font-sans relative safe-area-inset"
+      className="battle-field h-screen pt-0 md:pt-16 bg-[#050505] flex flex-col overflow-hidden select-none font-sans relative safe-area-inset pb-[calc(env(safe-area-inset-bottom)+8px)] md:pb-0"
       onClick={() => setCardMenu(null)}
     >
       <AnimatePresence>
