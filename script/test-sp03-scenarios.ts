@@ -456,9 +456,8 @@ async function testFuyioriRecoverAndTransform(): Promise<ScenarioResult> {
   const target = testCard({ id: 'TRANSFORM_TARGET', fullName: 'Transform Target', cardlocation: 'UNIT', godMark: false, power: 1000, basePower: 1000, damage: 1, baseDamage: 1 });
   const red = testCard({ id: 'RED_COST', color: 'RED', cardlocation: 'GRAVE' });
   const blue = testCard({ id: 'BLUE_COST', color: 'BLUE', cardlocation: 'GRAVE' });
-  const green = testCard({ id: 'GREEN_COST', color: 'GREEN', cardlocation: 'GRAVE' });
   const transformState = game({
-    grave: [red, blue, green],
+    grave: [red, blue],
     unitZone: [transformFuyiori, target, null, null, null, null],
   });
 
@@ -467,10 +466,10 @@ async function testFuyioriRecoverAndTransform(): Promise<ScenarioResult> {
     return fail(name, `recovered=${recovered}, expected transform target query got ${transformState.pendingQuery?.context?.step || 'none'}`);
   }
   await answerPendingQuery(transformState, 'BOT', [target.gamecardId]);
-  await answerPendingQuery(transformState, 'BOT', [red.gamecardId, blue.gamecardId, green.gamecardId]);
+  await answerPendingQuery(transformState, 'BOT', [red.gamecardId, blue.gamecardId]);
 
   const transformed = target.power === 3500 && target.damage === 2 && !!target.isAnnihilation;
-  const costsExiled = [red, blue, green].every(cost => transformState.players.BOT.exile.some((card: Card) => card.gamecardId === cost.gamecardId));
+  const costsExiled = [red, blue].every(cost => transformState.players.BOT.exile.some((card: Card) => card.gamecardId === cost.gamecardId));
   return recovered && transformed && costsExiled
     ? pass(name, `recovered=${recovered}, transformed=${target.power}/${target.damage}`)
     : fail(name, `recovered=${recovered}, transformed=${transformed}, costs=${costsExiled}`);
@@ -518,10 +517,12 @@ async function testKuyaBeastGirlSearchAndGravePut(): Promise<ScenarioResult> {
   const beastGirl = cloneScriptCard(sp03G05 as Card, 'HAND');
   const otherDiscard = testCard({ id: 'OTHER_DISCARD', fullName: 'Other Discard', cardlocation: 'HAND' });
   const search = cloneScriptCard(sp03G03 as Card, 'DECK');
-  const filler = testCard({ id: 'FILLER', fullName: 'Filler', cardlocation: 'DECK' });
+  const fillerA = testCard({ id: 'FILLER_A', fullName: 'Filler A', cardlocation: 'DECK' });
+  const fillerB = testCard({ id: 'FILLER_B', fullName: 'Filler B', cardlocation: 'DECK' });
+  const fillerC = testCard({ id: 'FILLER_C', fullName: 'Filler C', cardlocation: 'DECK' });
   const state = game({
     hand: [beastGirl, otherDiscard],
-    deck: [search, filler],
+    deck: [search, fillerA, fillerB, fillerC],
   });
 
   await activateAndResolveByOpponentPass(state, 'BOT', beastGirl, 0);
@@ -540,12 +541,15 @@ async function testKuyaBeastGirlSearchAndGravePut(): Promise<ScenarioResult> {
     return fail(name, `searched=${searched}, inGrave=${inGrave}`);
   }
 
+  const graveCountBeforeSelfPut = state.players.BOT.grave.length;
   await activateAndResolveByOpponentPass(state, 'BOT', beastGirl, 1);
   const live = state.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === beastGirl.gamecardId);
-  const milled = state.players.BOT.grave.length >= 2;
+  const milled = [fillerA, fillerB, fillerC].every(card =>
+    state.players.BOT.grave.some((grave: Card) => grave.gamecardId === card.gamecardId)
+  );
   return live && milled
     ? pass(name, `searched=${searched}, live=${live}, grave=${state.players.BOT.grave.length}`)
-    : fail(name, `live=${live}, grave=${state.players.BOT.grave.length}`);
+    : fail(name, `live=${live}, graveBefore=${graveCountBeforeSelfPut}, grave=${state.players.BOT.grave.length}`);
 }
 
 async function testKuyaColdDewSearchAndDestroy(): Promise<ScenarioResult> {
@@ -556,9 +560,12 @@ async function testKuyaColdDewSearchAndDestroy(): Promise<ScenarioResult> {
   const target = testCard({ id: 'ACCESS3_TARGET', fullName: 'Access 3 Target', acValue: 3, godMark: false, cardlocation: 'UNIT' });
   const invalidHigh = testCard({ id: 'ACCESS4_TARGET', fullName: 'Access 4 Target', acValue: 4, godMark: false, cardlocation: 'UNIT' });
   const invalidGod = testCard({ id: 'GOD_TARGET', fullName: 'God Target', acValue: 3, godMark: true, cardlocation: 'UNIT' });
+  const payerA = testCard({ id: 'COLD_DEW_PAYER_A', fullName: 'Cold Dew Payer A', color: 'RED', cardlocation: 'UNIT', isExhausted: false });
+  const payerB = testCard({ id: 'COLD_DEW_PAYER_B', fullName: 'Cold Dew Payer B', color: 'RED', cardlocation: 'UNIT', isExhausted: false });
   const state = game({
     hand: [coldDew, otherDiscard],
     deck: [search],
+    unitZone: [payerA, payerB, null, null, null, null],
   }, {
     unitZone: [target, invalidHigh, invalidGod, null, null, null],
   });
@@ -579,7 +586,15 @@ async function testKuyaColdDewSearchAndDestroy(): Promise<ScenarioResult> {
     return fail(name, `searched=${searched}, inGrave=${inGrave}`);
   }
 
-  await activateAndResolveByOpponentPass(state, 'BOT', coldDew, 1);
+  await ServerGameService.activateEffect(state, 'BOT', coldDew.gamecardId, 1);
+  if (state.pendingQuery?.callbackKey !== 'ACTIVATE_COST_RESOLVE') {
+    return fail(name, `expected payment query, got ${state.pendingQuery?.context?.effectId || state.pendingQuery?.callbackKey || 'none'}`);
+  }
+  await answerPendingQuery(state, 'BOT', [JSON.stringify({ exhaustUnitIds: [payerA.gamecardId, payerB.gamecardId] })]);
+  if (state.phase !== 'COUNTERING') {
+    return fail(name, `expected COUNTERING after payment, got ${state.phase}`);
+  }
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
   if (state.pendingQuery?.context?.effectId !== '102000288_grave_destroy_access_three') {
     return fail(name, `expected destroy query, got ${state.pendingQuery?.context?.effectId || state.pendingQuery?.callbackKey || 'none'}`);
   }
@@ -589,10 +604,11 @@ async function testKuyaColdDewSearchAndDestroy(): Promise<ScenarioResult> {
   }
   await answerPendingQuery(state, 'BOT', [target.gamecardId]);
 
+  const paid = payerA.isExhausted === true && payerB.isExhausted === true;
   const destroyed = state.players.P1.grave.some((card: Card) => card.gamecardId === target.gamecardId);
-  return destroyed
-    ? pass(name, `searched=${searched}, destroyed=${destroyed}`)
-    : fail(name, `destroyed=${destroyed}`);
+  return paid && destroyed
+    ? pass(name, `searched=${searched}, paid=${paid}, destroyed=${destroyed}`)
+    : fail(name, `paid=${paid}, destroyed=${destroyed}`);
 }
 
 async function testKuyaFrostRiverSearchAndRecover(): Promise<ScenarioResult> {
@@ -635,6 +651,16 @@ async function testKuyaFrostRiverSearchAndRecover(): Promise<ScenarioResult> {
 async function testFlameRayIrodoriDestroysWithSacrifice(): Promise<ScenarioResult> {
   const name = 'SP03-R03 enters by irodori 2 and destroys non-god card with sacrifice';
   const flameRay = cloneScriptCard(sp03R03 as Card, 'HAND');
+  const redSourceA = testCard({ id: 'R03_RED_SOURCE_A', fullName: 'Red Source A', color: 'RED', cardlocation: 'UNIT' });
+  const redSourceB = testCard({ id: 'R03_RED_SOURCE_B', fullName: 'Red Source B', color: 'RED', cardlocation: 'UNIT' });
+  const colorState = game({
+    hand: [flameRay],
+    unitZone: [redSourceA, null, null, null, null, null],
+  });
+  const needsTwoRed = !ServerGameService.canPlayCard(colorState, colorState.players.BOT, flameRay).canPlay;
+  colorState.players.BOT.unitZone[1] = redSourceB;
+  const twoRedPlayable = ServerGameService.canPlayCard(colorState, colorState.players.BOT, flameRay).canPlay;
+
   const redCost = testCard({ id: 'RED_COST', fullName: 'Red Cost', color: 'RED', cardlocation: 'GRAVE' });
   const greenCost = testCard({ id: 'GREEN_COST', fullName: 'Green Cost', color: 'GREEN', cardlocation: 'GRAVE' });
   const sacrifice = testCard({ id: 'SAC_UNIT', fullName: 'Sac Unit', color: 'BLUE', cardlocation: 'UNIT', godMark: false });
@@ -671,9 +697,9 @@ async function testFlameRayIrodoriDestroysWithSacrifice(): Promise<ScenarioResul
 
   const sacrificed = state.players.BOT.grave.some((card: Card) => card.gamecardId === sacrifice.gamecardId);
   const destroyed = state.players.P1.grave.some((card: Card) => card.gamecardId === target.gamecardId);
-  return entered && costsExiled && sacrificed && destroyed
-    ? pass(name, `entered=${entered}, destroyed=${destroyed}`)
-    : fail(name, `entered=${entered}, costs=${costsExiled}, sacrificed=${sacrificed}, destroyed=${destroyed}`);
+  return needsTwoRed && twoRedPlayable && entered && costsExiled && sacrificed && destroyed
+    ? pass(name, `color=${needsTwoRed}/${twoRedPlayable}, entered=${entered}, destroyed=${destroyed}`)
+    : fail(name, `color=${needsTwoRed}/${twoRedPlayable}, entered=${entered}, costs=${costsExiled}, sacrificed=${sacrificed}, destroyed=${destroyed}`);
 }
 
 async function testRainbowCeliaIrodoriContinuousAndReady(): Promise<ScenarioResult> {

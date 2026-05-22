@@ -1,32 +1,23 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import {
-  addTemporaryColor,
   createSelectCardQuery,
+  isAlchemyEffectSource,
   moveCard,
   nameContains,
-  paymentCost
+  paymentCost,
+  wasSentFromFieldToGraveByCardEffect
 } from './BaseUtil';
-
-const allColors = ['WHITE', 'BLUE', 'GREEN', 'RED', 'YELLOW'];
 
 const immortalStoneCandidates = (playerState: any) =>
   [...playerState.deck, ...playerState.grave].filter((card: Card) => card.id === '305000062' || nameContains(card, '永生石'));
-
-const wasSentToGraveByEffect = (event: any) =>
-  event?.sourceCardId &&
-  event.data?.zone === 'UNIT' &&
-  event.data?.targetZone === 'GRAVE' &&
-  event.data?.isEffect === true;
 
 const cardEffects: CardEffect[] = [{
   id: '105000384_all_colors_for_alchemy',
   type: 'CONTINUOUS',
   triggerLocation: ['UNIT'],
   description: '卡名含有《炼金》的卡的效果将战场上的这张卡送入墓地时，这张卡视作具备所有颜色。',
-  applyContinuous: (_gameState, instance) => {
-    allColors.forEach(color => addTemporaryColor(instance, color));
-  }
+  applyContinuous: () => {}
 }, {
   id: '105000384_effect_grave_search_immortal_stone',
   type: 'TRIGGER',
@@ -34,9 +25,10 @@ const cardEffects: CardEffect[] = [{
   triggerEvent: 'CARD_LEFT_ZONE',
   cost: paymentCost(2),
   description: '这张卡由于卡的效果送去墓地时，支付ACCESS2：将卡组或墓地中的1张《永生石》加入手牌。',
-  condition: (_gameState, playerState, instance, event) =>
+  condition: (gameState, playerState, instance, event) =>
     event?.sourceCardId === instance.gamecardId &&
-    wasSentToGraveByEffect(event) &&
+    wasSentFromFieldToGraveByCardEffect(event, instance) &&
+    isAlchemyEffectSource(gameState, event.data?.effectSourceCardId) &&
     immortalStoneCandidates(playerState).length > 0,
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(

@@ -6,7 +6,8 @@ import {
   createSelectCardQuery,
   destroyByEffect,
   moveCard,
-  moveCardAsCost
+  moveCardAsCost,
+  paymentCost
 } from './BaseUtil';
 
 const isKuyaCard = (card: Card) =>
@@ -86,6 +87,7 @@ const effect_102000288_grave_destroy_access_three: CardEffect = {
   triggerLocation: ['GRAVE'],
   limitCount: 1,
   limitNameType: true,
+  cost: paymentCost(2),
   description: '同名1回合1次：这张卡作为卡牌能力费用从手牌送墓的回合，从墓地选择战场上1个ACCESS值3的非神蚀单位破坏。',
   condition: (gameState, playerState, instance) =>
     instance.cardlocation === 'GRAVE' &&

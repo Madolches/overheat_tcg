@@ -1768,6 +1768,10 @@ async function testYellowGuardRawStoneAndStories(): Promise<ScenarioResult> {
   const rawStone = cloneScriptCard(bt07Y04 as Card, 'UNIT');
   const immortalStone = cloneScriptCard(bt07Y09 as Card, 'DECK');
   const alchemySource = testCard({ id: 'Y04_ALCHEMY', fullName: '炼金 Source', type: 'UNIT', color: 'YELLOW', cardlocation: 'UNIT' });
+  const rawColorState = game({
+    unitZone: [cloneScriptCard(bt07Y04 as Card, 'UNIT', { gamecardId: 'Y04_COLOR_RAW' }), null, null, null, null, null],
+  });
+  const rawColorBeforeAlchemyMove = ServerGameService.getColorRequirementResult(rawColorState.players.BOT, { BLUE: 1 }).valid;
   const rawState = game({
     unitZone: [rawStone, alchemySource, null, null, null, null],
     deck: [immortalStone, ...deckCards(5, 'Y04_PAY', 'YELLOW')],
@@ -1784,7 +1788,10 @@ async function testYellowGuardRawStoneAndStories(): Promise<ScenarioResult> {
   if (rawState.pendingQuery?.context?.effectId === '105000384_effect_grave_search_immortal_stone') {
     await answerPendingQuery(rawState, 'BOT', [immortalStone.gamecardId]);
   }
-  const rawSearched = rawState.players.BOT.hand.some((card: Card) => card.gamecardId === immortalStone.gamecardId);
+  const rawPaymentAsked = rawState.players.BOT.erosionFront.length + rawState.players.BOT.erosionBack.length === 2;
+  const rawSearched = rawPaymentAsked &&
+    !rawColorBeforeAlchemyMove &&
+    rawState.players.BOT.hand.some((card: Card) => card.gamecardId === immortalStone.gamecardId);
 
   const party = cloneScriptCard(bt07Y06 as Card, 'PLAY');
   const partyTarget = testCard({ id: 'Y06_TARGET', type: 'UNIT', godMark: false, cardlocation: 'UNIT' });

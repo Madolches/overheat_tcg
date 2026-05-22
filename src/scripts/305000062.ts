@@ -5,23 +5,10 @@ import {
   createSelectCardQuery,
   isAlchemyCard,
   moveCard,
-  nameContains
+  wasSentFromFieldToGraveByAlchemyEffect
 } from './BaseUtil';
 
 const allColors = ['WHITE', 'BLUE', 'GREEN', 'RED', 'YELLOW'];
-
-const wasSentToGraveByAlchemyEffect = (gameState: any, instance: Card, event: any) => {
-  if (
-    event?.sourceCardId !== instance.gamecardId ||
-    event.data?.zone !== 'ITEM' ||
-    event.data?.targetZone !== 'GRAVE' ||
-    event.data?.isEffect !== true
-  ) {
-    return false;
-  }
-  const source = AtomicEffectExecutor.findCardById(gameState, event.data?.effectSourceCardId);
-  return !!source && nameContains(source, '炼金');
-};
 
 const alchemyGraveCards = (playerState: any) =>
   playerState.grave.filter((card: Card) => isAlchemyCard(card));
@@ -51,7 +38,7 @@ const cardEffects: CardEffect[] = [{
   triggerEvent: 'CARD_LEFT_ZONE',
   description: '这张卡被卡名含有《炼金》的卡的效果送入墓地时，可以将墓地最多2张《炼金》卡放置到卡组底。之后抽1张卡，将这张卡放逐。',
   condition: (gameState, _playerState, instance, event) =>
-    wasSentToGraveByAlchemyEffect(gameState, instance, event),
+    wasSentFromFieldToGraveByAlchemyEffect(gameState, instance, event),
   execute: async (instance, gameState, playerState) => {
     const candidates = alchemyGraveCards(playerState);
     if (candidates.length === 0) {

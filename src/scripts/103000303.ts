@@ -87,10 +87,10 @@ const effect_103000303_grave_self_put: CardEffect = {
     instance.cardlocation === 'GRAVE' &&
     canActivateDefaultTiming(gameState, playerState) &&
     wasDiscardedAsCostFromHandThisTurn(instance, gameState) &&
-    playerState.deck.length > 0 &&
+    playerState.deck.length >= 3 &&
     canPutUnitOntoBattlefield(playerState, instance),
   execute: async (instance, gameState, playerState) => {
-    millTop(gameState, playerState.uid, 1, instance);
+    millTop(gameState, playerState.uid, 3, instance);
     putUnitOntoField(gameState, playerState.uid, instance, instance);
   }
 };

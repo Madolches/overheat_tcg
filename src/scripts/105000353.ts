@@ -4,7 +4,7 @@ import {
   canPutUnitOntoBattlefield,
   createSelectCardQuery,
   isAlchemyCard,
-  isFeijingUnit,
+  isThisTurnFeijingUnitSentToGraveByAlchemyEffect,
   moveCardAsCost,
   putUnitOntoField
 } from './BaseUtil';
@@ -34,17 +34,9 @@ const enteredFromDeckByAlchemy = (instance: Card, gameState: any, event?: any) =
     return !!source && isAlchemyCard(source);
   })();
 
-const wasSentToGraveByAlchemyThisTurn = (gameState: any, card: Card) => {
-  const data = (card as any).data || {};
-  if (data.sentToGraveFromFieldByEffectTurn !== gameState.turnCount) return false;
-  const source = AtomicEffectExecutor.findCardById(gameState, data.sentToGraveFromFieldByEffectSourceCardId);
-  return !!source && isAlchemyCard(source);
-};
-
 const getPowerCostCandidates = (gameState: any, playerState: any) =>
   playerState.grave.filter((card: Card) =>
-    isFeijingUnit(card) &&
-    wasSentToGraveByAlchemyThisTurn(gameState, card)
+    isThisTurnFeijingUnitSentToGraveByAlchemyEffect(gameState, card)
   );
 
 const getSameNameDeckCandidates = (playerState: any) =>

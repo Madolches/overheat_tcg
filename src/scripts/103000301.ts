@@ -21,17 +21,17 @@ const greenCostCards = (playerState: any) =>
     AtomicEffectExecutor.matchesColor(card, 'GREEN')
   );
 
-const hasThreeRequiredCostColors = (playerState: any) => {
+const hasTwoRequiredCostColors = (playerState: any) => {
   const colors = new Set(greenCostCards(playerState).map((card: Card) => card.color));
-  return colors.has('RED') && colors.has('BLUE') && colors.has('GREEN');
+  return ['RED', 'BLUE', 'GREEN'].filter(color => colors.has(color as Card['color'])).length >= 2;
 };
 
-const payRedBlueGreenGraveCost = (gameState: any, playerState: any, instance: Card, selections: string[]) => {
+const payTwoOfRedBlueGreenGraveCost = (gameState: any, playerState: any, instance: Card, selections: string[]) => {
   const selected = selections
     .map(id => playerState.grave.find((card: Card) => card.gamecardId === id))
     .filter((card: Card | undefined): card is Card => !!card);
-  const colors = new Set(selected.map(card => card.color));
-  if (selected.length !== 3 || !colors.has('RED') || !colors.has('BLUE') || !colors.has('GREEN')) return false;
+  const colors = new Set(selected.map(card => card.color).filter(color => ['RED', 'BLUE', 'GREEN'].includes(String(color))));
+  if (selected.length !== 2 || colors.size !== 2) return false;
   selected.forEach(card => moveCardAsCost(gameState, playerState.uid, card, 'EXILE', instance));
   return true;
 };
@@ -119,7 +119,7 @@ const effect_103000301_transform_unit: CardEffect = {
     instance.cardlocation === 'UNIT' &&
     canActivateDefaultTiming(gameState, playerState) &&
     ownUnits(playerState).some(unit => !unit.godMark) &&
-    hasThreeRequiredCostColors(playerState),
+    hasTwoRequiredCostColors(playerState),
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,
@@ -142,9 +142,9 @@ const effect_103000301_transform_unit: CardEffect = {
         playerState.uid,
         greenCostCards(playerState),
         '选择费用',
-        '选择墓地中的红、蓝、绿3种颜色卡各1张放逐。',
-        3,
-        3,
+        '选择墓地中的红色、蓝色、绿色中的2种颜色的卡各1张放逐。',
+        2,
+        2,
         {
           sourceCardId: instance.gamecardId,
           effectId: '103000301_transform_unit',
@@ -157,7 +157,7 @@ const effect_103000301_transform_unit: CardEffect = {
     }
 
     if (context?.step !== 'COST') return;
-    if (!payRedBlueGreenGraveCost(gameState, playerState, instance, selections)) return;
+    if (!payTwoOfRedBlueGreenGraveCost(gameState, playerState, instance, selections)) return;
     const target = context.targetId ? AtomicEffectExecutor.findCardById(gameState, context.targetId) : undefined;
     if (target?.cardlocation === 'UNIT' && ownerUidOf(gameState, target) === playerState.uid && !target.godMark) {
       markAsTwoDamageThirtyFive(target, instance);

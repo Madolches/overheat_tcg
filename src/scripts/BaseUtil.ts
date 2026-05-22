@@ -773,6 +773,27 @@ export const countItemTypes = (player: PlayerState) =>
   new Set(player.itemZone.filter((card): card is Card => !!card).map(card => card.id)).size;
 
 export const isAlchemyCard = (card?: Card | null) => !!card && card.fullName.includes('炼金');
+export const isAlchemyEffectSource = (gameState: GameState, sourceCardId?: string) =>
+  !!sourceCardId && isAlchemyCard(AtomicEffectExecutor.findCardById(gameState, sourceCardId));
+export const wasSentFromFieldToGraveByCardEffect = (event: any, instance?: Card) =>
+  (!instance || event?.sourceCardId === instance.gamecardId || event?.targetCardId === instance.gamecardId) &&
+  event?.data?.isEffect === true &&
+  (event.data?.sourceZone === 'UNIT' || event.data?.sourceZone === 'ITEM' || event.data?.zone === 'UNIT' || event.data?.zone === 'ITEM') &&
+  event.data?.targetZone === 'GRAVE';
+export const wasSentFromFieldToGraveByAlchemyEffect = (gameState: GameState, card: Card, event?: any) => {
+  if (event) {
+    const matchesEventCard = event.sourceCardId === card.gamecardId || event.targetCardId === card.gamecardId;
+    if (matchesEventCard && wasSentFromFieldToGraveByCardEffect(event, card)) {
+      return isAlchemyEffectSource(gameState, event.data?.effectSourceCardId);
+    }
+  }
+
+  const data = (card as any).data || {};
+  if (data.sentToGraveFromFieldByEffectTurn !== gameState.turnCount) return false;
+  return isAlchemyEffectSource(gameState, data.sentToGraveFromFieldByEffectSourceCardId);
+};
+export const isThisTurnFeijingUnitSentToGraveByAlchemyEffect = (gameState: GameState, card: Card) =>
+  isFeijingUnit(card) && wasSentFromFieldToGraveByAlchemyEffect(gameState, card);
 export const isTruthOrHickUnit = (card: Card) => card.type === 'UNIT' && (card.specialName === '真理' || card.specialName === '希克');
 export const isValkyrieUnit = (card: Card) => card.type === 'UNIT' && card.specialName === '瓦尔基里';
 export const isYellowHandCard = (card: Card) => card.cardlocation === 'HAND' && card.color === 'YELLOW';

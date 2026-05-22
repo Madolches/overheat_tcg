@@ -1851,13 +1851,19 @@ async function testYellowHighAlchemyChipAndGiant(): Promise<ScenarioResult> {
   const chipCopy = cloneScriptCard(bt06Y06 as Card, 'DECK');
   const giant = cloneScriptCard(bt06Y07 as Card, 'DECK');
   const feijingCost = cloneScriptCard(bt06Y01 as Card, 'UNIT');
+  const invalidFeijingCost = cloneScriptCard(bt06Y01 as Card, 'GRAVE', { gamecardId: 'Y09_INVALID_FEIJING_COST' });
   const itemCost = testCard({ id: 'Y09_ITEM_COST', type: 'ITEM', color: 'YELLOW', cardlocation: 'ITEM' });
   const state = game({
     hand: [storyCard],
     deck: [chipCopy, giant, chip, ...deckCards(4, 'Y09_FILL', 'YELLOW')],
     unitZone: [feijingCost, null, null, null, null, null],
     itemZone: [itemCost],
+    grave: [invalidFeijingCost],
   });
+  (invalidFeijingCost as any).data = {
+    sentToGraveFromFieldByEffectTurn: state.turnCount,
+    sentToGraveFromFieldByEffectSourceCardId: itemCost.gamecardId,
+  };
   await playStoryAndResolve(state, 'BOT', storyCard);
   if (state.pendingQuery?.context?.step !== 'SEND_FIELD') return fail(name, `expected SEND_FIELD, got ${state.pendingQuery?.context?.step || 'none'}`);
   await answerPendingQuery(state, 'BOT', [feijingCost.gamecardId, itemCost.gamecardId]);
@@ -1868,6 +1874,9 @@ async function testYellowHighAlchemyChipAndGiant(): Promise<ScenarioResult> {
   if (state.pendingQuery?.callbackKey === 'TRIGGER_CHOICE') {
     await answerPendingQuery(state, 'BOT', ['YES']);
   }
+  const costOptionsText = JSON.stringify(state.pendingQuery?.options || []);
+  const chipOnlyAlchemyFeijingCost = costOptionsText.includes(feijingCost.gamecardId) &&
+    !costOptionsText.includes(invalidFeijingCost.gamecardId);
   if (state.pendingQuery?.context?.step === 'EXILE_COST') {
     await answerPendingQuery(state, 'BOT', [feijingCost.gamecardId]);
   }
@@ -1903,9 +1912,9 @@ async function testYellowHighAlchemyChipAndGiant(): Promise<ScenarioResult> {
   EventEngine.recalculateContinuousEffects(giantState);
   const giantBoosted = liveGiant?.power === 4000 && !!liveGiant?.isHeroic;
 
-  return chipPowered && chipCostExiled && chipCopyExhausted && chipCopyFromDeck && storyResolved && giantBoosted
-    ? pass(name, `chip=${chipPowered}, copy=${chipCopyExhausted}, giant=${giantBoosted}`)
-    : fail(name, `chip=${chipPowered}, cost=${chipCostExiled}, copy=${chipCopyExhausted}/${chipCopyFromDeck}, story=${storyResolved}, giant=${giantBoosted}`);
+  return chipPowered && chipCostExiled && chipOnlyAlchemyFeijingCost && chipCopyExhausted && chipCopyFromDeck && storyResolved && giantBoosted
+    ? pass(name, `chip=${chipPowered}, costFilter=${chipOnlyAlchemyFeijingCost}, copy=${chipCopyExhausted}, giant=${giantBoosted}`)
+    : fail(name, `chip=${chipPowered}, cost=${chipCostExiled}/${chipOnlyAlchemyFeijingCost}, copy=${chipCopyExhausted}/${chipCopyFromDeck}, story=${storyResolved}, giant=${giantBoosted}`);
 }
 
 async function testAcademyFeijingMerchantLeaveTrigger(): Promise<ScenarioResult> {
