@@ -12,16 +12,16 @@ import {
 
 const cardEffects: CardEffect[] = [story(
   '205000111_puppet_party',
-  '创痕：选择战场1张卡，公开卡组顶3张。若公开的卡中有神蚀卡，破坏目标。之后放逐这张卡并洗切卡组。',
+  '创痕1：选择战场1张卡，公开卡组顶5张。若公开的卡中有神蚀卡，破坏目标。之后放逐这张卡并洗切卡组。',
   async (instance, gameState, playerState) => {
     const candidates = allCardsOnField(gameState);
-    if (candidates.length === 0 || playerState.deck.length === 0) return;
+    if (candidates.length === 0 || playerState.deck.length < 5) return;
     createSelectCardQuery(
       gameState,
       playerState.uid,
       candidates,
       '选择宴会目标',
-      '选择战场上的1张卡。公开卡组顶3张，若其中有神蚀卡则破坏目标。',
+      '选择战场上的1张卡。公开卡组顶5张，若其中有神蚀卡则破坏目标。',
       1,
       1,
       { sourceCardId: instance.gamecardId, effectId: '205000111_puppet_party', step: 'TARGET' },
@@ -29,13 +29,14 @@ const cardEffects: CardEffect[] = [story(
     );
   },
   {
+    erosionBackLimit: [1, 10],
     condition: (gameState, playerState) =>
       allCardsOnField(gameState).length > 0 &&
-      playerState.deck.length > 0,
+      playerState.deck.length >= 5,
     onQueryResolve: async (instance, gameState, playerState, selections, context) => {
       if (context?.step !== 'TARGET') return;
       const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
-      const revealed = revealDeckCards(gameState, playerState.uid, 3, instance);
+      const revealed = revealDeckCards(gameState, playerState.uid, 5, instance);
       if (target && ['UNIT', 'ITEM'].includes(target.cardlocation || '') && revealed.some(card => isVirtualGodMarkReveal(gameState, card))) {
         destroyByEffect(gameState, target, instance);
       }

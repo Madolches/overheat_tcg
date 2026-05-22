@@ -20,7 +20,6 @@ const awakenUnitEntries = (playerState: any) =>
 const cardEffects: CardEffect[] = [
   {
     ...resonanceEffect('103080317_resonance'),
-    erosionBackLimit: [1, 10],
     cost: async (gameState, playerState, instance) => {
       if (playerState.deck.length < 2) return false;
       millTop(gameState, playerState.uid, 2, instance);
@@ -56,10 +55,10 @@ const cardEffects: CardEffect[] = [
     id: '103080317_put_awaken_unit',
     type: 'ACTIVATE',
     triggerLocation: ['HAND', 'UNIT'],
-    erosionBackLimit: [2, 10],
+    erosionBackLimit: [1, 10],
     limitCount: 1,
     limitNameType: true,
-    description: '创痕2：同名1回合1次，将手牌或战场上的这张卡送入墓地，将卡组或墓地中1张具有唤醒的单位卡放置到战场。',
+    description: '创痕1：同名1回合1次，将手牌或战场上的这张卡送入墓地，将卡组或墓地中1张具有唤醒的单位卡放置到战场。',
     condition: (_gameState, playerState, instance) =>
       ['HAND', 'UNIT'].includes(instance.cardlocation || '') &&
       awakenUnitEntries(playerState).length > 0,

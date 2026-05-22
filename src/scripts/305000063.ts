@@ -17,9 +17,10 @@ const sameNameCandidates = (playerState: any, target: Card) =>
     card.id === target.id || card.fullName === target.fullName
   );
 
-const faceDownExileTop = (gameState: any, playerState: any, instance: Card) => {
-  const top = getTopDeckCards(playerState, 1)[0];
-  if (top) moveCard(gameState, playerState.uid, top, 'EXILE', instance, { faceDown: true });
+const faceDownExileTop = (gameState: any, playerState: any, instance: Card, count = 1) => {
+  getTopDeckCards(playerState, count).forEach(card =>
+    moveCard(gameState, playerState.uid, card, 'EXILE', instance, { faceDown: true })
+  );
 };
 
 const cardEffects: CardEffect[] = [{
@@ -32,9 +33,9 @@ const cardEffects: CardEffect[] = [{
     instance.cardlocation === 'ITEM' &&
     event?.sourceCardId === instance.gamecardId &&
     event.data?.zone === 'ITEM' &&
-    playerState.deck.length > 0,
+    playerState.deck.length >= 2,
   execute: async (instance, gameState, playerState) => {
-    faceDownExileTop(gameState, playerState, instance);
+    faceDownExileTop(gameState, playerState, instance, 2);
   }
 }, {
   id: '305000063_analyze_same_name',
@@ -48,7 +49,7 @@ const cardEffects: CardEffect[] = [{
     playerState.isTurn &&
     gameState.phase === 'MAIN' &&
     !instance.isExhausted &&
-    playerState.deck.length > 0 &&
+    playerState.deck.length >= 2 &&
     opponentGraveTargets(gameState, playerState.uid).length > 0,
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
@@ -69,7 +70,7 @@ const cardEffects: CardEffect[] = [{
       const opponent = gameState.players[opponentUid];
       const target = opponent.grave.find((card: Card) => card.gamecardId === selections[0]);
       if (!target) return;
-      faceDownExileTop(gameState, playerState, instance);
+      faceDownExileTop(gameState, playerState, instance, 2);
       const candidates = sameNameCandidates(opponent, target);
       if (candidates.length === 0) return;
       createSelectCardQuery(

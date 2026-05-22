@@ -1,5 +1,6 @@
 import { Card, GameState, PlayerState, CardEffect, TriggerLocation, GameEvent } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import { canMeetBattlefieldColorRequirement } from './BaseUtil';
 
 const effect_104020068_trigger: CardEffect = {
   id: 'aketi_rotation_trigger',
@@ -172,23 +173,7 @@ const effect_104020068_activate_play: CardEffect = {
     if (instance.specialName && playerState.unitZone.some(u => u?.specialName === instance.specialName)) return false;
 
     // 3. Color Requirement Check
-    const availableColors: Record<string, number> = { BLUE: 0, RED: 0, WHITE: 0, YELLOW: 0, GREEN: 0 };
-    let omniCount = 0;
-    playerState.unitZone.forEach(c => {
-      if (!c) return;
-      const isOmni = String(c.id) === '105000481' || (c.effects && c.effects.some(e => e.id === '105000481_omni'));
-      if (isOmni) {
-        omniCount++;
-      } else if (c.color !== 'NONE') {
-        availableColors[c.color] = (availableColors[c.color] || 0) + 1;
-      }
-    });
-
-    let totalDeficit = 0;
-    for (const [color, req] of Object.entries(instance.colorReq || {})) {
-      totalDeficit += Math.max(0, (req as number) - (availableColors[color] || 0));
-    }
-    if (totalDeficit > omniCount) return false;
+    if (!canMeetBattlefieldColorRequirement(playerState, instance)) return false;
 
     // 4. Cost Sufficiency Check (AC Value vs Erosion Capacity)
     let remainingCost = instance.acValue;

@@ -2,7 +2,7 @@ import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import { EventEngine } from '../services/EventEngine';
 import { GameService } from '../services/gameService';
-import { canPutItemOntoBattlefield, canPutUnitOntoBattlefield, createChoiceQuery, createSelectCardQuery, revealDeckCards } from './BaseUtil';
+import { canMeetBattlefieldColorRequirement, canPutItemOntoBattlefield, canPutUnitOntoBattlefield, createChoiceQuery, createSelectCardQuery, revealDeckCards } from './BaseUtil';
 import { moveCard } from './BaseUtil';
 
 const getErosionTotal = (playerState: any) =>
@@ -29,30 +29,6 @@ const canUse205000136AsPaymentSubstitute = (card: Card | undefined, paymentColor
   !!cost &&
   cost > 0 &&
   cost <= 3;
-
-const canMeetColorRequirement = (playerState: any, card: Card) => {
-  const availableColors: Record<string, number> = { RED: 0, WHITE: 0, YELLOW: 0, BLUE: 0, GREEN: 0, NONE: 0 };
-  let omniColorCount = 0;
-
-  playerState.unitZone.forEach((unit: Card | null) => {
-    if (!unit) return;
-    const isOmni = String(unit.id) === '105000481' || unit.effects?.some(effect => effect.id === '105000481_omni');
-    if (isOmni) {
-      omniColorCount += 1;
-      return;
-    }
-    if (unit.color !== 'NONE') {
-      availableColors[unit.color] = (availableColors[unit.color] || 0) + 1;
-    }
-  });
-
-  let totalDeficit = 0;
-  for (const [color, reqCount] of Object.entries(card.colorReq || {})) {
-    totalDeficit += Math.max(0, Number(reqCount) - (availableColors[color] || 0));
-  }
-
-  return totalDeficit <= omniColorCount;
-};
 
 const getEffectiveLimitGodmarkCount = (playerState: any, card: Card) => {
   const fieldEffect = playerState.unitZone
@@ -99,7 +75,7 @@ const canAffordCardCost = (gameState: any, playerState: any, card: Card) => {
 const canUseRevealedCard = (gameState: any, playerState: any, card: Card) => {
   const playCheck = GameService.canPlayCard(gameState, playerState, card);
   if (!playCheck.canPlay) return false;
-  if (!canMeetColorRequirement(playerState, card)) return false;
+  if (!canMeetBattlefieldColorRequirement(playerState, card)) return false;
   if (!canAffordCardCost(gameState, playerState, card)) return false;
   if (playerState.factionLock && card.faction !== playerState.factionLock) return false;
 

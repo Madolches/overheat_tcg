@@ -42,8 +42,9 @@ const cardEffects: CardEffect[] = [{
   limitCount: 1,
   cost: discardHandCost(1),
   description: 'OH：1回合1次，舍弃1张手牌，选择战场上1张非神蚀卡破坏；直到下一次你的回合开始失去这个启动能力。',
-  condition: (gameState, _playerState, instance) =>
+  condition: (gameState, playerState, instance) =>
     instance.cardlocation === 'UNIT' &&
+    playerState.isGoddessMode &&
     !ohDisabled(instance) &&
     nonGodFieldCards(gameState).length > 0,
   execute: async (instance, gameState, playerState) => {
