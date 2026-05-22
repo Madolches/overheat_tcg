@@ -5809,6 +5809,20 @@ export const ServerGameService = {
             delete (card as any).data.combatImmuneUntilOwnNextTurnStartUid;
             delete (card as any).data.combatImmuneSourceName;
           }
+          if ((card as any).data?.tradeEffectDisabledUntilOwnStartUid === nextPlayerId) {
+            delete (card as any).data.tradeEffectDisabledUntilOwnStartUid;
+          }
+          const disabledAketiRecordModes = (card as any).data?.disabledAketiRecordModesUntilOwnStart;
+          if (disabledAketiRecordModes) {
+            Object.keys(disabledAketiRecordModes).forEach(mode => {
+              if (disabledAketiRecordModes[mode] === nextPlayerId) {
+                delete disabledAketiRecordModes[mode];
+              }
+            });
+            if (Object.keys(disabledAketiRecordModes).length === 0) {
+              delete (card as any).data.disabledAketiRecordModesUntilOwnStart;
+            }
+          }
           if ((card as any).data?.forcedAttackTurn !== undefined && (card as any).data.forcedAttackTurn < gameState.turnCount) {
             delete (card as any).data.forcedAttackTurn;
             delete (card as any).data.forcedAttackSourceName;
@@ -6414,6 +6428,20 @@ export const ServerGameService = {
           if ((c as any).data?.combatImmuneUntilOwnNextTurnStartUid === player.uid) {
             delete (c as any).data.combatImmuneUntilOwnNextTurnStartUid;
             delete (c as any).data.combatImmuneSourceName;
+          }
+          if ((c as any).data?.tradeEffectDisabledUntilOwnStartUid === player.uid) {
+            delete (c as any).data.tradeEffectDisabledUntilOwnStartUid;
+          }
+          const disabledAketiRecordModes = (c as any).data?.disabledAketiRecordModesUntilOwnStart;
+          if (disabledAketiRecordModes) {
+            Object.keys(disabledAketiRecordModes).forEach(mode => {
+              if (disabledAketiRecordModes[mode] === player.uid) {
+                delete disabledAketiRecordModes[mode];
+              }
+            });
+            if (Object.keys(disabledAketiRecordModes).length === 0) {
+              delete (c as any).data.disabledAketiRecordModesUntilOwnStart;
+            }
           }
         }
       });

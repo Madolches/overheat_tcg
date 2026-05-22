@@ -4,15 +4,15 @@ import { AtomicEffectExecutor, canPutCardOntoBattlefieldByEffect, createChoiceQu
 const disableMode = (instance: Card, gameState: any, mode: string) => {
   (instance as any).data = {
     ...((instance as any).data || {}),
-    disabledAketiRecordModes: {
-      ...((instance as any).data?.disabledAketiRecordModes || {}),
-      [mode]: gameState.turnCount + 2
+    disabledAketiRecordModesUntilOwnStart: {
+      ...((instance as any).data?.disabledAketiRecordModesUntilOwnStart || {}),
+      [mode]: AtomicEffectExecutor.findCardOwnerKey(gameState, instance.gamecardId)
     }
   };
 };
 
 const modeEnabled = (instance: Card, gameState: any, mode: string) =>
-  (((instance as any).data?.disabledAketiRecordModes || {})[mode] || 0) < gameState.turnCount;
+  !((instance as any).data?.disabledAketiRecordModesUntilOwnStart || {})[mode];
 
 const erosionPutTargets = (playerState: any) =>
   playerState.erosionFront
