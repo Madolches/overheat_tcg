@@ -1,6 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { addTempPowerUntilEndOfTurn, awakenEffect, canPutUnitOntoBattlefield, discardHandCost, markReturnToDeckBottomAtEnd, putUnitOntoField, selectFromEntries } from './BaseUtil';
+import { awakenEffect, canPutUnitOntoBattlefield, discardHandCost, putUnitOntoField, selectFromEntries } from './BaseUtil';
 
 const graveNonGodUnits = (playerState: any) =>
   playerState.grave.filter((card: Card) =>
@@ -12,43 +11,13 @@ const graveNonGodUnits = (playerState: any) =>
 const cardEffects: CardEffect[] = [
   awakenEffect('103080315_awaken'),
   {
-    id: '103080315_awaken_boost_bottom',
-    type: 'TRIGGER',
-    triggerLocation: ['UNIT'],
-    triggerEvent: 'UNIT_AWAKENED' as any,
-    limitCount: 1,
-    description: '1回合1次：这个单位的唤醒适用时，选择己方1个单位，本回合力量+1000，回合结束时放置到卡组底。',
-    condition: (_gameState, playerState, instance, event) =>
-      event?.data?.sourceCardId === instance.gamecardId &&
-      playerState.unitZone.some((unit: Card | null) => !!unit),
-    execute: async (instance, gameState, playerState) => {
-      selectFromEntries(
-        gameState,
-        playerState.uid,
-        playerState.unitZone
-          .filter((unit: Card | null): unit is Card => !!unit)
-          .map((card: Card) => ({ card, source: 'UNIT' as const })),
-        '选择唤醒强化单位',
-        '选择你的战场上的1个单位，本回合力量+1000，回合结束时放置到卡组底。',
-        1,
-        1,
-        { sourceCardId: instance.gamecardId, effectId: '103080315_awaken_boost_bottom' }
-      );
-    },
-    onQueryResolve: async (instance, gameState, _playerState, selections) => {
-      const target = AtomicEffectExecutor.findCardById(gameState, selections[0]);
-      if (!target || target.cardlocation !== 'UNIT') return;
-      addTempPowerUntilEndOfTurn(target, instance, 1000, gameState);
-      markReturnToDeckBottomAtEnd(target, instance, gameState);
-    }
-  },
-  {
     id: '103080315_unit_to_deck_put_grave_unit',
     type: 'TRIGGER',
     triggerLocation: ['UNIT'],
     triggerEvent: 'CARD_LEFT_FIELD',
     isGlobal: true,
     limitCount: 1,
+    erosionBackLimit: [1, 10],
     description: '1回合1次：你的单位由于卡的效果从战场放置到卡组时，选择墓地1张非神蚀单位卡，舍弃1张手牌，将其放置到战场。',
     condition: (_gameState, playerState, _instance, event) =>
       event?.playerUid === playerState.uid &&

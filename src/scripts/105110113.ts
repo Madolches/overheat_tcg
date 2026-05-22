@@ -1,36 +1,12 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { canPayAccessCost, canPutItemOntoBattlefield, createChoiceQuery, createSelectCardQuery, revealDeckCards } from './BaseUtil';
+import { canMeetBattlefieldColorRequirement, canPayAccessCost, canPutItemOntoBattlefield, createChoiceQuery, createSelectCardQuery, revealDeckCards } from './BaseUtil';
 import { moveCard } from './BaseUtil';
-
-const canMeetColorRequirement = (playerState: any, card: Card) => {
-  const availableColors: Record<string, number> = { RED: 0, WHITE: 0, YELLOW: 0, BLUE: 0, GREEN: 0, NONE: 0 };
-  let omniColorCount = 0;
-
-  playerState.unitZone.forEach((unit: Card | null) => {
-    if (!unit) return;
-    const isOmni = String(unit.id) === '105000481' || unit.effects?.some(effect => effect.id === '105000481_omni');
-    if (isOmni) {
-      omniColorCount += 1;
-      return;
-    }
-    if (unit.color !== 'NONE') {
-      availableColors[unit.color] = (availableColors[unit.color] || 0) + 1;
-    }
-  });
-
-  let totalDeficit = 0;
-  for (const [color, reqCount] of Object.entries(card.colorReq || {})) {
-    totalDeficit += Math.max(0, Number(reqCount) - (availableColors[color] || 0));
-  }
-
-  return totalDeficit <= omniColorCount;
-};
 
 const canUseErosionItem = (gameState: any, playerState: any, card: Card) =>
   card.type === 'ITEM' &&
   canPutItemOntoBattlefield(playerState, card) &&
-  canMeetColorRequirement(playerState, card) &&
+  canMeetBattlefieldColorRequirement(playerState, card) &&
   canPayAccessCost(gameState, playerState, card.acValue || 0, undefined, card);
 
 const effect_105110113_continuous: CardEffect = {

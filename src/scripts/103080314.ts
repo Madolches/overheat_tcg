@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { addTempPowerUntilEndOfTurn, awakenEffect, cardsInZones, moveCard, markReturnToDeckBottomAtEnd, selectFromEntries } from './BaseUtil';
+import { awakenEffect, cardsInZones, moveCard, selectFromEntries } from './BaseUtil';
 
 const SHINBOKU = '神木森';
 
@@ -16,37 +16,6 @@ const shinbokuNonGodDeckEntries = (playerState: any) =>
 
 const cardEffects: CardEffect[] = [
   awakenEffect('103080314_awaken'),
-  {
-    id: '103080314_awaken_boost_bottom',
-    type: 'TRIGGER',
-    triggerLocation: ['UNIT'],
-    triggerEvent: 'UNIT_AWAKENED' as any,
-    limitCount: 1,
-    description: '1回合1次：这个单位的唤醒适用时，选择己方1个单位，本回合力量+1000，回合结束时放置到卡组底。',
-    condition: (_gameState, playerState, instance, event) =>
-      event?.data?.sourceCardId === instance.gamecardId &&
-      playerState.unitZone.some((unit: Card | null) => !!unit),
-    execute: async (instance, gameState, playerState) => {
-      selectFromEntries(
-        gameState,
-        playerState.uid,
-        playerState.unitZone
-          .filter((unit: Card | null): unit is Card => !!unit)
-          .map((card: Card) => ({ card, source: 'UNIT' as const })),
-        '选择唤醒强化单位',
-        '选择你的战场上的1个单位，本回合力量+1000，回合结束时放置到卡组底。',
-        1,
-        1,
-        { sourceCardId: instance.gamecardId, effectId: '103080314_awaken_boost_bottom' }
-      );
-    },
-    onQueryResolve: async (instance, gameState, _playerState, selections) => {
-      const target = AtomicEffectExecutor.findCardById(gameState, selections[0]);
-      if (!target || target.cardlocation !== 'UNIT') return;
-      addTempPowerUntilEndOfTurn(target, instance, 1000, gameState);
-      markReturnToDeckBottomAtEnd(target, instance, gameState);
-    }
-  },
   {
     id: '103080314_own_unit_effect_leave_mill_shinboku',
     type: 'TRIGGER',

@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { addContinuousKeyword, addContinuousPower, canPutUnitOntoBattlefield, paymentCost, putUnitOntoField, totalErosionCount, wealthContinuous, wealthCount } from './BaseUtil';
+import { addContinuousKeyword, addContinuousPower, canMeetBattlefieldColorRequirement, canPutUnitOntoBattlefield, paymentCost, putUnitOntoField, totalErosionCount, wealthContinuous, wealthCount } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [
   wealthContinuous('104020310_wealth_1', 1),
@@ -15,6 +15,7 @@ const cardEffects: CardEffect[] = [
       event.data?.sourceZone === 'HAND' &&
       event.data?.targetZone === 'GRAVE' &&
       instance.cardlocation === 'GRAVE' &&
+      canMeetBattlefieldColorRequirement(playerState, { BLUE: 1 }) &&
       canPutUnitOntoBattlefield(playerState, instance),
     cost: paymentCost(0, 'BLUE'),
     execute: async (instance, gameState, playerState) => {
@@ -27,15 +28,23 @@ const cardEffects: CardEffect[] = [
     triggerLocation: ['UNIT'],
     erosionTotalLimit: [3, 6],
     description: '3-6：你的财富指示物3个以上时，你战场上所有非神蚀单位力量+1000，获得英勇。',
+    condition: (gameState, playerState) =>
+      totalErosionCount(playerState) >= 3 &&
+      totalErosionCount(playerState) <= 6 &&
+      wealthCount(playerState, gameState) >= 3,
     applyContinuous: (gameState, instance) => {
       const ownerUid = Object.keys(gameState.players).find(uid =>
         gameState.players[uid].unitZone.some((unit: Card | null) => unit?.gamecardId === instance.gamecardId)
       );
       if (!ownerUid) return;
       const player = gameState.players[ownerUid];
-      if (totalErosionCount(player) < 3 || totalErosionCount(player) > 6 || wealthCount(player) < 3) return;
+      if (totalErosionCount(player) < 3 || totalErosionCount(player) > 6 || wealthCount(player, gameState) < 3) return;
       player.unitZone
-        .filter((unit: Card | null): unit is Card => !!unit && !unit.godMark)
+        .filter((unit: Card | null): unit is Card =>
+          !!unit &&
+          unit.gamecardId !== instance.gamecardId &&
+          !unit.godMark
+        )
         .forEach(unit => {
           addContinuousPower(unit, instance, 1000);
           addContinuousKeyword(unit, instance, 'heroic');
@@ -74,10 +83,12 @@ const card: Card = {
   damage: 1,
   baseDamage: 1,
   godMark: true,
+  baseGodMark: true,
   displayState: 'FRONT_UPRIGHT',
   isExhausted: false,
   isrush: false,
-  isHeroic: true,
+  isHeroic: false,
+  baseHeroic: false,
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,

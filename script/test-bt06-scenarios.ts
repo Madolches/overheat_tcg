@@ -22,6 +22,7 @@ import bt06B08 from '../src/scripts/204000097';
 import bt06B09 from '../src/scripts/204000098';
 import bt06B10 from '../src/scripts/304010054';
 import bt06B11 from '../src/scripts/104010341';
+import aketiCore from '../src/scripts/104020068';
 import bt06G01 from '../src/scripts/103090327';
 import bt06G02 from '../src/scripts/103090328';
 import bt06G04 from '../src/scripts/103090330';
@@ -923,6 +924,44 @@ async function testBlueAketiTeteruAndRecord(): Promise<ScenarioResult> {
   return recordInHand && fodderDestroyed && itemLive && erosionPutLive
     ? pass(name, `record=${recordInHand}, item=${itemLive}, erosionPut=${erosionPutLive}`)
     : fail(name, `record=${recordInHand}, destroyed=${fodderDestroyed}, item=${itemLive}, erosionPut=${erosionPutLive}`);
+}
+
+async function testAketiErosionPlayCountsExtraUnitColors(): Promise<ScenarioResult> {
+  const name = 'BT01 Aketi can be used from erosion with feather-granted color';
+  const aketi = cloneScriptCard(aketiCore as Card, 'EROSION_FRONT');
+  const blueUnit = testCard({
+    id: 'BLUE_SOURCE',
+    fullName: 'Blue Source',
+    type: 'UNIT',
+    color: 'BLUE',
+    cardlocation: 'UNIT',
+    isExhausted: false,
+  });
+  const feather = cloneScriptCard(bt06G05 as Card, 'UNIT', {
+    color: 'GREEN',
+    persistentExtraColors: ['BLUE'] as any,
+    isExhausted: false,
+  } as Partial<Card>);
+  const state = game({
+    deck: deckCards(8, 'AKETI_COST_FILL', 'BLUE'),
+    unitZone: [blueUnit, feather, null, null, null, null],
+    erosionFront: [aketi],
+  });
+
+  const canActivate = ServerGameService.checkEffectLimitsAndReqs(state, 'BOT', aketi, aketi.effects![2], 'EROSION_FRONT').valid;
+  await ServerGameService.activateEffect(state, 'BOT', aketi.gamecardId, 2);
+  if (state.pendingQuery?.type === 'SELECT_PAYMENT') {
+    await answerPendingQuery(state, 'BOT', [JSON.stringify({ exhaustUnitIds: [blueUnit.gamecardId, feather.gamecardId] })]);
+  }
+  if (state.phase !== 'COUNTERING') {
+    return fail(name, `canActivate=${canActivate}, expected COUNTERING got ${state.phase}, pending=${state.pendingQuery?.callbackKey || 'none'}`);
+  }
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
+  const moved = state.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === aketi.gamecardId);
+
+  return canActivate && moved
+    ? pass(name, `canActivate=${canActivate}, moved=${moved}`)
+    : fail(name, `canActivate=${canActivate}, moved=${moved}, pending=${state.pendingQuery?.callbackKey || 'none'}`);
 }
 
 async function testBlueUntilNextOwnTurnStartLocksExpireOnOwnStart(): Promise<ScenarioResult> {
@@ -2594,6 +2633,7 @@ const scenarios: ScenarioRun[] = [
   testBlueWealthCountUsesContinuousOnly,
   testTradeExpertPreventsThisBattleDestroy,
   testBlueAketiTeteruAndRecord,
+  testAketiErosionPlayCountsExtraUnitColors,
   testBlueUntilNextOwnTurnStartLocksExpireOnOwnStart,
   testBlueCheckLetsOpponentPayOrCounters,
   testBlueSheathAndFuka,

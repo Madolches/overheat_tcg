@@ -144,6 +144,45 @@ export const addPersistentExtraColor = (card: Card, color: string) => {
   ]));
 };
 
+export const getBattlefieldColorRequirementResult = (playerState: PlayerState, req: Record<string, number> = {}) => {
+  const availableColors: Record<string, number> = { RED: 0, WHITE: 0, YELLOW: 0, BLUE: 0, GREEN: 0, NONE: 0 };
+  let omniColorCount = 0;
+
+  playerState.unitZone.forEach(card => {
+    if (!card) return;
+    const isOmni = String(card.id) === '105000481' || !!card.effects?.some(effect => effect.id === '105000481_omni');
+    if (isOmni) {
+      omniColorCount += 1;
+    } else if (card.color !== 'NONE') {
+      availableColors[card.color] = (availableColors[card.color] || 0) + 1;
+    }
+
+    const extraColors = new Set([
+      ...((card as any).temporaryExtraColors || []),
+      ...((card as any).persistentExtraColors || [])
+    ]);
+    extraColors.forEach(color => {
+      if (typeof color === 'string' && color !== card.color && color in availableColors) {
+        availableColors[color] = (availableColors[color] || 0) + 1;
+      }
+    });
+  });
+
+  let totalDeficit = 0;
+  for (const [color, reqCount] of Object.entries(req)) {
+    totalDeficit += Math.max(0, Number(reqCount) - (availableColors[color] || 0));
+  }
+
+  return { valid: totalDeficit <= omniColorCount, totalDeficit, omniColorCount, availableColors };
+};
+
+export const canMeetBattlefieldColorRequirement = (playerState: PlayerState, cardOrReq: Card | Record<string, number>) => {
+  const req: Record<string, number> = typeof (cardOrReq as Card).id === 'string'
+    ? (((cardOrReq as Card).colorReq || {}) as Record<string, number>)
+    : (cardOrReq as Record<string, number>);
+  return getBattlefieldColorRequirementResult(playerState, req).valid;
+};
+
 export const isSilverInstrumentCard = (card: Card) => card.fullName.includes('银乐器');
 
 export const hasResonanceAbility = (card: Card) =>
@@ -236,7 +275,7 @@ export const awakenEffect = (id: string): CardEffect => ({
   triggerLocation: ['UNIT'],
   limitCount: 1,
   limitNameType: true,
-  description: '唤醒：1回合1次，你的主要阶段，选择你的战场上的1个单位，使其适用唤醒。',
+  description: '唤醒：1回合1次，你的主要阶段，选择你的战场上的1个单位，本回合中其力量+1000。回合结束时，将其放置到你的卡组底。',
   condition: (gameState, playerState, instance) =>
     instance.cardlocation === 'UNIT' &&
     playerState.isTurn &&
@@ -248,7 +287,7 @@ export const awakenEffect = (id: string): CardEffect => ({
       playerState.uid,
       playerState.unitZone.filter((unit): unit is Card => !!unit),
       '选择唤醒单位',
-      '选择你的战场上的1个单位，使其适用唤醒。',
+      '选择你的战场上的1个单位，本回合中力量+1000。回合结束时，将其放置到你的卡组底。',
       1,
       1,
       { sourceCardId: instance.gamecardId, effectId: id, step: 'AWAKEN' },
@@ -258,7 +297,11 @@ export const awakenEffect = (id: string): CardEffect => ({
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step !== 'AWAKEN') return;
     const target = playerState.unitZone.find(unit => unit?.gamecardId === selections[0]);
-    if (target) awakenUnit(gameState, playerState.uid, target, instance);
+    if (target) {
+      awakenUnit(gameState, playerState.uid, target, instance);
+      addTempPowerUntilEndOfTurn(target, instance, 1000, gameState);
+      markReturnToDeckBottomAtEnd(target, instance, gameState);
+    }
   }
 });
 

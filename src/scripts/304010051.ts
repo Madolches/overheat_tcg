@@ -3,13 +3,19 @@ import { AtomicEffectExecutor, addContinuousDamage, canPutItemOntoBattlefield, c
 
 const MOMOSE = '百濑之水城';
 
-const isEquipTarget = (card: Card) =>
-  !card.godMark &&
+const isMomoseWaterCastleGodCard = (card: Card) =>
+  card.godMark &&
   (
     card.faction === MOMOSE ||
-    card.fullName.includes('百濑之水城') ||
-    (card.type === 'UNIT' && (card.fullName.includes('剑仙') || card.specialName?.includes('剑仙')))
+    card.fullName.includes('百濑之水城')
   );
+
+const isSwordSageUnit = (card: Card) =>
+  card.type === 'UNIT' &&
+  (card.fullName.includes('剑仙') || card.specialName?.includes('剑仙'));
+
+const isEquipTarget = (card: Card) =>
+  isMomoseWaterCastleGodCard(card) || isSwordSageUnit(card);
 
 const selfReviveEntries = (playerState: any, instance: Card) =>
   cardsInZones(playerState, ['GRAVE', 'EROSION_FRONT'])
@@ -35,7 +41,7 @@ const cardEffects: CardEffect[] = [universalEquipEffect, {
   triggerLocation: ['GRAVE', 'EROSION_FRONT'],
   limitCount: 1,
   limitNameType: true,
-  description: '同名1回合1次：选择己方<百濑之水城>非神蚀卡或卡名含《剑仙》的单位，舍弃1张手牌，从墓地或正面侵蚀区放置并装备，离场放逐。',
+  description: '同名1回合1次：选择己方场上的1个<百濑之水城>神蚀卡或卡名含《剑仙》的单位，舍弃1张手牌，从墓地或正面侵蚀区放置并装备，离场放逐。',
   condition: (_gameState, playerState, instance) =>
     playerState.hand.some((card: Card) => card.gamecardId !== instance.gamecardId) &&
     selfReviveEntries(playerState, instance).length > 0 &&
@@ -49,7 +55,7 @@ const cardEffects: CardEffect[] = [universalEquipEffect, {
       playerUid: playerState.uid,
       options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, targets.map(card => ({ card, source: 'UNIT' as const }))),
       title: '选择装备目标',
-      description: '选择你战场上的1个<百濑之水城>非神蚀卡或卡名含有《剑仙》的单位。',
+      description: '选择你战场上的1个<百濑之水城>神蚀卡或卡名含有《剑仙》的单位。',
       minSelections: 1,
       maxSelections: 1,
       callbackKey: 'EFFECT_RESOLVE',
@@ -81,7 +87,7 @@ const cardEffects: CardEffect[] = [universalEquipEffect, {
  * Card Detail:
  * 【装备】
  * 【永】：装备单位〖伤害+1〗.
- * 【启】〖同名一回合一次〗{选择你战场上的1个<百濑之水城>的非神蚀卡或卡名含有《剑仙》的单位}[舍弃1张手牌]：将墓地或侵蚀区的正面卡中的这张卡放置到战场上并装备给被选择单位。这张卡从战场上离开时，将这张卡放逐。
+ * 【启】〖同名一回合一次〗{选择你战场上的1个<百濑之水城>的神蚀卡或卡名含有《剑仙》的单位}[舍弃1张手牌]：将墓地或侵蚀区的正面卡中的这张卡放置到战场上并装备给被选择单位。这张卡从战场上离开时，将这张卡放逐。
  * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {

@@ -1,4 +1,46 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import { addInfluence, allUnitsOnField, createSelectCardQuery, ensureData } from './BaseUtil';
+
+const ohDisabled = (instance: Card) => !!(instance as any).data?.ohEffectDisabledUntilOwnStartUid;
+
+const cardEffects: CardEffect[] = [{
+  id: '103000419_set_unit_power_zero',
+  type: 'ACTIVATE',
+  triggerLocation: ['UNIT'],
+  limitCount: 1,
+  erosionTotalLimit: [10, 99],
+  description: '10+：1回合1次，选择战场上的1个单位，本回合中力量变为0；直到下一次你的回合开始失去这个启动能力。',
+  condition: (gameState, playerState, instance) =>
+    instance.cardlocation === 'UNIT' &&
+    playerState.isGoddessMode &&
+    !ohDisabled(instance) &&
+    allUnitsOnField(gameState).length > 0,
+  execute: async (instance, gameState, playerState) => {
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      allUnitsOnField(gameState),
+      '选择力量0目标',
+      '选择战场上的1个单位，本回合中力量变为0。',
+      1,
+      1,
+      { sourceCardId: instance.gamecardId, effectId: '103000419_set_unit_power_zero' },
+      () => 'UNIT'
+    );
+  },
+  onQueryResolve: async (instance, gameState, playerState, selections) => {
+    const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
+    if (target?.cardlocation === 'UNIT') {
+      const data = ensureData(target);
+      data.forcePowerToZeroUntilTurn = gameState.turnCount;
+      data.forcePowerToZeroSourceName = instance.fullName;
+      target.power = 0;
+      addInfluence(target, instance, '本回合力量变为0');
+    }
+    ensureData(instance).ohEffectDisabledUntilOwnStartUid = playerState.uid;
+  }
+}];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -37,7 +79,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'SER',
   availableRarities: ['SER'],
   cardPackage: 'BT08',

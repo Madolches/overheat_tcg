@@ -3099,7 +3099,9 @@ export const ServerGameService = {
     card = liveSource.card;
     const triggerLocation = (event?.type === 'REVEAL_DECK' && effect.triggerLocation?.includes('DECK'))
       ? 'DECK'
-      : card.cardlocation as TriggerLocation;
+      : (event?.type === 'CARD_LEFT_FIELD' && effect.sourceSnapshotOnLeftField === true && event.data?.sourceZone)
+        ? event.data.sourceZone as TriggerLocation
+        : card.cardlocation as TriggerLocation;
     if (!isVirtualTrigger && !ServerGameService.checkEffectLimitsAndReqs(gameState, playerUid, card, effect, triggerLocation, event).valid) {
       await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
       return;
