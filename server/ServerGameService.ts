@@ -3157,16 +3157,11 @@ export const ServerGameService = {
         ServerGameService.createTriggerOrderQuery(gameState, bucket.ownerUid, bucket.records, bucket.mandatory);
         return;
       }
-      card = liveSource.card;
-      const triggerLocation = (event?.type === 'REVEAL_DECK' && effect.triggerLocation?.includes('DECK'))
-        ? 'DECK'
-        : (event?.type === 'CARD_LEFT_FIELD' && effect.sourceSnapshotOnLeftField === true && event.data?.sourceZone)
-          ? event.data.sourceZone as TriggerLocation
-          : card.cardlocation as TriggerLocation;
-      if (!ServerGameService.checkEffectLimitsAndReqs(gameState, playerUid, card, effect, triggerLocation, event).valid) {
-        await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
-        return;
-      }
+      const trigger = ServerGameService.removeTriggerRecordById(
+        gameState,
+        ServerGameService.getTriggerQueueId(bucket.records[0])
+      );
+      if (!trigger) return;
       await ServerGameService.processSelectedTriggerRecord(gameState, trigger, onUpdate);
     } else {
       // Queue is empty, settlement is truly complete
