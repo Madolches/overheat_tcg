@@ -54,8 +54,9 @@ const card: Card = {
         const targetId = selections[0];
         const selectedCard = AtomicEffectExecutor.findCardById(gameState, targetId);
         if (!selectedCard || selectedCard.cardlocation !== 'EROSION_FRONT') return;
+        const selectedUnit = selectedCard;
         if (!isAcceptCommissionTarget(playerState, selectedCard)) {
-          gameState.logs.push(`[${card.fullName}] 不能将 [${selectedCard.fullName}] 放置到战场：请选择侵蚀前区中 AC 为 2 或以下、非神蚀、且可合法入场的单位。`);
+          gameState.logs.push(`[${card.fullName}] 不能将 [${selectedUnit.fullName}] 放置到战场：请选择侵蚀前区中 AC 为 2 或以下、非神蚀、且可合法入场的单位。`);
           return;
         }
 

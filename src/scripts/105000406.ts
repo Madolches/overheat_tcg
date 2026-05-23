@@ -1,4 +1,46 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { getOpponentUid, markCannotDefendUntilEndOfTurn, nameContains, ownUnits, totalErosionCount } from './BaseUtil';
+
+const isAlchemyBeast = (card?: Card | null) =>
+  !!card && card.type === 'UNIT' && nameContains(card, '炼金幻兽');
+
+const hasRequiredHighAlchemy = (instance: Card, color: string) => {
+  const data = (instance as any).data || {};
+  return data.enteredFromDeckByAlchemyTurn !== undefined &&
+    Array.isArray(data.highAlchemyMaterialColors) &&
+    data.highAlchemyMaterialColors.includes(color);
+};
+
+const cardEffects: CardEffect[] = [{
+  id: '105000406_high_alchemy_red_gate',
+  type: 'CONTINUOUS',
+  triggerLocation: ['UNIT'],
+  description: '这张卡只能通过《高位炼金》的效果将包含红色卡的3张卡送入墓地而进入战场。',
+  condition: (_gameState, _playerState, instance) =>
+    instance.cardlocation === 'UNIT' && hasRequiredHighAlchemy(instance, 'RED')
+}, {
+  id: '105000406_beast_attacks_cannot_be_defended_by_non_god',
+  type: 'TRIGGER',
+  triggerLocation: ['UNIT'],
+  triggerEvent: 'CARD_ATTACK_DECLARED',
+  isMandatory: true,
+  erosionTotalLimit: [3, 6],
+  description: '3~6：对手不能用非神蚀单位防御你卡名含有《炼金幻兽》的单位的单独攻击。',
+  condition: (_gameState, playerState, instance, event) =>
+    instance.cardlocation === 'UNIT' &&
+    !event?.data?.isAlliance &&
+    (event?.data?.attackerIds || []).length === 1 &&
+    ownUnits(playerState).some(unit =>
+      unit.gamecardId === event?.data?.attackerIds?.[0] &&
+      isAlchemyBeast(unit)
+    ),
+  execute: async (instance, gameState, playerState) => {
+    const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
+    ownUnits(opponent)
+      .filter(unit => !unit.godMark)
+      .forEach(unit => markCannotDefendUntilEndOfTurn(unit, instance, gameState));
+  }
+}];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -13,7 +55,6 @@ import { Card } from '../types/game';
  * 【速攻】
  * 【永】:这张卡只能通过《高位炼金》的效果将包含红色卡的3张卡送入墓地而进入战场。
  * 〖3~6〗【永】:对手不能用非神蚀单位来防御你的战场上的卡名含有《炼金幻兽》的单位的攻击。（其他联军可以被防御时无效）
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '105000406',
@@ -36,7 +77,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'C',
   availableRarities: ['C'],
   cardPackage: 'BT08',

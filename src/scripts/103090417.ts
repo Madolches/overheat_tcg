@@ -1,4 +1,73 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { canActivateDefaultTiming, createSelectCardQuery, destroyByEffect, isNonGodUnit, moveCardAsCost, ownUnits } from './BaseUtil';
+
+const SERNOBU = '瑟诺布';
+const CONDUCTOR = '银乐协奏师';
+
+const costUnits = (playerState: any, instance: Card) =>
+  ownUnits(playerState).filter(unit =>
+    unit.gamecardId !== instance.gamecardId &&
+    unit.faction === SERNOBU &&
+    !unit.fullName.includes(CONDUCTOR)
+  );
+
+const nonGodUnitTargets = (gameState: any) =>
+  Object.values(gameState.players)
+    .flatMap((player: any) => player.unitZone)
+    .filter((unit: Card | null): unit is Card => !!unit && isNonGodUnit(unit));
+
+const cardEffects: CardEffect[] = [{
+  id: '103090417_sacrifice_sernobu_destroy',
+  type: 'ACTIVATE',
+  triggerLocation: ['UNIT'],
+  limitCount: 1,
+  description: '1回合1次：主要阶段，选择战场上1个非神蚀单位，将你战场上2个《银乐协奏师》以外的<瑟诺布>单位送入墓地，破坏被选择单位。',
+  condition: (gameState, playerState, instance) =>
+    instance.cardlocation === 'UNIT' &&
+    canActivateDefaultTiming(gameState, playerState) &&
+    costUnits(playerState, instance).length >= 2 &&
+    nonGodUnitTargets(gameState).length > 0,
+  execute: async (instance, gameState, playerState) => {
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      nonGodUnitTargets(gameState),
+      '选择破坏目标',
+      '选择战场上的1个非神蚀单位。',
+      1,
+      1,
+      { sourceCardId: instance.gamecardId, effectId: '103090417_sacrifice_sernobu_destroy', step: 'TARGET' },
+      () => 'UNIT'
+    );
+  },
+  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step === 'TARGET') {
+      const target = nonGodUnitTargets(gameState).find(unit => unit.gamecardId === selections[0]);
+      if (!target) return;
+      createSelectCardQuery(
+        gameState,
+        playerState.uid,
+        costUnits(playerState, instance),
+        '选择送墓费用',
+        '选择你战场上2个《银乐协奏师》以外的<瑟诺布>单位送入墓地。',
+        2,
+        2,
+        { sourceCardId: instance.gamecardId, effectId: '103090417_sacrifice_sernobu_destroy', step: 'COST', targetId: target.gamecardId },
+        () => 'UNIT'
+      );
+      return;
+    }
+    if (context?.step !== 'COST') return;
+    const selectedCosts = selections
+      .map(id => costUnits(playerState, instance).find(unit => unit.gamecardId === id))
+      .filter((unit): unit is Card => !!unit)
+      .slice(0, 2);
+    if (selectedCosts.length < 2) return;
+    selectedCosts.forEach(unit => moveCardAsCost(gameState, playerState.uid, unit, 'GRAVE', instance));
+    const target = nonGodUnitTargets(gameState).find(unit => unit.gamecardId === context.targetId);
+    if (target) destroyByEffect(gameState, target, instance);
+  }
+}];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -11,7 +80,6 @@ import { Card } from '../types/game';
  * Keywords: N/A
  * Card Detail:
  * 【启】〖1回合1次〗{你的主要阶段，选择战场上的1个非神蚀单位}:将你战场上的2个《银乐协奏师》以外的<瑟诺布>单位送入墓地。将被选择的单位破坏。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '103090417',
@@ -34,7 +102,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'R',
   availableRarities: ['R'],
   cardPackage: 'BT08',

@@ -1,4 +1,25 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { addContinuousDamage, addContinuousPower, ownUnits } from './BaseUtil';
+
+const ADVENTURER = '冒险家公会';
+
+const isAdventurerUnit = (card: Card) =>
+  card.type === 'UNIT' &&
+  (card.faction === ADVENTURER || card.fullName.includes(ADVENTURER));
+
+const cardEffects: CardEffect[] = [{
+  id: '104030413_adventurer_stats',
+  type: 'CONTINUOUS',
+  triggerLocation: ['UNIT'],
+  erosionTotalLimit: [4, 7],
+  description: '4~7，你战场上的<冒险家公会>单位有3个以上时，这个单位伤害+1、力量+1000。',
+  condition: (_gameState, playerState) =>
+    ownUnits(playerState).filter(isAdventurerUnit).length >= 3,
+  applyContinuous: (_gameState, instance) => {
+    addContinuousDamage(instance, instance, 1);
+    addContinuousPower(instance, instance, 1000);
+  }
+}];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -11,7 +32,6 @@ import { Card } from '../types/game';
  * Keywords: N/A
  * Card Detail:
  * 【永】〖4~7〗{你战场上的<冒险家公会>的单位有3个以上}：这个单位〖伤害+1〗〖力量+1000〗。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '104030413',
@@ -34,7 +54,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'C',
   availableRarities: ['C'],
   cardPackage: 'BT08',

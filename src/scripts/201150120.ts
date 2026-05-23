@@ -1,4 +1,28 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { allUnitsOnField, createSelectCardQuery, freezeUntil, story } from './BaseUtil';
+
+const nonGodUnitTargets = (gameState: any) =>
+  allUnitsOnField(gameState).filter(unit => !unit.godMark);
+
+const cardEffects: CardEffect[] = [story('201150120_freeze_non_god_unit', '选择战场上的1个非神蚀单位，本回合中将其冻结。', async (instance, gameState, playerState) => {
+  createSelectCardQuery(
+    gameState,
+    playerState.uid,
+    nonGodUnitTargets(gameState),
+    '选择冻结单位',
+    '选择战场上的1个非神蚀单位，本回合中将其冻结。',
+    1,
+    1,
+    { sourceCardId: instance.gamecardId, effectId: '201150120_freeze_non_god_unit' },
+    () => 'UNIT'
+  );
+}, {
+  condition: gameState => nonGodUnitTargets(gameState).length > 0,
+  onQueryResolve: async (instance, gameState, _playerState, selections) => {
+    const target = nonGodUnitTargets(gameState).find(unit => unit.gamecardId === selections[0]);
+    if (target) freezeUntil(target, instance, gameState.turnCount);
+  }
+})];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -11,7 +35,6 @@ import { Card } from '../types/game';
  * Keywords: N/A
  * Card Detail:
  * {选择战场上的1个非神蚀单位}:本回合中，将其冻结（不能发动能力，不能宣言攻击和防御，也不会被破坏）。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '201150120',
@@ -27,7 +50,7 @@ const card: Card = {
   displayState: 'FRONT_UPRIGHT',
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'C',
   availableRarities: ['C'],
   cardPackage: 'BT08',

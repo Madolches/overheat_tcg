@@ -1067,7 +1067,8 @@ async function testBlueWealthCoreAndEquipment(): Promise<ScenarioResult> {
 
   const lowErosionKosako = cloneScriptCard(bt07B11 as Card, 'UNIT', { gamecardId: 'B11_LOW_EROSION', baseHeroic: false, isHeroic: false });
   const lowErosionAlly = testCard({ id: 'B11_LOW_ALLY', type: 'UNIT', godMark: false, cardlocation: 'UNIT' });
-  const lowErosionWealth = testCard({ id: 'B11_LOW_WEALTH', type: 'UNIT', cardlocation: 'UNIT', data: { wealthValue: 2 } as any });
+  const lowErosionWealth = testCard({ id: 'B11_LOW_WEALTH', type: 'UNIT', cardlocation: 'UNIT' } as Partial<Card> & { data: any });
+  (lowErosionWealth as any).data = { wealthValue: 2 };
   const lowErosionState = game({
     unitZone: [lowErosionKosako, lowErosionAlly, lowErosionWealth, null, null, null],
     erosionFront: [

@@ -1,4 +1,31 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { createSelectCardQuery, ownUnits, readyByEffect, story } from './BaseUtil';
+
+const ownNonGodUnits = (playerState: any) =>
+  ownUnits(playerState).filter(unit => !unit.godMark);
+
+const cardEffects: CardEffect[] = [story('201000121_ready_on_opponent_attack', '对手的单位宣言攻击时，选择你战场上的1个非神蚀单位重置。', async (instance, gameState, playerState) => {
+  createSelectCardQuery(
+    gameState,
+    playerState.uid,
+    ownNonGodUnits(playerState),
+    '选择重置单位',
+    '选择你战场上的1个非神蚀单位，将其重置。',
+    1,
+    1,
+    { sourceCardId: instance.gamecardId, effectId: '201000121_ready_on_opponent_attack' },
+    () => 'UNIT'
+  );
+}, {
+  condition: (gameState, playerState) =>
+    gameState.phase === 'COUNTERING' &&
+    gameState.counterStack?.some((item: any) => item.type === 'ATTACK' && item.ownerUid !== playerState.uid && !item.isNegated) &&
+    ownNonGodUnits(playerState).length > 0,
+  onQueryResolve: async (instance, gameState, playerState, selections) => {
+    const target = ownNonGodUnits(playerState).find(unit => unit.gamecardId === selections[0]);
+    if (target) readyByEffect(gameState, target, instance);
+  }
+})];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -11,7 +38,6 @@ import { Card } from '../types/game';
  * Keywords: N/A
  * Card Detail:
  * {对手的单位宣言攻击时，选择你战场上的1个非神蚀单位}:将被选择的单位〖重置〗。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '201000121',
@@ -27,7 +53,7 @@ const card: Card = {
   displayState: 'FRONT_UPRIGHT',
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'C',
   availableRarities: ['C'],
   cardPackage: 'BT08',

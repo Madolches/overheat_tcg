@@ -1183,6 +1183,20 @@ export class AtomicEffectExecutor {
         isEffect &&
         (fromZone === 'UNIT' || fromZone === 'ITEM') &&
         !['UNIT', 'ITEM'].includes(toZone) &&
+        options?.effectSourcePlayerUid &&
+        options.effectSourcePlayerUid !== playerUid &&
+        (card as any).data?.preventFirstOpponentEffectLeaveEachTurnSourceName &&
+        (card as any).data.preventFirstOpponentEffectLeaveEachTurnUsedTurn !== gameState.turnCount
+      ) {
+        const sourceName = (card as any).data.preventFirstOpponentEffectLeaveEachTurnSourceName || 'card effect';
+        (card as any).data.preventFirstOpponentEffectLeaveEachTurnUsedTurn = gameState.turnCount;
+        gameState.logs.push(`[${sourceName}] prevented [${card.fullName}] from leaving the field by an opponent effect for the first time this turn.`);
+        return;
+      }
+      if (
+        isEffect &&
+        (fromZone === 'UNIT' || fromZone === 'ITEM') &&
+        !['UNIT', 'ITEM'].includes(toZone) &&
         options?.effectSourceCardId
       ) {
         const sourceCard = this.findCardById(gameState, options.effectSourceCardId);

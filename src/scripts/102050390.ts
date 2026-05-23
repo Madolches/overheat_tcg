@@ -1,4 +1,32 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { executePromotionAfterOptionalDiscard, hasPromotionTarget } from './BaseUtil';
+
+const cardEffects: CardEffect[] = [{
+  id: '102050390_end_promotion_after_attack',
+  type: 'TRIGGER',
+  triggerEvent: 'TURN_END' as any,
+  triggerLocation: ['UNIT'],
+  isMandatory: false,
+  description: '这个单位攻击过的回合结束时：晋升。',
+  condition: (_gameState, playerState, instance, event) =>
+    event?.type === ('TURN_END' as any) &&
+    event.playerUid === playerState.uid &&
+    instance.cardlocation === 'UNIT' &&
+    !!instance.hasAttackedThisTurn &&
+    hasPromotionTarget(playerState, instance),
+  execute: async (instance, gameState, playerState) => {
+    await executePromotionAfterOptionalDiscard(gameState, playerState, instance, '102050390_end_promotion_after_attack', {
+      skipDiscard: true
+    });
+  },
+  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    await executePromotionAfterOptionalDiscard(gameState, playerState, instance, '102050390_end_promotion_after_attack', {
+      selections,
+      context,
+      skipDiscard: true
+    });
+  }
+}];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -11,7 +39,6 @@ import { Card } from '../types/game';
  * Keywords: N/A
  * Card Detail:
  * 【诱】{这个单位攻击过的回合结束时}:晋升（将这个单位送入墓地。之后，将你的卡组或手牌中的1张ACCESS值比这个单位的ACCESS值多1的单位卡放置到战场上）。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '102050390',
@@ -34,7 +61,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'R',
   availableRarities: ['R'],
   cardPackage: 'BT08',

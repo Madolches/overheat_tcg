@@ -1,4 +1,44 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import { allUnitsOnField, canActivateDefaultTiming, createSelectCardQuery, moveCard, ownerUidOf } from './BaseUtil';
+
+const frozenNonGodUnits = (gameState: any) =>
+  allUnitsOnField(gameState).filter(unit =>
+    !unit.godMark &&
+    (unit as any).data?.freezeUntilTurn !== undefined &&
+    (unit as any).data.freezeUntilTurn >= gameState.turnCount
+  );
+
+const cardEffects: CardEffect[] = [{
+  id: '101150401_send_frozen_non_god_to_grave',
+  type: 'ACTIVATE',
+  triggerLocation: ['UNIT'],
+  limitCount: 1,
+  description: '1回合1次：将战场上的1个被冻结的非神蚀单位送入墓地。',
+  condition: (gameState, playerState, instance) =>
+    instance.cardlocation === 'UNIT' &&
+    canActivateDefaultTiming(gameState, playerState) &&
+    frozenNonGodUnits(gameState).length > 0,
+  execute: async (instance, gameState, playerState) => {
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      frozenNonGodUnits(gameState),
+      '选择冻结单位',
+      '选择战场上的1个被冻结的非神蚀单位，将其送入墓地。',
+      1,
+      1,
+      { sourceCardId: instance.gamecardId, effectId: '101150401_send_frozen_non_god_to_grave' },
+      () => 'UNIT'
+    );
+  },
+  onQueryResolve: async (instance, gameState, _playerState, selections) => {
+    const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
+    const targetOwnerUid = target ? ownerUidOf(gameState, target) : undefined;
+    if (!target || !targetOwnerUid || target.godMark || !frozenNonGodUnits(gameState).some(unit => unit.gamecardId === target.gamecardId)) return;
+    moveCard(gameState, targetOwnerUid, target, 'GRAVE', instance);
+  }
+}];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -11,7 +51,6 @@ import { Card } from '../types/game';
  * Keywords: N/A
  * Card Detail:
  * 【启】〖1回合1次〗:将战场上的1个被冻结的非神蚀单位送入墓地。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '101150401',
@@ -34,7 +73,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'UR',
   availableRarities: ['UR'],
   cardPackage: 'BT08',

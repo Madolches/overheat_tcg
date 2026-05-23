@@ -1148,31 +1148,6 @@ export const ServerGameService = {
     return untilTurn === undefined || untilTurn < gameState.turnCount;
   },
 
-  canUnitDefendInCurrentBattle(gameState: GameState, unit: Card | null | undefined) {
-    if (!unit || !gameState.battleState) return false;
-    if (unit.isExhausted) return false;
-    if ((unit as any).battleForbiddenByEffect) return false;
-    if ((unit as any).data?.cannotDefendTurn === gameState.turnCount) return false;
-    if ((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount) return false;
-    if (!ServerGameService.canExhaustForDeclaration(unit, gameState)) return false;
-
-    const lockedTargetId = gameState.battleState.defenseLockedToTargetId;
-    if (lockedTargetId && unit.gamecardId !== lockedTargetId) return false;
-
-    const minPower = gameState.battleState.defensePowerRestriction || 0;
-    if (minPower > 0 && (unit.power || 0) < minPower) return false;
-
-    const maxPower = gameState.battleState.defenseMaxPowerRestriction;
-    if (maxPower !== undefined && (unit.power || 0) >= maxPower) return false;
-
-    const turnPlayerId = gameState.playerIds[gameState.currentTurnPlayer];
-    const attackers = (gameState.battleState.attackers || [])
-      .map(id => gameState.players[turnPlayerId]?.unitZone.find(attacker => attacker?.gamecardId === id))
-      .filter((attacker): attacker is Card => !!attacker);
-    const minExclusive = Math.max(0, ...attackers.map(attacker => (attacker as any).data?.defenseMinPower || 0));
-    return minExclusive <= 0 || (unit.power || 0) > minExclusive;
-  },
-
   readyCard(card: Card) {
     if (card) {
       card.isExhausted = false;
@@ -1536,6 +1511,20 @@ export const ServerGameService = {
       ) {
         const sourceName = (card as any).data?.cannotLeaveFieldByOpponentEffectSourceName || '卡牌效果';
         gameState.logs.push(`[${sourceName}] 防止了 [${card.fullName}] 因对手效果从战场离开。`);
+        return false;
+      }
+      if (
+        options?.isEffect &&
+        (sourceZone === 'UNIT' || sourceZone === 'ITEM') &&
+        !['UNIT', 'ITEM'].includes(targetZone) &&
+        options.effectSourcePlayerUid &&
+        options.effectSourcePlayerUid !== sourcePlayerId &&
+        (card as any).data?.preventFirstOpponentEffectLeaveEachTurnSourceName &&
+        (card as any).data.preventFirstOpponentEffectLeaveEachTurnUsedTurn !== gameState.turnCount
+      ) {
+        const sourceName = (card as any).data.preventFirstOpponentEffectLeaveEachTurnSourceName || 'card effect';
+        (card as any).data.preventFirstOpponentEffectLeaveEachTurnUsedTurn = gameState.turnCount;
+        gameState.logs.push(`[${sourceName}] prevented [${card.fullName}] from leaving the field by an opponent effect for the first time this turn.`);
         return false;
       }
       if (
@@ -4936,7 +4925,7 @@ export const ServerGameService = {
     await ServerGameService.checkTriggeredEffects(gameState);
 
     // Now set phase back to MAIN or SHENYI if triggered
-    if (gameState.phase !== 'SHENYI_CHOICE') {
+    if ((gameState.phase as GamePhase) !== 'SHENYI_CHOICE') {
       await ServerGameService.dispatchEventAndDrainTriggers(gameState, {
         type: 'BATTLE_ENDED',
         sourceCard: attackingUnits[0],
@@ -4958,14 +4947,16 @@ export const ServerGameService = {
 
     // After all triggers are checked, see if we need to enter Shenyi choice
     if (gameState.pendingShenyi && !gameState.pendingQuery) {
-      gameState.previousPhase = gameState.phase === 'DAMAGE_CALCULATION' ? 'MAIN' : gameState.phase;
+      const currentPhase = gameState.phase as GamePhase;
+      gameState.previousPhase = currentPhase === 'DAMAGE_CALCULATION' ? 'MAIN' : currentPhase;
       gameState.phase = 'SHENYI_CHOICE';
       gameState.logs.push(`等待玩家确认是否触发【神依】`);
     }
 
-    if (gameState.phase !== 'SHENYI_CHOICE' && gameState.phase !== 'DAMAGE_CALCULATION') {
+    const phaseAfterBattleTriggers = gameState.phase as GamePhase;
+    if (phaseAfterBattleTriggers !== 'SHENYI_CHOICE' && phaseAfterBattleTriggers !== 'DAMAGE_CALCULATION') {
       // Phase might have been changed by a trigger, otherwise move to MAIN
-    } else if (gameState.phase === 'DAMAGE_CALCULATION') {
+    } else if (phaseAfterBattleTriggers === 'DAMAGE_CALCULATION') {
       gameState.phase = 'MAIN';
     }
 
@@ -6710,7 +6701,7 @@ export const ServerGameService = {
 
     ServerGameService.executeErosionMovements(gameState, playerId, choice, selectedCardId);
 
-    if (gameState.phase !== 'SHENYI_CHOICE') {
+    if ((gameState.phase as GamePhase) !== 'SHENYI_CHOICE') {
       await ServerGameService.proceedAfterErosion(gameState, playerId);
     } else {
       gameState.previousPhase = 'MAIN';
@@ -7011,7 +7002,7 @@ export const ServerGameService = {
           cardsToReturn.push(player.hand.splice(index, 1)[0]);
         }
       }
-      player.deck = [...player.deck, ...cardsToReturn.map(c => ({ ...c, cardlocation: 'DECK' }))];
+      player.deck = [...player.deck, ...cardsToReturn.map(c => ({ ...c, cardlocation: 'DECK' as TriggerLocation }))];
 
       // Shuffle
       player.deck = ServerGameService.shuffle(player.deck);
