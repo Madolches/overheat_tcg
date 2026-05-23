@@ -326,6 +326,7 @@ export class EventEngine {
             delete (card as any).data.accessTapFlexible;
             delete (card as any).data.accessTapValueSourceName;
             delete (card as any).data.accessTapColor;
+            delete (card as any).data.wealthValue;
             delete (card as any).data.powerIncreaseBonus;
             delete (card as any).data.powerIncreaseBonusSourceName;
             delete (card as any).data.declareAttackDefenseTax;

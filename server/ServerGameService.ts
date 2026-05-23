@@ -5318,12 +5318,13 @@ export const ServerGameService = {
       return false;
     }
 
-    if ((unit as any).data?.indestructibleByEffect) {
+    if (isEffect && (unit as any).data?.indestructibleByEffect) {
       gameState.logs.push(`[${unit.fullName}] 因效果不会被破坏。`);
       return false;
     }
 
     if (
+      isEffect &&
       (unit as any).data?.preventNextDestroy &&
       (
         (unit as any).data.preventNextDestroyUntilTurn === undefined ||
@@ -5339,6 +5340,7 @@ export const ServerGameService = {
     }
 
     if (
+      isEffect &&
       (unit as any).data?.preventFirstDestroyEachTurnSourceName &&
       (unit as any).data.preventFirstDestroyEachTurnUsedTurn !== gameState.turnCount
     ) {

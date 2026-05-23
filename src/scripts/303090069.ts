@@ -39,19 +39,52 @@ const cardEffects: CardEffect[] = [{
       playerState.uid,
       silverMusicDeckCards(playerState),
       '选择银乐卡',
-      '选择卡组中2张卡名含有《银乐》且卡名各不同的卡送入墓地。',
-      2,
-      2,
-      { sourceCardId: instance.gamecardId, effectId: '303090069_mill_two_silver_music' },
+      '选择卡组中1张卡名含有《银乐》的卡送入墓地。',
+      1,
+      1,
+      { sourceCardId: instance.gamecardId, effectId: '303090069_mill_two_silver_music', step: 'FIRST' },
       () => 'DECK'
     );
   },
-  onQueryResolve: async (instance, gameState, playerState, selections) => {
-    const selected = selections
-      .map(id => playerState.deck.find((card: Card) => card.gamecardId === id && card.fullName.includes('银乐')))
-      .filter((card): card is Card => !!card);
-    if (selected.length < 2 || new Set(selected.map(card => card.fullName)).size < 2) return;
-    selected.slice(0, 2).forEach(card => moveCard(gameState, playerState.uid, card, 'GRAVE', instance));
+  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step === 'FIRST') {
+      const first = playerState.deck.find((card: Card) =>
+        card.gamecardId === selections[0] &&
+        card.fullName.includes('银乐')
+      );
+      if (!first) return;
+      createSelectCardQuery(
+        gameState,
+        playerState.uid,
+        silverMusicDeckCards(playerState).filter((card: Card) =>
+          card.gamecardId !== first.gamecardId &&
+          card.fullName !== first.fullName
+        ),
+        '选择银乐卡',
+        '选择卡组中1张与第一张卡名不同的《银乐》卡送入墓地。',
+        1,
+        1,
+        { sourceCardId: instance.gamecardId, effectId: '303090069_mill_two_silver_music', step: 'SECOND', firstId: first.gamecardId },
+        () => 'DECK'
+      );
+      return;
+    }
+
+    const first = context?.firstId
+      ? playerState.deck.find((card: Card) =>
+        card.gamecardId === context.firstId &&
+        card.fullName.includes('银乐')
+      )
+      : undefined;
+    const second = selections[0]
+      ? playerState.deck.find((card: Card) =>
+        card.gamecardId === selections[0] &&
+        card.fullName.includes('银乐') &&
+        card.fullName !== first?.fullName
+      )
+      : undefined;
+    if (!first || !second) return;
+    [first, second].forEach(card => moveCard(gameState, playerState.uid, card, 'GRAVE', instance));
     await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'SHUFFLE_DECK' }, instance);
   }
 }, {

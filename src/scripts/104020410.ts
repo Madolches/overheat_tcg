@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, createSelectCardQuery, discardHandCost, getOpponentUid, isNonGodUnit, moveCard, wealthContinuous, wealthCount } from './BaseUtil';
+import { AtomicEffectExecutor, createSelectCardQuery, discardHandCost, ensureData, getOpponentUid, isNonGodUnit, moveCard, totalErosionCount, wealthCount } from './BaseUtil';
 
 const opponentTargets = (gameState: any, playerUid: string) => {
   const opponentUid = getOpponentUid(gameState, playerUid);
@@ -11,8 +11,17 @@ const opponentTargets = (gameState: any, playerUid: string) => {
 };
 
 const cardEffects: CardEffect[] = [{
-  ...wealthContinuous('104020410_wealth_1', 1),
+  id: '104020410_wealth_1',
+  type: 'CONTINUOUS',
+  wealthValue: 0,
+  description: '3~6：财富1(只要这个单位在战场上，你获得1个财富指示物)。',
   erosionTotalLimit: [3, 6],
+  condition: (_gameState, playerState) =>
+    totalErosionCount(playerState) >= 3 &&
+    totalErosionCount(playerState) <= 6,
+  applyContinuous: (_gameState, instance) => {
+    ensureData(instance).wealthValue = 1;
+  },
 }, {
   id: '104020410_take_opponent_unit',
   type: 'ACTIVATE',
