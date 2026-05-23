@@ -1,4 +1,24 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { moveTopDeckTo } from './BaseUtil';
+
+const cardEffects: CardEffect[] = [{
+  id: '105110402_enter_face_down_exile',
+  type: 'TRIGGER',
+  triggerLocation: ['UNIT'],
+  triggerEvent: 'CARD_ENTERED_ZONE',
+  limitCount: 1,
+  limitNameType: true,
+  isMandatory: true,
+  description: '同名1回合1次：这个单位进入战场时，将你卡组顶的1张卡背面放逐。',
+  condition: (_gameState, playerState, instance, event) =>
+    instance.cardlocation === 'UNIT' &&
+    event?.sourceCardId === instance.gamecardId &&
+    event.data?.zone === 'UNIT' &&
+    playerState.deck.length > 0,
+  execute: async (instance, gameState, playerState) => {
+    moveTopDeckTo(gameState, playerState.uid, 1, 'EXILE', instance, true);
+  }
+}];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -11,7 +31,6 @@ import { Card } from '../types/game';
  * Keywords: N/A
  * Card Detail:
  * 【诱】〖同名1回合1次〗{这个单位进入战场时}:将你卡组顶的1张卡背面放逐。（放逐区中的背面卡可以被其持有者确认）
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '105110402',
@@ -34,7 +53,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'C',
   availableRarities: ['C'],
   cardPackage: 'BT08',

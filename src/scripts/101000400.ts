@@ -1,4 +1,15 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { addContinuousKeyword } from './BaseUtil';
+
+const cardEffects: CardEffect[] = [{
+  id: '101000400_heroic',
+  type: 'CONTINUOUS',
+  triggerLocation: ['UNIT'],
+  description: '【英勇】',
+  applyContinuous: (_gameState, instance) => {
+    addContinuousKeyword(instance, instance, 'heroic');
+  }
+}];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -11,7 +22,6 @@ import { Card } from '../types/game';
  * Keywords: N/A
  * Card Detail:
  * 【英勇】
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '101000400',
@@ -35,7 +45,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'C',
   availableRarities: ['C'],
   cardPackage: 'BT08',

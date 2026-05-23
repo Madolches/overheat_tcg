@@ -118,7 +118,7 @@ const getEffectivePlayCostDetails = (gameState: GameState | null, player: Player
       !!card.specialName?.includes('雷霆')
     );
   if (soulDevourDiscount > 0 && (isThunderUnit || (card.color === 'RED' && !card.godMark))) {
-    return Math.max(0, baseCost - soulDevourDiscount);
+    return costDetails(baseCost, Math.max(0, baseCost - soulDevourDiscount), card.fullName);
   }
   if (card.id === '101140062') {
     const unitCount = player.unitZone.filter(c => c !== null).length;

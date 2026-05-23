@@ -1019,6 +1019,8 @@ export const isNonGodUnit = (card: Card) => card.type === 'UNIT' && !card.godMar
 export const isNonGodFieldCard = (card: Card) => !card.godMark && (card.type === 'UNIT' || card.type === 'ITEM' || card.isEquip);
 export const isFeijingCard = (card: Card) => !!card.feijingMark;
 export const isFeijingUnit = (card: Card) => card.type === 'UNIT' && !!card.feijingMark;
+export const isSameFactionCard = (card: Card, source: Card) =>
+  !!source.faction && card.faction === source.faction;
 export const isOtherworldBat = (card: Card) =>
   card.id === '102070357' ||
   card.fullName.includes('异界狂蝠') ||
@@ -1039,6 +1041,130 @@ export const wealthContinuous = (id: string, value: number): CardEffect => ({
 export const ensureData = (card: Card) => {
   (card as any).data = (card as any).data || {};
   return (card as any).data;
+};
+
+export const wasPlacedByPromotionThisTurn = (gameState: GameState, card: Card) =>
+  (card as any).data?.placedByPromotionTurn === gameState.turnCount;
+
+export const wasPlacedByPromotion = (card: Card) =>
+  !!(card as any).data?.placedByPromotionSourceCardId;
+
+export const markPlacedByPromotion = (gameState: GameState, target: Card, source: Card) => {
+  const data = ensureData(target);
+  data.placedByPromotionTurn = gameState.turnCount;
+  data.placedByPromotionSourceCardId = source.gamecardId;
+  data.placedByPromotionSourceName = source.fullName;
+};
+
+export const promotionTargets = (playerState: PlayerState, source: Card) =>
+  [...playerState.hand, ...playerState.deck].filter(card =>
+    card.type === 'UNIT' &&
+    (card.acValue || 0) === (source.acValue || 0) + 1 &&
+    canPutUnitOntoBattlefield(playerState, card)
+  );
+
+export const promotionTargetsFromAccess = (playerState: PlayerState, sourceAccess: number) =>
+  [...playerState.hand, ...playerState.deck].filter(card =>
+    card.type === 'UNIT' &&
+    (card.acValue || 0) === sourceAccess + 1 &&
+    canPutUnitOntoBattlefield(playerState, card)
+  );
+
+export const hasPromotionTarget = (playerState: PlayerState, source: Card) =>
+  promotionTargets(playerState, source).length > 0;
+
+export const sameFactionHandCards = (playerState: PlayerState, source: Card) =>
+  playerState.hand.filter(card => card.gamecardId !== source.gamecardId && isSameFactionCard(card, source));
+
+export const executePromotionAfterOptionalDiscard = async (
+  gameState: GameState,
+  playerState: PlayerState,
+  source: Card,
+  effectId: string,
+  options: {
+    selections?: string[];
+    context?: any;
+    discardPredicate?: (card: Card) => boolean;
+    skipDiscard?: boolean;
+    selfToGraveAsCost?: boolean;
+  } = {}
+) => {
+  const step = options.context?.step;
+  if (!step) {
+    if (!options.skipDiscard) {
+      const discardCandidates = playerState.hand.filter(card =>
+        card.gamecardId !== source.gamecardId &&
+        (!options.discardPredicate || options.discardPredicate(card))
+      );
+      if (discardCandidates.length === 0) return;
+      createSelectCardQuery(
+        gameState,
+        playerState.uid,
+        discardCandidates,
+        'Select promotion cost',
+        'Discard 1 card to promote.',
+        1,
+        1,
+        { sourceCardId: source.gamecardId, effectId, step: 'PROMOTION_DISCARD', selfToGraveAsCost: options.selfToGraveAsCost },
+        () => 'HAND'
+      );
+      return;
+    }
+
+    if (options.selfToGraveAsCost) moveCardAsCost(gameState, playerState.uid, source, 'GRAVE', source);
+    else moveCard(gameState, playerState.uid, source, 'GRAVE', source);
+    const candidates = promotionTargets(playerState, source);
+    if (candidates.length === 0) return;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      candidates,
+      'Select promotion unit',
+      'Put 1 unit with ACCESS +1 from your hand or deck onto the field.',
+      1,
+      1,
+      { sourceCardId: source.gamecardId, effectId, step: 'PROMOTION_PUT' },
+      card => card.cardlocation as TriggerLocation
+    );
+    return;
+  }
+
+  if (step === 'PROMOTION_DISCARD') {
+    const discard = (options.selections || [])
+      .map(id => playerState.hand.find(card => card.gamecardId === id))
+      .find((card): card is Card => !!card && (!options.discardPredicate || options.discardPredicate(card)));
+    if (!discard) return;
+    moveCardAsCost(gameState, playerState.uid, discard, 'GRAVE', source);
+    if (options.context?.selfToGraveAsCost) moveCardAsCost(gameState, playerState.uid, source, 'GRAVE', source);
+    else moveCard(gameState, playerState.uid, source, 'GRAVE', source);
+    const candidates = promotionTargets(playerState, source);
+    if (candidates.length === 0) return;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      candidates,
+      'Select promotion unit',
+      'Put 1 unit with ACCESS +1 from your hand or deck onto the field.',
+      1,
+      1,
+      { sourceCardId: source.gamecardId, effectId, step: 'PROMOTION_PUT' },
+      card => card.cardlocation as TriggerLocation
+    );
+    return;
+  }
+
+  if (step !== 'PROMOTION_PUT') return;
+  const target = (options.selections || [])
+    .map(id => AtomicEffectExecutor.findCardById(gameState, id))
+    .find((card): card is Card => !!card && promotionTargets(playerState, source).some(targetCard => targetCard.gamecardId === card.gamecardId));
+  if (!target) return;
+  const targetId = target.gamecardId;
+  const ownerUid = AtomicEffectExecutor.findCardOwnerKey(gameState, targetId);
+  if (ownerUid !== playerState.uid || !putUnitOntoField(gameState, playerState.uid, target, source)) return;
+  const live = AtomicEffectExecutor.findCardById(gameState, targetId);
+  if (live?.cardlocation === 'UNIT') {
+    markPlacedByPromotion(gameState, live, source);
+  }
 };
 
 export const addInfluence = (card: Card, source: Card, description: string) => {

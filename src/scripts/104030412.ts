@@ -1,4 +1,52 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { AtomicEffectExecutor, allUnitsOnField, createSelectCardQuery, isNonGodUnit, moveCard, ownerUidOf, paymentCost } from './BaseUtil';
+
+const enteredFromErosionByEffectThisTurn = (gameState: any, instance: Card) => {
+  const data = (instance as any).data || {};
+  return data.lastMovedByEffectTurn === gameState.turnCount &&
+    data.lastMovedToZone === 'UNIT' &&
+    (data.lastMovedFromZone === 'EROSION_FRONT' || data.lastMovedFromZone === 'EROSION_BACK');
+};
+
+const bounceTargets = (gameState: any) =>
+  allUnitsOnField(gameState).filter(unit =>
+    isNonGodUnit(unit) &&
+    (unit.acValue || 0) <= 3
+  );
+
+const cardEffects: CardEffect[] = [{
+  id: '104030412_bounce_after_erosion_entry',
+  type: 'ACTIVATE',
+  triggerLocation: ['UNIT'],
+  limitCount: 1,
+  limitNameType: true,
+  description: '同名1回合1次，你的回合中，若这个单位由于卡的效果从侵蚀区进入战场，支付+2：选择战场1个ACCESS值+3以下非神蚀单位返回持有者手牌。',
+  condition: (gameState, playerState, instance) =>
+    playerState.isTurn &&
+    instance.cardlocation === 'UNIT' &&
+    enteredFromErosionByEffectThisTurn(gameState, instance) &&
+    bounceTargets(gameState).length > 0,
+  cost: paymentCost(2),
+  execute: async (instance, gameState, playerState) => {
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      bounceTargets(gameState),
+      '选择返回手牌目标',
+      '选择战场上的1个ACCESS值+3以下的非神蚀单位返回持有者手牌。',
+      1,
+      1,
+      { sourceCardId: instance.gamecardId, effectId: '104030412_bounce_after_erosion_entry' },
+      card => card.cardlocation as any
+    );
+  },
+  onQueryResolve: async (instance, gameState, _playerState, selections) => {
+    const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
+    if (!target || !bounceTargets(gameState).some(unit => unit.gamecardId === target.gamecardId)) return;
+    const ownerUid = ownerUidOf(gameState, target);
+    if (ownerUid) moveCard(gameState, ownerUid, target, 'HAND', instance);
+  }
+}];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -11,7 +59,6 @@ import { Card } from '../types/game';
  * Keywords: N/A
  * Card Detail:
  * 【启】〖同名1回合1次〗{你的回合中，若这个单位由于卡的效果从侵蚀区进入战场，选择战场上的1个ACCESS值+3以下的非神蚀单位}[〖+2〗]:将被选择的单位返回持有者的手牌。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '104030412',
@@ -34,7 +81,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'C',
   availableRarities: ['C'],
   cardPackage: 'BT08',

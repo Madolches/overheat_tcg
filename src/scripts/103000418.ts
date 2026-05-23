@@ -1,4 +1,48 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { addContinuousDamage, addContinuousPower, ensureData, totalErosionCount } from './BaseUtil';
+
+const cardEffects: CardEffect[] = [{
+  id: '103000418_counter_destroy_effect',
+  type: 'ACTIVATE',
+  triggerLocation: ['UNIT'],
+  limitCount: 1,
+  description: '1回合1次：反击对手使用的包含破坏你战场卡效果的【启】能力或故事卡。之后失去这个【启】能力。',
+  condition: (gameState, _playerState, instance) =>
+    instance.cardlocation === 'UNIT' &&
+    !(instance as any).data?.counterDestroyEffectLost &&
+    gameState.phase === 'COUNTERING',
+  execute: async (instance, gameState) => {
+    ensureData(instance).counterDestroyEffectLost = true;
+    const stack = (gameState as any).counterStack || [];
+    const target = [...stack].reverse().find((item: any) =>
+      item?.card &&
+      (
+        item.card.type === 'STORY' ||
+        item.effect?.type === 'ACTIVATE' ||
+        item.effect?.type === 'ACTIVATED'
+      ) &&
+      /破坏|destroy/i.test(`${item.effect?.description || ''} ${item.card?.fullName || ''}`)
+    );
+    if (target) {
+      target.isNegated = true;
+      target.negated = true;
+      gameState.logs.push(`[${instance.fullName}] 反击了包含破坏效果的能力或故事卡。`);
+    }
+  }
+}, {
+  id: '103000418_erosion_stats',
+  type: 'CONTINUOUS',
+  triggerLocation: ['UNIT'],
+  erosionTotalLimit: [3, 99],
+  description: '创痕3：这个单位伤害+1、力量+1000。',
+  applyContinuous: (gameState, instance) => {
+    const owner = Object.values((gameState as any).players)
+      .find((player: any) => player.unitZone.some((unit: Card | null) => unit?.gamecardId === instance.gamecardId));
+    if (!owner || totalErosionCount(owner as any) < 3) return;
+    addContinuousDamage(instance, instance, 1);
+    addContinuousPower(instance, instance, 1000);
+  }
+}];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -12,7 +56,6 @@ import { Card } from '../types/game';
  * Card Detail:
  * 【启】〖1回合1次〗:反击对手使用包含破坏你战场的卡的效果的【启】能力或故事卡。之后，失去这个【启】能力。
  * 【创痕3】【永】:这个单位〖伤害+1〗〖力量+1000〗。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '103000418',
@@ -35,7 +78,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'SR',
   availableRarities: ['SR'],
   cardPackage: 'BT08',

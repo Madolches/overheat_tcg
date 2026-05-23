@@ -1,4 +1,7 @@
 import { Card } from '../types/game';
+import { resonanceEffect } from './BaseUtil';
+
+const cardEffects = [resonanceEffect('103090422_resonance')];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -11,7 +14,6 @@ import { Card } from '../types/game';
  * Keywords: N/A
  * Card Detail:
  * 【启】:共鸣（〖1回合1次〗{你的主要阶段，选择你的墓地中的1张卡}:将被选择的卡放逐）。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '103090422',
@@ -34,7 +36,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'C',
   availableRarities: ['C'],
   cardPackage: 'BT08',

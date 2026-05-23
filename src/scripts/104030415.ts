@@ -1,4 +1,52 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+import { AtomicEffectExecutor, canPutUnitOntoBattlefield, cardsInZones, createSelectCardQuery, discardHandCost, isNonGodUnit, moveCard, putUnitOntoField } from './BaseUtil';
+
+const ADVENTURER = '冒险家公会';
+
+const isAdventurerNonGodUnit = (card: Card) =>
+  isNonGodUnit(card) &&
+  (card.faction === ADVENTURER || card.fullName.includes(ADVENTURER));
+
+const targets = (playerState: any) =>
+  cardsInZones(playerState, ['UNIT', 'GRAVE'])
+    .filter(({ card }) =>
+      isAdventurerNonGodUnit(card) &&
+      canPutUnitOntoBattlefield(playerState, card)
+    );
+
+const cardEffects: CardEffect[] = [{
+  id: '104030415_cycle_adventurer_through_erosion',
+  type: 'ACTIVATE',
+  triggerLocation: ['UNIT'],
+  limitCount: 1,
+  description: '1回合1次，舍弃1张手牌：将你战场上或墓地的1张<冒险家公会>非神蚀单位放置到侵蚀区，之后将那张卡从侵蚀区放置到战场。',
+  condition: (_gameState, playerState) =>
+    playerState.hand.length > 0 &&
+    targets(playerState).length > 0,
+  cost: discardHandCost(1),
+  execute: async (instance, gameState, playerState) => {
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      targets(playerState).map(entry => entry.card),
+      '选择冒险家公会单位',
+      '选择你战场上或墓地的1张<冒险家公会>非神蚀单位放置到侵蚀区，之后放置到战场。',
+      1,
+      1,
+      { sourceCardId: instance.gamecardId, effectId: '104030415_cycle_adventurer_through_erosion' },
+      card => card.cardlocation as any
+    );
+  },
+  onQueryResolve: async (instance, gameState, playerState, selections) => {
+    const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
+    if (!target || !targets(playerState).some(entry => entry.card.gamecardId === target.gamecardId)) return;
+    moveCard(gameState, playerState.uid, target, 'EROSION_FRONT', instance);
+    const erosionCard = AtomicEffectExecutor.findCardById(gameState, target.gamecardId);
+    if (erosionCard?.cardlocation === 'EROSION_FRONT') {
+      putUnitOntoField(gameState, playerState.uid, erosionCard, instance);
+    }
+  }
+}];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.
@@ -11,7 +59,6 @@ import { Card } from '../types/game';
  * Keywords: N/A
  * Card Detail:
  * 【启】〖1回合1次〗[舍弃1张手牌]:将你战场上或墓地的1张<冒险家公会>的非神蚀单位卡放置到你的侵蚀区，之后，将侵蚀区中的那张卡放置到战场上。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '104030415',
@@ -34,7 +81,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'SER',
   availableRarities: ['SER'],
   cardPackage: 'BT08',

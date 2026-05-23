@@ -93,7 +93,7 @@ const effect_204000025_activation: CardEffect = {
 
       const options = [
         ...stackCandidates.map(item => ({
-          card: item.card || { fullName: '未知效果', type: 'EFFECT' } as Card,
+          card: item.card || { fullName: '未知效果', type: 'EFFECT' } as unknown as Card,
           source: (item.type === 'PLAY' ? (item.card?.cardlocation || 'PLAY') : 'STACK') as any,
           id: item.card?.gamecardId || `stack_${gameState.counterStack.indexOf(item)}`
         })),

@@ -36,6 +36,7 @@ export type GameEventType =
   | 'CARD_SELECTED_ALLIANCE'
   | 'CARD_DEFENSE_DECLARED'
   | 'BATTLE_ENDED'
+  | 'TURN_END'
   | 'COMBAT_DAMAGE_CAUSED'
   | 'EFFECT_DAMAGE_CAUSED'
   | 'GODDESS_TRANSFORMATION'
@@ -127,6 +128,7 @@ export interface AtomicEffect {
   targetFilter?: CardFilter;
   targetCount?: number;
   destinationZone?: TriggerLocation;
+  displayState?: Card['displayState'];
   faceDown?: boolean;
   params?: any;
 }
@@ -303,7 +305,7 @@ export interface Card {
   baseDamage?: number;
   godMark: boolean;
   baseGodMark?: boolean;
-  displayState: 'FRONT_UPRIGHT' | 'FRONT_FACEDOWN' | 'BACK_UPRIGHT';
+  displayState: 'FRONT_UPRIGHT' | 'FRONT_HORIZONTAL' | 'FRONT_FACEDOWN' | 'BACK_UPRIGHT';
   isrush?: boolean;
   baseIsrush?: boolean;
   isAnnihilation?: boolean;
@@ -448,6 +450,7 @@ export interface EffectQuery {
   context?: any; // Extra data like the card that triggered this
   afterSelectionEffects?: AtomicEffect[]; // Effects to run after choice is made
   executionMode?: 'IMMEDIATE' | 'ON_STACK'; // How to resolve the after effects
+  isMandatory?: boolean;
   // Payment Query specialized fields
   paymentCost?: number;
   paymentColor?: string;
@@ -465,6 +468,7 @@ export type GamePhase =
   | 'BATTLE_FREE'
   | 'DAMAGE_CALCULATION'
   | 'BATTLE_END'
+  | 'DECLARE_END'
   | 'DISCARD'
   | 'COUNTERING'
   | 'END'

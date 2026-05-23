@@ -4,7 +4,29 @@ import { addInfluence, allUnitsOnField, createSelectCardQuery, ensureData } from
 
 const ohDisabled = (instance: Card) => !!(instance as any).data?.ohEffectDisabledUntilOwnStartUid;
 
+const currentBattleOpponent = (gameState: any, instance: Card) => {
+  const battle = gameState.battleState;
+  if (!battle) return undefined;
+  const ids = [...(battle.attackers || []), battle.defender].filter(Boolean);
+  if (!ids.includes(instance.gamecardId)) return undefined;
+  return ids
+    .filter(id => id !== instance.gamecardId)
+    .map(id => AtomicEffectExecutor.findCardById(gameState, id))
+    .find((card: Card | undefined): card is Card => !!card && card.cardlocation === 'UNIT' && !card.godMark);
+};
+
 const cardEffects: CardEffect[] = [{
+  id: '103000419_battle_non_god_power_zero',
+  type: 'CONTINUOUS',
+  triggerLocation: ['UNIT'],
+  description: '与这个单位进行战斗的对手非神蚀单位力量变为0。',
+  applyContinuous: (gameState, instance) => {
+    const opponent = currentBattleOpponent(gameState, instance);
+    if (!opponent) return;
+    opponent.power = 0;
+    addInfluence(opponent, instance, '战斗中力量变为0');
+  }
+}, {
   id: '103000419_set_unit_power_zero',
   type: 'ACTIVATE',
   triggerLocation: ['UNIT'],
@@ -55,7 +77,6 @@ const cardEffects: CardEffect[] = [{
  * 【歼灭】
  * 【永】:与这个单位进行战斗的对手的非神蚀单位变为〖力量0〗。
  * 〖10+〗【启】〖1回合1次〗{选择战场上的1个单位}:本回合中，被选择的单位变为〖力量0〗。直到下一次你的回合开始时为止，失去这个【启】能力。
- * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {
   id: '103000419',
