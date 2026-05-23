@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, canPutUnitOntoBattlefield, cardsInZones, createSelectCardQuery, discardHandCost, isNonGodUnit, moveCard, putUnitOntoField } from './BaseUtil';
+import { AtomicEffectExecutor, canPutUnitOntoBattlefield, cardsInZones, createSelectCardQuery, discardHandCost, isNonGodUnit, moveCard, moveCardAsCost, putUnitOntoField } from './BaseUtil';
 
 const ADVENTURER = '冒险家公会';
 
@@ -40,7 +40,7 @@ const cardEffects: CardEffect[] = [{
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (!target || !targets(playerState).some(entry => entry.card.gamecardId === target.gamecardId)) return;
-    moveCard(gameState, playerState.uid, target, 'EROSION_FRONT', instance);
+    moveCardAsCost(gameState, playerState.uid, target, 'EROSION_FRONT', instance);
     const erosionCard = AtomicEffectExecutor.findCardById(gameState, target.gamecardId);
     if (erosionCard?.cardlocation === 'EROSION_FRONT') {
       putUnitOntoField(gameState, playerState.uid, erosionCard, instance);

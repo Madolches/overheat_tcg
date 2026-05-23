@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { canPutUnitOntoBattlefield, cardsInZones, millTop, moveCard, putUnitOntoField, resonanceEffect, selectFromEntries } from './BaseUtil';
+import { canMeetBattlefieldColorRequirement, canPutUnitOntoBattlefield, cardsInZones, millTop, moveCard, putUnitOntoField, resonanceEffect, selectFromEntries } from './BaseUtil';
 
 const hasAwakenText = (card: Card) =>
   (card.effects || []).some(effect =>
@@ -40,13 +40,20 @@ const cardEffects: CardEffect[] = [
     isGlobal: true,
     limitCount: 1,
     limitNameType: true,
-    description: '同名1回合1次：你的单位由于卡的效果从战场离开时，将墓地中的这张卡放置到战场。',
+    description: '同名1回合1次：你的单位由于卡的效果从战场离开时，满足1绿并将卡组顶2张送入墓地，将墓地中的这张卡放置到战场。',
     condition: (_gameState, playerState, instance, event) =>
       instance.cardlocation === 'GRAVE' &&
       event?.playerUid === playerState.uid &&
       event.data?.sourceZone === 'UNIT' &&
       event.data?.isEffect === true &&
+      canMeetBattlefieldColorRequirement(playerState, { GREEN: 1 }) &&
+      playerState.deck.length >= 2 &&
       canPutUnitOntoBattlefield(playerState, instance),
+    cost: async (gameState, playerState, instance) => {
+      if (!canMeetBattlefieldColorRequirement(playerState, { GREEN: 1 }) || playerState.deck.length < 2) return false;
+      millTop(gameState, playerState.uid, 2, instance);
+      return true;
+    },
     execute: async (instance, gameState, playerState) => {
       putUnitOntoField(gameState, playerState.uid, instance, instance);
     }

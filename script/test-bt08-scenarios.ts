@@ -56,7 +56,7 @@ import bt08Y08 from '../src/scripts/205000152';
 import bt08Y09 from '../src/scripts/205000153';
 import bt08Y10 from '../src/scripts/305110083';
 import bt08Y11 from '../src/scripts/105110409';
-import { destroyByEffect, ensureData, moveCard, moveCardAsCost } from '../src/scripts/BaseUtil';
+import { destroyByEffect, ensureData, moveCard, moveCardAsCost, wealthCount } from '../src/scripts/BaseUtil';
 
 type ScenarioResult = {
   name: string;
@@ -361,6 +361,14 @@ async function testDuluExilesAndReturnsNonGodUnit(): Promise<ScenarioResult> {
 
   EventEngine.recalculateContinuousEffects(state);
   const boosted = dulu.power === (dulu.basePower || 0) + 500 && dulu.isHeroic === true;
+  const highErosionDulu = cloneScriptCard(bt08W04 as Card, 'UNIT', { gamecardId: 'W04_DULU_HIGH' });
+  const stateHigh = game({
+    unitZone: [highErosionDulu, null, null, null, null, null],
+    erosionFront: deckCards(5, 'W04_HIGH_EROSION', 'WHITE').map(card => ({ ...card, cardlocation: 'EROSION_FRONT' as any })),
+  });
+  EventEngine.recalculateContinuousEffects(stateHigh);
+  const gatedHeroic = highErosionDulu.isHeroic !== true &&
+    highErosionDulu.power === (highErosionDulu.basePower || 0);
 
   await activateAndResolveByOpponentPass(state, 'BOT', dulu, 0);
   if (state.pendingQuery?.context?.effectId !== '101140398_exile_non_god_unit_until_end') {
@@ -377,9 +385,9 @@ async function testDuluExilesAndReturnsNonGodUnit(): Promise<ScenarioResult> {
   await confirmTrigger(state, 'BOT');
   const returned = state.players.P1.unitZone.some((unit: Card | null) => unit?.gamecardId === target.gamecardId);
 
-  return boosted && discarded && exiled && returned
-    ? pass(name, `boosted=${boosted}, returned=${returned}`)
-    : fail(name, `boosted=${boosted}, discarded=${discarded}, exiled=${exiled}, returned=${returned}`);
+  return boosted && gatedHeroic && discarded && exiled && returned
+    ? pass(name, `boosted=${boosted}, gated=${gatedHeroic}, returned=${returned}`)
+    : fail(name, `boosted=${boosted}, gated=${gatedHeroic}, discarded=${discarded}, exiled=${exiled}, returned=${returned}`);
 }
 
 async function testPatrolReadiesHolyKingdomAllianceTarget(): Promise<ScenarioResult> {
@@ -608,16 +616,29 @@ function testGloriousCityProtectsAndBoostsHolyKingdom(): ScenarioResult {
 
   EventEngine.recalculateContinuousEffects(state);
   const boosted = unit.power === 3000 && nonHoly.power === 2500;
-  destroyByEffect(state, unit, opponentSource);
-  const unitProtected = state.players.BOT.unitZone.some((slot: Card | null) => slot?.gamecardId === unit.gamecardId);
+  ServerGameService.destroyUnit(state, 'BOT', unit.gamecardId, false, 'P1');
+  const battleDestroyed = state.players.BOT.grave.some((card: Card) => card.gamecardId === unit.gamecardId);
+  const effectUnit = testCard({
+    id: 'HOLY_UNIT_EFFECT',
+    fullName: 'Holy Kingdom Effect Unit',
+    type: 'UNIT',
+    faction: city.faction,
+    cardlocation: 'UNIT',
+    basePower: 2500,
+    power: 2500,
+  });
+  state.players.BOT.unitZone[0] = effectUnit;
+  EventEngine.recalculateContinuousEffects(state);
+  destroyByEffect(state, effectUnit, opponentSource);
+  const unitProtected = state.players.BOT.unitZone.some((slot: Card | null) => slot?.gamecardId === effectUnit.gamecardId);
   destroyByEffect(state, item, opponentSource);
   const itemProtected = state.players.BOT.itemZone.some((slot: Card | null) => slot?.gamecardId === item.gamecardId);
-  destroyByEffect(state, unit, opponentSource);
-  const secondDestroyed = state.players.BOT.grave.some((card: Card) => card.gamecardId === unit.gamecardId);
+  destroyByEffect(state, effectUnit, opponentSource);
+  const secondDestroyed = state.players.BOT.grave.some((card: Card) => card.gamecardId === effectUnit.gamecardId);
 
-  return boosted && unitProtected && itemProtected && secondDestroyed
-    ? pass(name, `boosted=${boosted}, protected=${unitProtected && itemProtected}, secondDestroyed=${secondDestroyed}`)
-    : fail(name, `boosted=${boosted}, unitProtected=${unitProtected}, itemProtected=${itemProtected}, secondDestroyed=${secondDestroyed}`);
+  return boosted && battleDestroyed && unitProtected && itemProtected && secondDestroyed
+    ? pass(name, `boosted=${boosted}, battleDestroyed=${battleDestroyed}, protected=${unitProtected && itemProtected}, secondDestroyed=${secondDestroyed}`)
+    : fail(name, `boosted=${boosted}, battleDestroyed=${battleDestroyed}, unitProtected=${unitProtected}, itemProtected=${itemProtected}, secondDestroyed=${secondDestroyed}`);
 }
 
 async function testNikolasSendsFrozenNonGodToGrave(): Promise<ScenarioResult> {
@@ -988,6 +1009,26 @@ async function testGreenSilverMusicDestroyAndBonuses(): Promise<ScenarioResult> 
   const dancerBuffed = dancer.power === (dancer.basePower || 0) + 1000 &&
     dancer.damage === (dancer.baseDamage || 0) + 1 &&
     dancer.isAnnihilation === true;
+  const lowDancer = cloneScriptCard(bt08G03 as Card, 'UNIT', {
+    gamecardId: 'G03_LOW_DANCER',
+    baseAnnihilation: false,
+    isAnnihilation: false
+  });
+  const stateLowDancer = game({
+    unitZone: [
+      lowDancer,
+      testCard({ id: 'G03_LOW_A', fullName: '银乐 Low A', type: 'UNIT', faction: '瑟诺布', cardlocation: 'UNIT' }),
+      testCard({ id: 'G03_LOW_B', fullName: '银乐 Low B', type: 'UNIT', faction: '瑟诺布', cardlocation: 'UNIT' }),
+      null,
+      null,
+      null
+    ],
+    erosionFront: deckCards(4, 'G03_LOW_EROSION', 'GREEN').map(card => ({ ...card, cardlocation: 'EROSION_FRONT' as any })),
+  });
+  EventEngine.recalculateContinuousEffects(stateLowDancer);
+  const dancerGated = lowDancer.power === (lowDancer.basePower || 0) &&
+    lowDancer.damage === (lowDancer.baseDamage || 0) &&
+    lowDancer.isAnnihilation !== true;
 
   const girls = cloneScriptCard(bt08G04 as Card, 'UNIT');
   const stateC = game({
@@ -996,6 +1037,14 @@ async function testGreenSilverMusicDestroyAndBonuses(): Promise<ScenarioResult> 
   });
   EventEngine.recalculateContinuousEffects(stateC);
   const girlsBuffed = girls.power === (girls.basePower || 0) + 1000 && girls.damage === (girls.baseDamage || 0) + 1;
+  const lowGirls = cloneScriptCard(bt08G04 as Card, 'UNIT', { gamecardId: 'G04_LOW_GIRLS' });
+  const stateLowGirls = game({
+    unitZone: [lowGirls, null, null, null, null, null],
+    erosionFront: deckCards(2, 'G04_LOW_EROSION', 'GREEN').map(card => ({ ...card, cardlocation: 'EROSION_FRONT' as any })),
+  });
+  EventEngine.recalculateContinuousEffects(stateLowGirls);
+  const girlsGated = lowGirls.power === (lowGirls.basePower || 0) &&
+    lowGirls.damage === (lowGirls.baseDamage || 0);
 
   const yasha = cloneScriptCard(bt08G05 as Card, 'UNIT');
   const opponent = testCard({ id: 'G05_OPP', fullName: 'G05 Opponent', type: 'UNIT', godMark: false, cardlocation: 'UNIT', power: 3000, basePower: 3000 });
@@ -1011,17 +1060,29 @@ async function testGreenSilverMusicDestroyAndBonuses(): Promise<ScenarioResult> 
   const battleZero = opponent.power === 0;
 
   const gladiator = cloneScriptCard(bt08G06 as Card, 'UNIT');
-  const stateE = game({ unitZone: [gladiator, null, null, null, null, null] });
+  const returnSource = testCard({ id: 'G06_RETURN_SOURCE', fullName: 'Return Source', type: 'UNIT', cardlocation: 'UNIT' });
+  const stateE = game({ unitZone: [gladiator, null, null, null, null, null] }, {
+    unitZone: [returnSource, null, null, null, null, null],
+  });
   EventEngine.recalculateContinuousEffects(stateE);
   const gated = (gladiator as any).data?.cannotAttackThisTurn === stateE.turnCount &&
     (gladiator as any).data?.cannotDefendTurn === stateE.turnCount;
+  const returnedByEffect = ServerGameService.moveCard(stateE, 'BOT', 'UNIT', 'BOT', 'DECK', gladiator.gamecardId, {
+    isEffect: true,
+    insertAtBottom: true,
+    effectSourcePlayerUid: 'P1',
+    effectSourceCardId: returnSource.gamecardId,
+  });
+  const preventedDeckReturn = returnedByEffect === false &&
+    stateE.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === gladiator.gamecardId) &&
+    !stateE.players.BOT.deck.some((card: Card) => card.gamecardId === gladiator.gamecardId);
   ensureData(gladiator).awakenedTurn = stateE.turnCount;
   EventEngine.recalculateContinuousEffects(stateE);
   const awakenedAllowed = (gladiator as any).data?.cannotAttackThisTurn !== stateE.turnCount;
 
-  return conductorDestroyed && dancerBuffed && girlsBuffed && battleZero && gated && awakenedAllowed
-    ? pass(name, `destroy=${conductorDestroyed}, dancer=${dancerBuffed}, girls=${girlsBuffed}, battle=${battleZero}, gate=${gated}`)
-    : fail(name, `destroy=${conductorDestroyed}, dancer=${dancerBuffed}, girls=${girlsBuffed}, battle=${battleZero}, gate=${gated}, awakened=${awakenedAllowed}`);
+  return conductorDestroyed && dancerBuffed && dancerGated && girlsBuffed && girlsGated && battleZero && gated && preventedDeckReturn && awakenedAllowed
+    ? pass(name, `destroy=${conductorDestroyed}, dancer=${dancerBuffed}/${dancerGated}, girls=${girlsBuffed}/${girlsGated}, battle=${battleZero}, gate=${gated}, return=${preventedDeckReturn}`)
+    : fail(name, `destroy=${conductorDestroyed}, dancer=${dancerBuffed}/${dancerGated}, girls=${girlsBuffed}/${girlsGated}, battle=${battleZero}, gate=${gated}, return=${preventedDeckReturn}, awakened=${awakenedAllowed}`);
 }
 
 async function testGreenResonanceAndSilverRecovery(): Promise<ScenarioResult> {
@@ -1052,24 +1113,43 @@ async function testGreenResonanceAndSilverRecovery(): Promise<ScenarioResult> {
   const silver = testCard({ id: 'G08_SILVER', fullName: '银乐回收者', type: 'UNIT', godMark: false, cardlocation: 'DECK' });
   const fillerA = testCard({ id: 'G08_FILL_A', fullName: 'Filler A', cardlocation: 'DECK' });
   const fillerB = testCard({ id: 'G08_FILL_B', fullName: 'Filler B', cardlocation: 'DECK' });
+  const erosionA = testCard({ id: 'G08_EROSION_A', fullName: 'G08 Erosion A', cardlocation: 'EROSION_FRONT', displayState: 'FRONT_UPRIGHT' });
+  const erosionB = testCard({ id: 'G08_EROSION_B', fullName: 'G08 Erosion B', cardlocation: 'EROSION_FRONT', displayState: 'FRONT_UPRIGHT' });
   const stateB = game({
     deck: [fillerA, fillerB, silver],
     playZone: [song],
+    erosionFront: [erosionA, erosionB],
   });
   await song.effects?.[0]?.execute?.(song, stateB, stateB.players.BOT);
+  if (stateB.pendingQuery?.context?.step !== 'EROSION_COST' || stateB.pendingQuery.maxSelections !== 2) {
+    return fail(name, `expected G08 erosion cost query, got ${stateB.pendingQuery?.context?.step || 'none'}/${stateB.pendingQuery?.maxSelections}`);
+  }
+  await answerPendingQuery(stateB, 'BOT', [erosionA.gamecardId, erosionB.gamecardId]);
+  if (stateB.pendingQuery?.context?.step !== 'RECOVER') {
+    return fail(name, `expected G08 recovery query, got ${stateB.pendingQuery?.context?.step || 'none'}`);
+  }
   await answerPendingQuery(stateB, 'BOT', [silver.gamecardId]);
   const songRecovered = stateB.players.BOT.hand.some((card: Card) => card.gamecardId === silver.gamecardId) &&
-    stateB.players.BOT.grave.length === 2;
+    stateB.players.BOT.grave.some((card: Card) => card.gamecardId === fillerB.gamecardId) &&
+    stateB.players.BOT.grave.some((card: Card) => card.gamecardId === erosionA.gamecardId) &&
+    stateB.players.BOT.grave.some((card: Card) => card.gamecardId === erosionB.gamecardId) &&
+    stateB.players.BOT.grave.length === 3;
 
   const celloItem = cloneScriptCard(bt08G09 as Card, 'ITEM');
   const silverDeckA = testCard({ id: 'G09_SILVER_A', fullName: '银乐 Alpha', cardlocation: 'DECK' });
   const silverDeckB = testCard({ id: 'G09_SILVER_B', fullName: '银乐 Beta', cardlocation: 'DECK' });
+  const silverDeckSame = testCard({ id: 'G09_SILVER_A2', fullName: '银乐 Alpha', cardlocation: 'DECK' });
   const stateC = game({
     itemZone: [celloItem],
-    deck: [silverDeckA, silverDeckB],
+    deck: [silverDeckA, silverDeckSame, silverDeckB],
   });
   await activateAndResolveByOpponentPass(stateC, 'BOT', celloItem, 0);
-  await answerPendingQuery(stateC, 'BOT', [silverDeckA.gamecardId, silverDeckB.gamecardId]);
+  await answerPendingQuery(stateC, 'BOT', [silverDeckA.gamecardId]);
+  const secondOptions = (stateC.pendingQuery?.options || []).map((option: any) => option.card.gamecardId);
+  if (secondOptions.includes(silverDeckSame.gamecardId) || !secondOptions.includes(silverDeckB.gamecardId)) {
+    return fail(name, `G09 second options=${secondOptions.join(',')}`);
+  }
+  await answerPendingQuery(stateC, 'BOT', [silverDeckB.gamecardId]);
   const celloMilled = stateC.players.BOT.grave.filter((card: Card) =>
     [silverDeckA.gamecardId, silverDeckB.gamecardId].includes(card.gamecardId)
   ).length === 2 && celloItem.isExhausted;
@@ -1187,6 +1267,21 @@ async function testBlueWealthStealRecoverAndStory(): Promise<ScenarioResult> {
     unitZone: [target, godTarget, null, null, null, null],
   });
   EventEngine.recalculateContinuousEffects(stateA);
+  const wealthInRange = wealthCount(stateA.players.BOT, stateA) === 3;
+  const lowWealthBranch = cloneScriptCard(bt08B01 as Card, 'UNIT', { gamecardId: 'B01_LOW_BRANCH' });
+  const stateLowWealth = game({
+    unitZone: [
+      lowWealthBranch,
+      cloneScriptCard(bt08B02 as Card, 'UNIT', { gamecardId: 'B01_LOW_JEWELER' }),
+      null,
+      null,
+      null,
+      null
+    ],
+    erosionFront: deckCards(2, 'B01_LOW_EROSION', 'BLUE').map(card => ({ ...card, cardlocation: 'EROSION_FRONT' as any })),
+  });
+  EventEngine.recalculateContinuousEffects(stateLowWealth);
+  const wealthGated = wealthCount(stateLowWealth.players.BOT, stateLowWealth) === 1;
   await activateAndResolveByOpponentPass(stateA, 'BOT', branch, 1);
   if (stateA.pendingQuery?.context?.effectId !== '104020410_take_opponent_unit') {
     return fail(name, `expected B01 target query, got ${stateA.pendingQuery?.context?.effectId || 'none'}`);
@@ -1201,14 +1296,15 @@ async function testBlueWealthStealRecoverAndStory(): Promise<ScenarioResult> {
   const dream = cloneScriptCard(bt08B07 as Card, 'GRAVE');
   const stateB = game({
     unitZone: [
-      jeweler,
-      testCard({ id: 'B02_WEALTH_A', fullName: 'B02 Wealth A', type: 'UNIT', cardlocation: 'UNIT', data: { wealthValue: 1 } } as any),
-      testCard({ id: 'B02_WEALTH_B', fullName: 'B02 Wealth B', type: 'UNIT', cardlocation: 'UNIT', data: { wealthValue: 1 } } as any),
+      cloneScriptCard(bt08B02 as Card, 'UNIT', { gamecardId: 'B02_SELF_TRIGGER' }),
+      cloneScriptCard(bt08B01 as Card, 'UNIT', { gamecardId: 'B02_WEALTH_A' }),
+      cloneScriptCard(bt08B01 as Card, 'UNIT', { gamecardId: 'B02_WEALTH_B' }),
       null,
       null,
       null
     ],
     grave: [dream],
+    erosionFront: deckCards(3, 'B02_EROSION', 'BLUE').map(card => ({ ...card, cardlocation: 'EROSION_FRONT' as any })),
   });
   EventEngine.recalculateContinuousEffects(stateB);
   EventEngine.dispatchEvent(stateB, { type: 'TURN_END' as any, playerUid: 'BOT' });
@@ -1236,9 +1332,9 @@ async function testBlueWealthStealRecoverAndStory(): Promise<ScenarioResult> {
   await answerPendingQuery(stateC, 'BOT', [optionIdByValue(stateC, 'DRAW_TO_FOUR')]);
   const drewToFourOrDeckEmpty = stateC.players.BOT.hand.length === 3 && stateC.players.BOT.deck.length === 0;
 
-  return stole && recoveredDream && drewToFourOrDeckEmpty
-    ? pass(name, `stole=${stole}, recovered=${recoveredDream}, drew=${drewToFourOrDeckEmpty}`)
-    : fail(name, `stole=${stole}, recovered=${recoveredDream}, drew=${drewToFourOrDeckEmpty}`);
+  return wealthInRange && wealthGated && stole && recoveredDream && drewToFourOrDeckEmpty
+    ? pass(name, `wealth=${wealthInRange}/${wealthGated}, stole=${stole}, recovered=${recoveredDream}, drew=${drewToFourOrDeckEmpty}`)
+    : fail(name, `wealth=${wealthInRange}/${wealthGated}, stole=${stole}, recovered=${recoveredDream}, drew=${drewToFourOrDeckEmpty}`);
 }
 
 async function testBlueErosionEntryAndAdventurers(): Promise<ScenarioResult> {
@@ -1263,6 +1359,9 @@ async function testBlueErosionEntryAndAdventurers(): Promise<ScenarioResult> {
   await activateAndResolveByOpponentPass(stateA, 'BOT', albert, 0);
   await answerPendingQuery(stateA, 'BOT', [sodo.gamecardId]);
   const sodoOnField = stateA.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === sodo.gamecardId);
+  const albertDiscarded = stateA.players.BOT.grave.some((card: Card) => card.gamecardId === discard.gamecardId) &&
+    !stateA.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === discard.gamecardId) &&
+    !stateA.players.BOT.itemZone.some((item: Card | null) => item?.gamecardId === discard.gamecardId);
   await activateAndPassWithPayment(stateA, 'BOT', sodo, 0, { exhaustUnitIds: [payA.gamecardId, payB.gamecardId] });
   await answerPendingQuery(stateA, 'BOT', [bounceTarget.gamecardId]);
   const bounced = stateA.players.P1.hand.some((card: Card) => card.fullName === bounceTarget.fullName);
@@ -1295,9 +1394,9 @@ async function testBlueErosionEntryAndAdventurers(): Promise<ScenarioResult> {
   EventEngine.recalculateContinuousEffects(stateC);
   const buffed = feast.power === (feast.basePower || 0) + 1000 && feast.damage === (feast.baseDamage || 0) + 1;
 
-  return sodoOnField && bounced && drew && buffed
-    ? pass(name, `sodo=${sodoOnField}, bounced=${bounced}, drew=${drew}, buffed=${buffed}`)
-    : fail(name, `sodo=${sodoOnField}, bounced=${bounced}, drew=${drew}, buffed=${buffed}`);
+  return sodoOnField && albertDiscarded && bounced && drew && buffed
+    ? pass(name, `sodo=${sodoOnField}, albertDiscard=${albertDiscarded}, bounced=${bounced}, drew=${drew}, buffed=${buffed}`)
+    : fail(name, `sodo=${sodoOnField}, albertDiscard=${albertDiscarded}, bounced=${bounced}, drew=${drew}, buffed=${buffed}`);
 }
 
 async function testBlueCounterAndCarriage(): Promise<ScenarioResult> {
@@ -1380,15 +1479,16 @@ async function testBlueSwordImmortalPackage(): Promise<ScenarioResult> {
   const entered = stateA.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === eastern.gamecardId);
   EventEngine.recalculateContinuousEffects(stateA);
   const boostedByManor = eastern.power === (eastern.basePower || 0) + 500;
+  const noEquipmentHeroic = eastern.isHeroic !== true;
 
   const equip = testCard({ id: 'B11_EQUIP', fullName: 'B11 Equip', type: 'ITEM', color: 'BLUE', cardlocation: 'ITEM', equipTargetId: eastern.gamecardId, isEquip: true });
   stateA.players.BOT.itemZone.push(equip);
   EventEngine.recalculateContinuousEffects(stateA);
   const equippedBonus = eastern.power === (eastern.basePower || 0) + 1500 && eastern.isHeroic === true;
 
-  return searched && entered && boostedByManor && equippedBonus
-    ? pass(name, `searched=${searched}, entered=${entered}, boost=${boostedByManor}, equipped=${equippedBonus}`)
-    : fail(name, `searched=${searched}, entered=${entered}, boost=${boostedByManor}, equipped=${equippedBonus}`);
+  return searched && entered && boostedByManor && noEquipmentHeroic && equippedBonus
+    ? pass(name, `searched=${searched}, entered=${entered}, boost=${boostedByManor}, noEquipHeroic=${noEquipmentHeroic}, equipped=${equippedBonus}`)
+    : fail(name, `searched=${searched}, entered=${entered}, boost=${boostedByManor}, noEquipHeroic=${noEquipmentHeroic}, equipped=${equippedBonus}`);
 }
 
 async function testYellowFaceDownExileAndFeijingReturn(): Promise<ScenarioResult> {

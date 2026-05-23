@@ -1407,23 +1407,26 @@ async function testGreenAwakenSnowRabbitAndCliffRescue(): Promise<ScenarioResult
   const rabbitRevived = rabbitState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === revive.gamecardId);
 
   const rescue = cloneScriptCard(bt07G08 as Card, 'PLAY');
+  const graveUnit = testCard({ id: 'G08_GRAVE_UNIT', type: 'UNIT', cardlocation: 'GRAVE' });
   const erosionUnit = testCard({ id: 'G08_EROSION', type: 'UNIT', cardlocation: 'EROSION_FRONT', displayState: 'FRONT_UPRIGHT' });
   const greenDiscard = testCard({ id: 'G08_DISCARD', color: 'GREEN', cardlocation: 'HAND' });
   const rescueState = game({
     playZone: [rescue],
     hand: [greenDiscard],
+    grave: [graveUnit],
     erosionBack: [testCard({ id: 'G08_BACK', cardlocation: 'EROSION_BACK' })],
     erosionFront: [erosionUnit],
   });
   const rescueEffect = rescue.effects?.[0];
   await rescueEffect?.execute?.(rescue, rescueState, rescueState.players.BOT);
   if (rescueState.pendingQuery?.context?.step === 'TARGET') {
-    await answerPendingQuery(rescueState, 'BOT', [erosionUnit.gamecardId]);
+    await answerPendingQuery(rescueState, 'BOT', [graveUnit.gamecardId]);
   }
   if (rescueState.pendingQuery?.context?.step === 'DISCARD') {
     await answerPendingQuery(rescueState, 'BOT', [greenDiscard.gamecardId]);
   }
-  const rescued = rescueState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === erosionUnit.gamecardId) &&
+  const rescued = rescueState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === graveUnit.gamecardId) &&
+    rescueState.players.BOT.erosionFront.some((card: Card | null) => card?.gamecardId === erosionUnit.gamecardId) &&
     rescueState.players.BOT.exile.some((card: Card) => card.gamecardId === rescue.gamecardId);
 
   return recovered && boostedAndMarked && rabbitRevived && rescued
@@ -1434,10 +1437,13 @@ async function testGreenAwakenSnowRabbitAndCliffRescue(): Promise<ScenarioResult
 async function testGreenGrienOrderSanctuaryAndMessenger(): Promise<ScenarioResult> {
   const name = 'BT07-G07/G09/G10/G11 Grien order sanctuary and messenger';
   const grien = cloneScriptCard(bt07G07 as Card, 'GRAVE');
-  const graveCost = testCard({ id: 'G07_GRAVE_COST', cardlocation: 'GRAVE' });
+  const colorSource = testCard({ id: 'G07_GREEN_SOURCE', color: 'GREEN', cardlocation: 'UNIT' });
+  const millA = testCard({ id: 'G07_MILL_A', cardlocation: 'DECK' });
+  const millB = testCard({ id: 'G07_MILL_B', cardlocation: 'DECK' });
   const selfState = game({
-    unitZone: [testCard({ id: 'G07_LEAVER', cardlocation: 'UNIT' }), null, null, null, null, null],
-    grave: [grien, graveCost],
+    unitZone: [testCard({ id: 'G07_LEAVER', cardlocation: 'UNIT' }), colorSource, null, null, null, null],
+    grave: [grien],
+    deck: [millA, millB],
   });
   ServerGameService.moveCard(selfState, 'BOT', 'UNIT', 'BOT', 'GRAVE', selfState.players.BOT.unitZone[0]!.gamecardId, {
     isEffect: true,
@@ -1445,7 +1451,9 @@ async function testGreenGrienOrderSanctuaryAndMessenger(): Promise<ScenarioResul
     effectSourceCardId: selfState.players.BOT.unitZone[0]!.gamecardId,
   });
   await confirmTrigger(selfState, 'BOT');
-  const grienRevived = selfState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === grien.gamecardId);
+  const grienRevived = selfState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === grien.gamecardId) &&
+    selfState.players.BOT.grave.some((card: Card) => card.gamecardId === millA.gamecardId) &&
+    selfState.players.BOT.grave.some((card: Card) => card.gamecardId === millB.gamecardId);
 
   const grienActive = cloneScriptCard(bt07G07 as Card, 'HAND', { gamecardId: 'G07_ACTIVE' });
   const awakenDeckUnit = cloneScriptCard(bt07G05 as Card, 'DECK', { gamecardId: 'G07_AWAKEN_TARGET' });

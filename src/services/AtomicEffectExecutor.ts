@@ -1211,6 +1211,19 @@ export class AtomicEffectExecutor {
           return;
         }
       }
+      if (
+        isEffect &&
+        fromZone === 'UNIT' &&
+        toZone === 'DECK' &&
+        card.effects?.some(effect =>
+          effect.type === 'CONTINUOUS' &&
+          effect.preventEffectReturnToDeck &&
+          GameService.checkEffectLimitsAndReqs(gameState, playerUid, card, effect, fromZone).valid
+        )
+      ) {
+        gameState.logs.push(`[${card.fullName}] 不会由于卡的效果返回卡组。`);
+        return;
+      }
       if (['UNIT', 'ITEM', 'EROSION_FRONT', 'EROSION_BACK'].includes(fromZone)) {
         fromArray[idx] = null;
       } else {

@@ -1544,6 +1544,19 @@ export const ServerGameService = {
           return false;
         }
       }
+      if (
+        options?.isEffect &&
+        sourceZone === 'UNIT' &&
+        targetZone === 'DECK' &&
+        card.effects?.some(effect =>
+          effect.type === 'CONTINUOUS' &&
+          effect.preventEffectReturnToDeck &&
+          ServerGameService.checkEffectLimitsAndReqs(gameState, sourcePlayerId, card, effect, sourceZone).valid
+        )
+      ) {
+        gameState.logs.push(`[${card.fullName}] 不会由于卡的效果返回卡组。`);
+        return false;
+      }
       previousSourceCardIdForMove = card.gamecardId;
       if (sourceZone === 'UNIT' || sourceZone === 'ITEM' || sourceZone === 'EROSION_FRONT' || sourceZone === 'EROSION_BACK') {
         sourceArray[index] = null;
@@ -5318,12 +5331,13 @@ export const ServerGameService = {
       return false;
     }
 
-    if ((unit as any).data?.indestructibleByEffect) {
+    if (isEffect && (unit as any).data?.indestructibleByEffect) {
       gameState.logs.push(`[${unit.fullName}] 因效果不会被破坏。`);
       return false;
     }
 
     if (
+      isEffect &&
       (unit as any).data?.preventNextDestroy &&
       (
         (unit as any).data.preventNextDestroyUntilTurn === undefined ||
@@ -5339,6 +5353,7 @@ export const ServerGameService = {
     }
 
     if (
+      isEffect &&
       (unit as any).data?.preventFirstDestroyEachTurnSourceName &&
       (unit as any).data.preventFirstDestroyEachTurnUsedTurn !== gameState.turnCount
     ) {

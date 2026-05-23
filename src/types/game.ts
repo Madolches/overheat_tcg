@@ -278,6 +278,7 @@ export interface CardEffect {
   substitutionOnlyEffect?: boolean;
   substitutionOnlyOpponent?: boolean;
   movementReplacementDestination?: TriggerLocation; // Destination if this card's movement is replaced
+  preventEffectReturnToDeck?: boolean; // If true, this card cannot be moved from battlefield to deck by card effects
   replaceDeckToHandWithDiscard?: boolean; // If true, effect moves from deck to hand are replaced with grave
   protectOwnGraveFromOpponentEffects?: boolean; // If true, own grave cards cannot be selected or moved by opponent effects
   selfHandCostDiscount?: boolean; // If true, this card modifies its own effective play cost while in hand

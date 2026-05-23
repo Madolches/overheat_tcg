@@ -5,16 +5,14 @@ import { canPutUnitOntoBattlefield, moveCard, putUnitOntoField, story } from './
 const greenHandCards = (instance: Card) => (card: Card) =>
   card.gamecardId !== instance.gamecardId && card.color === 'GREEN';
 
-const erosionUnitTargets = (playerState: any) =>
-  playerState.erosionFront.filter((card: Card | null): card is Card =>
-    !!card &&
-    card.displayState === 'FRONT_UPRIGHT' &&
+const graveUnitTargets = (playerState: any) =>
+  playerState.grave.filter((card: Card): card is Card =>
     card.type === 'UNIT' &&
     canPutUnitOntoBattlefield(playerState, card)
   );
 
-const cardEffects: CardEffect[] = [story('203000093_cliff_rescue', '创痕1：你的主要阶段，选择侵蚀区1张单位卡，舍弃1张绿色手牌，将其放置到战场。之后放逐这张卡。', async (instance, gameState, playerState) => {
-  if (erosionUnitTargets(playerState).length === 0 || !playerState.hand.some(greenHandCards(instance))) return;
+const cardEffects: CardEffect[] = [story('203000093_cliff_rescue', '创痕1：你的主要阶段，选择墓地1张单位卡，舍弃1张绿色手牌，将其放置到战场。之后放逐这张卡。', async (instance, gameState, playerState) => {
+  if (graveUnitTargets(playerState).length === 0 || !playerState.hand.some(greenHandCards(instance))) return;
   gameState.pendingQuery = {
     id: Math.random().toString(36).substring(7),
     type: 'SELECT_CARD',
@@ -22,10 +20,10 @@ const cardEffects: CardEffect[] = [story('203000093_cliff_rescue', '创痕1：�
     options: AtomicEffectExecutor.enrichQueryOptions(
       gameState,
       playerState.uid,
-      erosionUnitTargets(playerState).map((card: Card) => ({ card, source: 'EROSION_FRONT' as const }))
+      graveUnitTargets(playerState).map((card: Card) => ({ card, source: 'GRAVE' as const }))
     ),
     title: '选择救出单位',
-    description: '选择你正面侵蚀区中的1张单位卡。',
+    description: '选择你墓地中的1张单位卡。',
     minSelections: 1,
     maxSelections: 1,
     callbackKey: 'EFFECT_RESOLVE',
@@ -38,12 +36,12 @@ const cardEffects: CardEffect[] = [story('203000093_cliff_rescue', '创痕1：�
   condition: (gameState, playerState, instance) =>
     playerState.isTurn &&
     gameState.phase === 'MAIN' &&
-    erosionUnitTargets(playerState).length > 0 &&
+    graveUnitTargets(playerState).length > 0 &&
     playerState.hand.some(greenHandCards(instance)),
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'TARGET') {
       const targetId = selections[0];
-      const target = erosionUnitTargets(playerState).find((card: Card) => card.gamecardId === targetId);
+      const target = graveUnitTargets(playerState).find((card: Card) => card.gamecardId === targetId);
       if (!target) return;
       const discardCandidates = playerState.hand.filter(greenHandCards(instance));
       if (discardCandidates.length === 0) return;
@@ -68,7 +66,7 @@ const cardEffects: CardEffect[] = [story('203000093_cliff_rescue', '创痕1：�
 
     if (context?.step !== 'DISCARD') return;
     const discard = playerState.hand.find((card: Card) => card.gamecardId === selections[0] && greenHandCards(instance)(card));
-    const target = erosionUnitTargets(playerState).find((card: Card) => card.gamecardId === context.targetId);
+    const target = graveUnitTargets(playerState).find((card: Card) => card.gamecardId === context.targetId);
     if (!discard || !target) return;
     moveCard(gameState, playerState.uid, discard, 'GRAVE', instance);
     putUnitOntoField(gameState, playerState.uid, target, instance);

@@ -10,9 +10,6 @@ const parseWealthFromText = (text?: string | null) => {
   return match ? Number(match[1]) || 0 : 0;
 };
 
-const isEffectSilenced = (card: Card, effect: CardEffect) =>
-  !!effect.id && !!card.silencedEffectIds?.includes(effect.id);
-
 const isCardFullySilenced = (card: Card, context?: WealthContext) => {
   const data = (card as any).data;
   if (data?.permanentEffectSilenced) return true;
@@ -25,10 +22,11 @@ const isCardFullySilenced = (card: Card, context?: WealthContext) => {
 };
 
 const getEffectWealthValue = (card: Card, effect: CardEffect) => {
-  if (isEffectSilenced(card, effect)) return 0;
-  const structuredValue = Number(effect.wealthValue || 0);
-  if (structuredValue > 0) return structuredValue;
   if (effect.type !== 'CONTINUOUS') return 0;
+  if (card.silencedEffectIds?.includes(effect.id || '')) return 0;
+  if (effect.wealthValue !== undefined) {
+    return Math.max(0, Number(effect.wealthValue) || 0);
+  }
   return parseWealthFromText(effect.description);
 };
 

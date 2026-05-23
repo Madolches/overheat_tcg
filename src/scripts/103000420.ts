@@ -5,7 +5,7 @@ const cardEffects: CardEffect[] = [{
   id: '103000420_no_return_to_deck_by_effect',
   type: 'CONTINUOUS',
   triggerLocation: ['UNIT'],
-  movementReplacementDestination: 'EXILE',
+  preventEffectReturnToDeck: true,
   description: '这个单位不会由于卡的效果返回卡组。',
   condition: (_gameState, _playerState, instance) =>
     instance.cardlocation === 'UNIT'
