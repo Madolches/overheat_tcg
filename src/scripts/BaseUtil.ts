@@ -1203,7 +1203,7 @@ export const putUnitOntoField = (
   moveCard(gameState, ownerUid, card, 'UNIT', source, { toPlayerUid });
   const moved = AtomicEffectExecutor.findCardById(gameState, card.gamecardId);
   if (moved) {
-    moved.isExhausted = !!options?.exhausted;
+    moved.isExhausted = !!options?.exhausted || (moved as any).data?.placedByOwnEffectForcedExhaustedTurn === gameState.turnCount;
     moved.displayState = 'FRONT_UPRIGHT';
     moved.playedTurn = gameState.turnCount;
     moved.hasAttackedThisTurn = false;
@@ -1738,6 +1738,19 @@ export const destroyByEffect = (gameState: GameState, target: Card, source: Card
   if (data.preventFirstDestroyEachTurnSourceName && data.preventFirstDestroyEachTurnUsedTurn !== gameState.turnCount) {
     data.preventFirstDestroyEachTurnUsedTurn = gameState.turnCount;
     gameState.logs.push(`[${data.preventFirstDestroyEachTurnSourceName}] 防止了 [${target.fullName}] 本回合第一次将被破坏。`);
+    return;
+  }
+
+  if (
+    sourceUid &&
+    sourceUid !== uid &&
+    (gameState.players[uid] as any).preventOwnUnitsOpponentEffectDestroyTurn === gameState.turnCount
+  ) {
+    const sourceCardId = (gameState.players[uid] as any).preventOwnUnitsOpponentEffectDestroySourceCardId;
+    const preventSource = sourceCardId ? AtomicEffectExecutor.findCardById(gameState, sourceCardId) : undefined;
+    const preventSourceName = preventSource?.fullName || (gameState.players[uid] as any).preventOwnUnitsOpponentEffectDestroySourceName || '破坏防止';
+    gameState.logs.push(`[${preventSourceName}] 防止了 [${target.fullName}] 将要被对手的卡的效果破坏。`);
+    void AtomicEffectExecutor.execute(gameState, uid, { type: 'DRAW', value: 2 }, preventSource || source);
     return;
   }
 

@@ -14,6 +14,10 @@ import bt07W09 from '../src/scripts/301140059';
 import bt07W10 from '../src/scripts/301130060';
 import bt07W11 from '../src/scripts/101130380';
 import bt07W12 from '../src/scripts/201000114';
+import prSnowFantasy from '../src/scripts/202000113';
+import prOtherworldFantasy from '../src/scripts/205000117';
+import prDeepSeaFantasy from '../src/scripts/204000115';
+import prConveyedThoughts from '../src/scripts/203000116';
 import bt07B01 from '../src/scripts/104020304';
 import bt07B02 from '../src/scripts/104030305';
 import bt07B03 from '../src/scripts/104030306';
@@ -752,6 +756,122 @@ async function testEmptyFantasyRecoverAndPreventEffectDamage(): Promise<Scenario
   return recovered && exiled && prevented
     ? pass(name, `recovered=${recovered}, exiled=${exiled}, prevented=${prevented}`)
     : fail(name, `recovered=${recovered}, exiled=${exiled}, prevented=${prevented}`);
+}
+
+async function testPrFantasyStories(): Promise<ScenarioResult> {
+  const name = 'PR fantasy stories resolve confirmed modes';
+
+  const snow = cloneScriptCard(prSnowFantasy as Card, 'PLAY');
+  const snowDiscard = testCard({ id: 'PR_SNOW_DISCARD', fullName: 'Snow Discard', color: 'RED', cardlocation: 'HAND' });
+  const opponentGrave = testCard({ id: 'PR_SNOW_GRAVE', fullName: 'Returned Grave', cardlocation: 'GRAVE' });
+  const opponentSource = testCard({ id: 'PR_SNOW_SOURCE', fullName: 'Opponent Source', cardlocation: 'UNIT' });
+  const snowState = game({
+    hand: [snowDiscard],
+    playZone: [snow],
+  }, {
+    grave: [opponentGrave],
+    unitZone: [opponentSource, null, null, null, null, null],
+  });
+  await snow.effects?.[0]?.execute?.(snow, snowState, snowState.players.BOT);
+  if (snowState.pendingQuery?.context?.step === 'MODE') {
+    await answerPendingQuery(snowState, 'BOT', [optionIdByValue(snowState, 'REPLACE_GRAVE_TO_DECK')]);
+  }
+  if (snowState.pendingQuery?.context?.step === 'DISCARD') {
+    await answerPendingQuery(snowState, 'BOT', [snowDiscard.gamecardId]);
+  }
+  const beforeSnowDeck = snowState.players.P1.deck.length;
+  ServerGameService.moveCard(snowState, 'P1', 'GRAVE', 'P1', 'DECK', opponentGrave.gamecardId, {
+    isEffect: true,
+    effectSourcePlayerUid: 'P1',
+    effectSourceCardId: opponentSource.gamecardId,
+  });
+  const snowResolved = snowState.players.P1.exile.some((card: Card) => card.gamecardId === opponentGrave.gamecardId) &&
+    snowState.players.P1.deck.length === beforeSnowDeck - 1;
+
+  const otherworld = cloneScriptCard(prOtherworldFantasy as Card, 'PLAY');
+  const yellowDiscard = testCard({ id: 'PR_OTHERWORLD_DISCARD', color: 'YELLOW', cardlocation: 'HAND' });
+  const targetName = testCard({ id: 'PR_TARGET_NAME', fullName: 'Named Card', cardlocation: 'GRAVE' });
+  const sameDeck = testCard({ id: 'PR_TARGET_NAME', fullName: 'Named Card', cardlocation: 'DECK' });
+  const sameHand = testCard({ id: 'PR_TARGET_NAME', fullName: 'Named Card', cardlocation: 'HAND' });
+  const otherworldState = game({
+    hand: [yellowDiscard],
+    playZone: [otherworld],
+    erosionBack: [
+      testCard({ id: 'PR_OTHERWORLD_BACK_1', cardlocation: 'EROSION_BACK' }),
+      testCard({ id: 'PR_OTHERWORLD_BACK_2', cardlocation: 'EROSION_BACK' }),
+    ],
+  }, {
+    grave: [targetName],
+    deck: [sameDeck],
+    hand: [sameHand],
+  });
+  await otherworld.effects?.[0]?.execute?.(otherworld, otherworldState, otherworldState.players.BOT);
+  if (otherworldState.pendingQuery?.context?.step === 'TARGET') {
+    await answerPendingQuery(otherworldState, 'BOT', [targetName.gamecardId]);
+  }
+  if (otherworldState.pendingQuery?.context?.step === 'MODE') {
+    await answerPendingQuery(otherworldState, 'BOT', [optionIdByValue(otherworldState, 'EXILE_ALL_SAME_NAME')]);
+  }
+  if (otherworldState.pendingQuery?.context?.step === 'DISCARD') {
+    await answerPendingQuery(otherworldState, 'BOT', [yellowDiscard.gamecardId]);
+  }
+  const otherworldResolved = [targetName, sameDeck, sameHand].every(card =>
+    otherworldState.players.P1.exile.some((exiled: Card) => exiled.gamecardId === card.gamecardId)
+  );
+
+  const deepSea = cloneScriptCard(prDeepSeaFantasy as Card, 'PLAY');
+  const deepDiscard = testCard({ id: 'PR_DEEP_DISCARD', color: 'BLUE', cardlocation: 'HAND' });
+  const placedUnit = testCard({ id: 'PR_DEEP_UNIT', fullName: 'Placed Unit', color: 'BLUE', cardlocation: 'GRAVE' });
+  const deepSource = testCard({ id: 'PR_DEEP_SOURCE', fullName: 'Opponent Revive', cardlocation: 'UNIT' });
+  const deepState = game({
+    hand: [deepDiscard],
+    playZone: [deepSea],
+  }, {
+    grave: [placedUnit],
+    unitZone: [deepSource, null, null, null, null, null],
+  });
+  await deepSea.effects?.[0]?.execute?.(deepSea, deepState, deepState.players.BOT);
+  if (deepState.pendingQuery?.context?.step === 'MODE') {
+    await answerPendingQuery(deepState, 'BOT', [optionIdByValue(deepState, 'LOCK_OPPONENT_PUT_UNITS')]);
+  }
+  if (deepState.pendingQuery?.context?.step === 'DISCARD') {
+    await answerPendingQuery(deepState, 'BOT', [deepDiscard.gamecardId]);
+  }
+  if (deepState.pendingQuery?.context?.step === 'DRAW_CHOICE') {
+    await answerPendingQuery(deepState, 'BOT', [optionIdByValue(deepState, 'NO_DRAW')]);
+  }
+  ServerGameService.moveCard(deepState, 'P1', 'GRAVE', 'P1', 'UNIT', placedUnit.gamecardId, {
+    isEffect: true,
+    effectSourcePlayerUid: 'P1',
+    effectSourceCardId: deepSource.gamecardId,
+  });
+  const enteredDeepUnit = deepState.players.P1.unitZone.find((unit: Card | null) => unit?.gamecardId === placedUnit.gamecardId);
+  const deepSeaResolved = !!enteredDeepUnit?.isExhausted &&
+    (enteredDeepUnit as any).data?.fullEffectSilencedTurn === deepState.turnCount;
+
+  const thoughts = cloneScriptCard(prConveyedThoughts as Card, 'PLAY');
+  const greenDiscard = testCard({ id: 'PR_THOUGHTS_DISCARD', color: 'GREEN', cardlocation: 'HAND' });
+  const boostTarget = testCard({ id: 'PR_THOUGHTS_TARGET', fullName: 'Boost Target', color: 'GREEN', power: 1000, basePower: 1000, cardlocation: 'UNIT' });
+  const thoughtsState = game({
+    hand: [greenDiscard],
+    playZone: [thoughts],
+    unitZone: [boostTarget, null, null, null, null, null],
+  });
+  await thoughts.effects?.[0]?.execute?.(thoughts, thoughtsState, thoughtsState.players.BOT);
+  if (thoughtsState.pendingQuery?.context?.step === 'MODE') {
+    await answerPendingQuery(thoughtsState, 'BOT', [optionIdByValue(thoughtsState, 'BOOST_GREEN')]);
+  }
+  if (thoughtsState.pendingQuery?.context?.step === 'TARGET') {
+    await answerPendingQuery(thoughtsState, 'BOT', [boostTarget.gamecardId]);
+  }
+  if (thoughtsState.pendingQuery?.context?.step === 'DISCARD') {
+    await answerPendingQuery(thoughtsState, 'BOT', [greenDiscard.gamecardId]);
+  }
+  const thoughtsResolved = boostTarget.power === 1500 && boostTarget.isAnnihilation === true;
+
+  return snowResolved && otherworldResolved && deepSeaResolved && thoughtsResolved
+    ? pass(name, `snow=${snowResolved}, otherworld=${otherworldResolved}, deep=${deepSeaResolved}, thoughts=${thoughtsResolved}`)
+    : fail(name, `snow=${snowResolved}, otherworld=${otherworldResolved}, deep=${deepSeaResolved}, thoughts=${thoughtsResolved}`);
 }
 
 async function testBlueMerchantPutsOnlyKyubiNonGodItems(): Promise<ScenarioResult> {
@@ -1995,6 +2115,7 @@ const scenarios: ScenarioRun[] = [
   testDuskBarracksRecruitAndSubstitute,
   testYukatiaAllianceProtectionAndDestroy,
   testEmptyFantasyRecoverAndPreventEffectDamage,
+  testPrFantasyStories,
   testBlueMerchantPutsOnlyKyubiNonGodItems,
   testBlueAishaRecoversAfterOpponentExileAndHouseRevives,
   testBlueAdventurerSupportAndErosionEntry,

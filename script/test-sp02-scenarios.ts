@@ -4,6 +4,8 @@ import { Card, CardEffect, TriggerLocation } from '../src/types/game';
 import sp02W03 from '../src/scripts/101000282';
 import foxReporter from '../src/scripts/103000272';
 import judgeNekomata from '../src/scripts/103000274';
+import sp02B04 from '../src/scripts/104000271';
+import sp02B01 from '../src/scripts/104010268';
 import sp02Y01 from '../src/scripts/105110284';
 import sp02Y03 from '../src/scripts/105000323';
 import sp02Y09 from '../src/scripts/105000325';
@@ -147,6 +149,14 @@ function fail(name: string, detail: string): ScenarioResult {
 async function answerPendingQuery(state: any, playerUid: string, selections: string[]) {
   if (!state.pendingQuery) throw new Error('No pending query to answer');
   await ServerGameService.handleQueryChoice(state, playerUid, state.pendingQuery.id, selections);
+}
+
+async function acceptOptionalTrigger(state: any, playerUid: string) {
+  await ServerGameService.checkTriggeredEffects(state);
+  if (state.pendingQuery?.callbackKey !== 'TRIGGER_CHOICE') {
+    throw new Error(`Expected optional trigger choice, got ${state.pendingQuery?.callbackKey || 'none'}`);
+  }
+  await answerPendingQuery(state, playerUid, ['YES']);
 }
 
 async function activateAndResolveByOpponentPass(state: any, playerUid: string, card: Card, effectIndex: number) {
@@ -472,6 +482,151 @@ async function testJudgeNekomataDeclaredColorPaysRequirement(): Promise<Scenario
     : fail(name, `color=${colorCheck}, played=${played}, query=${state.pendingQuery?.callbackKey}, phase=${state.phase}`);
 }
 
+async function testFuhuaMarksNonBattleLeaveAndExhaustsCard(): Promise<ScenarioResult> {
+  const name = 'SP02-B01 marks non-battle leave and exhausts a field card';
+  const fuhua = cloneScriptCard(sp02B01 as Card, 'UNIT', { playedTurn: 1 });
+  const leaveTarget = testCard({
+    id: 'FUHUA_LEAVE_TARGET',
+    fullName: 'Fuhua Leave Target',
+    type: 'UNIT',
+    color: 'RED',
+    godMark: false,
+    cardlocation: 'UNIT',
+  });
+  const payer = testCard({ id: 'FUHUA_PAYER', fullName: 'Fuhua Payer', type: 'UNIT', color: 'BLUE', cardlocation: 'UNIT' });
+  const exhaustTarget = testCard({ id: 'FUHUA_EXHAUST_TARGET', fullName: 'Fuhua Exhaust Target', type: 'ITEM', color: 'GREEN', cardlocation: 'ITEM' });
+  const redCost = testCard({ id: 'FUHUA_RED_COST', fullName: 'Fuhua Red Cost', color: 'RED', cardlocation: 'GRAVE' });
+  const yellowCost = testCard({ id: 'FUHUA_YELLOW_COST', fullName: 'Fuhua Yellow Cost', color: 'YELLOW', cardlocation: 'GRAVE' });
+  const state = game(
+    {
+      grave: [redCost, yellowCost],
+      unitZone: [fuhua, leaveTarget, payer, null, null, null],
+      deck: deckCards(6, 'BOT_FUHUA_DECK'),
+    },
+    {
+      itemZone: [exhaustTarget],
+    }
+  );
+
+  await ServerGameService.activateEffect(state, 'BOT', fuhua.gamecardId, 0);
+  if (state.pendingQuery?.callbackKey !== 'DECLARE_EFFECT_TARGETS') {
+    return fail(name, `expected mark target declaration, got ${state.pendingQuery?.callbackKey || 'none'}`);
+  }
+  await answerPendingQuery(state, 'BOT', [leaveTarget.gamecardId]);
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
+
+  const marked = (leaveTarget as any).data?.fuhuaDrawOnLeaveSourceCardId === fuhua.gamecardId;
+  ServerGameService.moveCard(state, 'BOT', 'UNIT', 'BOT', 'GRAVE', leaveTarget.gamecardId, {
+    isEffect: true,
+    effectSourcePlayerUid: 'BOT',
+    effectSourceCardId: fuhua.gamecardId,
+  });
+  await ServerGameService.checkTriggeredEffects(state);
+  const drew = state.players.BOT.hand.length === 1 && state.players.BOT.deck.length === 5;
+
+  await ServerGameService.activateEffect(state, 'BOT', fuhua.gamecardId, 2);
+  if (state.pendingQuery?.callbackKey !== 'DECLARE_EFFECT_TARGETS') {
+    return fail(name, `expected exhaust target declaration, got ${state.pendingQuery?.callbackKey || 'none'}`);
+  }
+  await answerPendingQuery(state, 'BOT', [exhaustTarget.gamecardId]);
+  if (state.pendingQuery?.type !== 'SELECT_PAYMENT') {
+    return fail(name, `expected +1 payment query, got ${state.pendingQuery?.callbackKey || state.pendingQuery?.type || 'none'}`);
+  }
+  await answerPendingQuery(state, 'BOT', [JSON.stringify({ exhaustUnitIds: [payer.gamecardId] })]);
+  if (state.pendingQuery?.context?.costType !== 'SP02_B01_TWO_COLOR_GRAVE_EXILE') {
+    return fail(name, `expected grave cost query, got ${state.pendingQuery?.context?.costType || state.pendingQuery?.callbackKey || 'none'}`);
+  }
+  await answerPendingQuery(state, 'BOT', [redCost.gamecardId, yellowCost.gamecardId]);
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
+
+  const costsExiled = state.players.BOT.exile.some((card: Card) => card.gamecardId === redCost.gamecardId) &&
+    state.players.BOT.exile.some((card: Card) => card.gamecardId === yellowCost.gamecardId);
+  const exhausted = exhaustTarget.isExhausted === true;
+
+  return marked && drew && payer.isExhausted && costsExiled && exhausted
+    ? pass(name, `drew=${drew}, payerExhausted=${payer.isExhausted}, costs=${state.players.BOT.exile.length}`)
+    : fail(name, `marked=${marked}, drew=${drew}, payer=${payer.isExhausted}, costs=${costsExiled}, exhausted=${exhausted}, query=${state.pendingQuery?.callbackKey || 'none'}`);
+}
+
+async function testCanglanBattleSupportAndMainBounce(): Promise<ScenarioResult> {
+  const name = 'SP02-B04 supports battle draw-discard and bounces opponent card';
+  const canglan = cloneScriptCard(sp02B04 as Card, 'UNIT', { playedTurn: 1 });
+  const attacker = testCard({ id: 'CANGLAN_ATTACKER', fullName: 'Canglan Attacker', type: 'UNIT', color: 'WHITE', cardlocation: 'UNIT', power: 2000, basePower: 2000 });
+  const defender = testCard({ id: 'CANGLAN_DEFENDER', fullName: 'Canglan Defender', type: 'UNIT', color: 'RED', godMark: false, cardlocation: 'UNIT' });
+  const botDiscard = testCard({ id: 'CANGLAN_HAND', fullName: 'Canglan Hand', cardlocation: 'HAND' });
+  const state = game(
+    {
+      hand: [botDiscard],
+      deck: deckCards(6, 'BOT_CANGLAN_DECK'),
+      unitZone: [canglan, attacker, null, null, null, null],
+    },
+    {
+      unitZone: [defender, null, null, null, null, null],
+    },
+    {
+      phase: 'BATTLE_FREE',
+      battleState: {
+        attackers: [attacker.gamecardId],
+        defender: defender.gamecardId,
+        isAlliance: false,
+        battleId: 'TEST_CANGLAN_BATTLE',
+      },
+    }
+  );
+
+  await ServerGameService.activateEffect(state, 'BOT', canglan.gamecardId, 0);
+  if (state.pendingQuery?.callbackKey !== 'DECLARE_EFFECT_TARGETS') {
+    return fail(name, `expected battle target declaration, got ${state.pendingQuery?.callbackKey || 'none'}`);
+  }
+  await answerPendingQuery(state, 'BOT', [attacker.gamecardId]);
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
+
+  const boosted = attacker.power === 3000 && canglan.isExhausted === true;
+  EventEngine.dispatchEvent(state, {
+    type: 'CARD_DESTROYED_BATTLE',
+    targetCardId: defender.gamecardId,
+    playerUid: 'P1',
+    data: { attackerIds: [attacker.gamecardId], defenderId: defender.gamecardId, isAlliance: false },
+  });
+  await acceptOptionalTrigger(state, 'BOT');
+  const openedDiscard = state.pendingQuery?.context?.step === 'DISCARD';
+  if (openedDiscard) {
+    const drawnId = state.players.BOT.hand[state.players.BOT.hand.length - 1]?.gamecardId;
+    await answerPendingQuery(state, 'BOT', [drawnId]);
+  }
+  const drewAndDiscarded = state.players.BOT.deck.length === 5 && state.players.BOT.hand.length === 1 && state.players.BOT.grave.length === 1;
+
+  canglan.isExhausted = false;
+  state.phase = 'MAIN';
+  state.previousPhase = undefined;
+  state.battleState = undefined;
+  const whiteCost = testCard({ id: 'CANGLAN_WHITE_COST', fullName: 'Canglan White Cost', color: 'WHITE', cardlocation: 'GRAVE' });
+  const blueCost = testCard({ id: 'CANGLAN_BLUE_COST', fullName: 'Canglan Blue Cost', color: 'BLUE', cardlocation: 'GRAVE' });
+  state.players.BOT.grave.push(whiteCost, blueCost);
+  state.players.BOT.erosionBack = deckCards(4, 'BOT_CANGLAN_EROSION').map(card => ({ ...card, cardlocation: 'EROSION_BACK' }));
+  const bounceTarget = testCard({ id: 'CANGLAN_BOUNCE', fullName: 'Canglan Bounce', type: 'ITEM', color: 'GREEN', godMark: false, cardlocation: 'ITEM' });
+  state.players.P1.itemZone = [bounceTarget];
+
+  await ServerGameService.activateEffect(state, 'BOT', canglan.gamecardId, 2);
+  if (state.pendingQuery?.callbackKey !== 'DECLARE_EFFECT_TARGETS') {
+    return fail(name, `expected bounce target declaration, got ${state.pendingQuery?.callbackKey || 'none'}`);
+  }
+  await answerPendingQuery(state, 'BOT', [bounceTarget.gamecardId]);
+  if (state.pendingQuery?.context?.costType !== 'SP02_B04_TWO_COLOR_GRAVE_EXILE') {
+    return fail(name, `expected bounce grave cost, got ${state.pendingQuery?.context?.costType || state.pendingQuery?.callbackKey || 'none'}`);
+  }
+  await answerPendingQuery(state, 'BOT', [whiteCost.gamecardId, blueCost.gamecardId]);
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
+
+  const bounced = state.players.P1.hand.some((card: Card) => card.gamecardId === bounceTarget.gamecardId);
+  const bounceCostsExiled = state.players.BOT.exile.some((card: Card) => card.gamecardId === whiteCost.gamecardId) &&
+    state.players.BOT.exile.some((card: Card) => card.gamecardId === blueCost.gamecardId);
+
+  return boosted && openedDiscard && drewAndDiscarded && canglan.isExhausted && bounceCostsExiled && bounced
+    ? pass(name, `boosted=${boosted}, drewDiscarded=${drewAndDiscarded}, bounced=${bounced}`)
+    : fail(name, `boosted=${boosted}, openedDiscard=${openedDiscard}, drewDiscarded=${drewAndDiscarded}, canglanExhausted=${canglan.isExhausted}, costs=${bounceCostsExiled}, bounced=${bounced}, query=${state.pendingQuery?.callbackKey || 'none'}`);
+}
+
 async function testTruthResetAndExtraTurn(): Promise<ScenarioResult> {
   const name = 'SP02-Y09 enters from hand, resets zones, locks attacks, and queues extra turn';
   const truth = cloneScriptCard(sp02Y09 as Card, 'HAND');
@@ -531,6 +686,8 @@ const scenarios: { name: string; run: ScenarioRun }[] = [
   { name: 'SP02-Y03 copies an eligible activate effect for one use', run: testManagerCopiesOneShotActivate },
   { name: 'SP02-G01 Fox Reporter does not search non-irodori copies of itself', run: testFoxReporterDoesNotSearchItself },
   { name: 'SP02-G03 Judge Nekomata declared color pays color requirement', run: testJudgeNekomataDeclaredColorPaysRequirement },
+  { name: 'SP02-B01 marks non-battle leave and exhausts a field card', run: testFuhuaMarksNonBattleLeaveAndExhaustsCard },
+  { name: 'SP02-B04 supports battle draw-discard and bounces opponent card', run: testCanglanBattleSupportAndMainBounce },
   { name: 'SP02-Y09 enters from hand, resets zones, locks attacks, and queues extra turn', run: testTruthResetAndExtraTurn },
 ];
 

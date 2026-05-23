@@ -1475,6 +1475,7 @@ export const ServerGameService = {
 
     let card: Card | null = null;
     let sourceArray: any[] = [];
+    let graveToDeckReplacementControllerUid: string | undefined;
 
     switch (sourceZone) {
       case 'HAND': sourceArray = sourcePlayer.hand; break;
@@ -1584,6 +1585,19 @@ export const ServerGameService = {
     if (
       options?.isEffect &&
       sourceZone === 'GRAVE' &&
+      targetZone === 'DECK' &&
+      sourcePlayerId === targetPlayerId &&
+      options.effectSourcePlayerUid === sourcePlayerId &&
+      (sourcePlayer as any).replaceOwnGraveToDeckWithExileTurn === gameState.turnCount
+    ) {
+      targetZone = 'EXILE';
+      graveToDeckReplacementControllerUid = (sourcePlayer as any).replaceOwnGraveToDeckWithExileControllerUid;
+      gameState.logs.push(`[${(sourcePlayer as any).replaceOwnGraveToDeckWithExileSourceName || '墓地回卡组替换'}] 将 [${card.fullName}] 放置到卡组改为放逐。`);
+    }
+
+    if (
+      options?.isEffect &&
+      sourceZone === 'GRAVE' &&
       targetZone === 'UNIT' &&
       card.type === 'UNIT'
     ) {
@@ -1680,6 +1694,22 @@ export const ServerGameService = {
 
     if (
       options?.isEffect &&
+      targetZone === 'UNIT' &&
+      card.type === 'UNIT' &&
+      sourcePlayerId === targetPlayerId &&
+      options.effectSourcePlayerUid === targetPlayerId &&
+      (targetPlayer as any).ownEffectPlacedUnitsEnterExhaustedSilencedTurn === gameState.turnCount
+    ) {
+      const data = (card as any).data || {};
+      (card as any).data = data;
+      card.isExhausted = true;
+      data.fullEffectSilencedTurn = gameState.turnCount;
+      data.fullEffectSilenceSource = (targetPlayer as any).ownEffectPlacedUnitsEnterExhaustedSilencedSourceName || '深海幻想';
+      data.placedByOwnEffectForcedExhaustedTurn = gameState.turnCount;
+    }
+
+    if (
+      options?.isEffect &&
       sourceZone === 'DECK' &&
       targetZone === 'UNIT' &&
       options.effectSourceCardId
@@ -1760,6 +1790,10 @@ export const ServerGameService = {
         text: `[移动] ${sourcePlayer.displayName} 的 [${card.fullName}] 从 ${sourcePlayer.displayName}的${getLocationLabel(sourceZone)} 移动到 ${targetPlayer.displayName}的${getLocationLabel(targetZone)}。`,
         metadata: { sourceZone, targetZone, isEffect: !!options?.isEffect }
       });
+    }
+
+    if (graveToDeckReplacementControllerUid) {
+      ServerGameService.applyDamageToPlayer(gameState, sourcePlayerId, 1, 'EFFECT');
     }
 
     if (targetZone === 'EROSION_BACK') {
@@ -5368,6 +5402,20 @@ export const ServerGameService = {
         gameState.logs.push(`[${unit.fullName}] is unaffected by opponent ACCESS ${(unit as any).data.unaffectedByOpponentAcLe} or less card effects.`);
         return false;
       }
+    }
+
+    if (
+      isEffect &&
+      sourcePlayerId &&
+      sourcePlayerId !== playerId &&
+      (player as any).preventOwnUnitsOpponentEffectDestroyTurn === gameState.turnCount
+    ) {
+      const preventSourceCardId = (player as any).preventOwnUnitsOpponentEffectDestroySourceCardId;
+      const preventSource = preventSourceCardId ? ServerGameService.findCardById(gameState, preventSourceCardId) : undefined;
+      const sourceName = preventSource?.fullName || (player as any).preventOwnUnitsOpponentEffectDestroySourceName || '破坏防止';
+      gameState.logs.push(`[${sourceName}] 防止了 [${unit.fullName}] 将要被对手的卡的效果破坏。`);
+      await AtomicEffectExecutor.execute(gameState, playerId, { type: 'DRAW', value: 2 }, preventSource);
+      return false;
     }
 
     if ((unit as any).data?.returnToHandOnDestroyTurn === gameState.turnCount) {

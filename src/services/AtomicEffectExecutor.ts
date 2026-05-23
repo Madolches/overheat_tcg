@@ -1134,6 +1134,8 @@ export class AtomicEffectExecutor {
     let fromArray: (Card | null)[] = [];
     let previousSourceCardId: string | undefined;
     let leftZoneHandled = false;
+    let graveToDeckReplacementControllerUid: string | undefined;
+    let graveToDeckReplacementSourceCardId: string | undefined;
 
     // Localized movement logic to handle specific Yu-Gi-Oh events
     const findInZone = (zone: (Card | null)[], loc: TriggerLocation) => {
@@ -1247,6 +1249,20 @@ export class AtomicEffectExecutor {
       toZone === 'EXILE'
     ) {
       sourcePlayer.exiledFromErosionTurn = gameState.turnCount;
+    }
+
+    if (
+      isEffect &&
+      fromZone === 'GRAVE' &&
+      toZone === 'DECK' &&
+      playerUid === toPlayerUid &&
+      options?.effectSourcePlayerUid === playerUid &&
+      (sourcePlayer as any).replaceOwnGraveToDeckWithExileTurn === gameState.turnCount
+    ) {
+      toZone = 'EXILE';
+      graveToDeckReplacementControllerUid = (sourcePlayer as any).replaceOwnGraveToDeckWithExileControllerUid;
+      graveToDeckReplacementSourceCardId = (sourcePlayer as any).replaceOwnGraveToDeckWithExileSourceCardId;
+      gameState.logs.push(`[${(sourcePlayer as any).replaceOwnGraveToDeckWithExileSourceName || '墓地回卡组替换'}] 将 [${card.fullName}] 放置到卡组改为放逐。`);
     }
 
     let shouldRefreshAsNewInstance =
@@ -1419,6 +1435,21 @@ export class AtomicEffectExecutor {
       card.isExhausted = false;
       card.playedTurn = gameState.turnCount;
     }
+    if (
+      isEffect &&
+      toZone === 'UNIT' &&
+      card.type === 'UNIT' &&
+      playerUid === toPlayerUid &&
+      options?.effectSourcePlayerUid === toPlayerUid &&
+      (targetPlayer as any).ownEffectPlacedUnitsEnterExhaustedSilencedTurn === gameState.turnCount
+    ) {
+      const data = (card as any).data || {};
+      (card as any).data = data;
+      card.isExhausted = true;
+      data.fullEffectSilencedTurn = gameState.turnCount;
+      data.fullEffectSilenceSource = (targetPlayer as any).ownEffectPlacedUnitsEnterExhaustedSilencedSourceName || '深海幻想';
+      data.placedByOwnEffectForcedExhaustedTurn = gameState.turnCount;
+    }
     let toArray: (Card | null)[] = [];
     const findToZone = (zone: (Card | null)[], loc: TriggerLocation) => {
       if (loc === toZone) toArray = zone;
@@ -1478,6 +1509,13 @@ export class AtomicEffectExecutor {
       });
     } else {
       this.dispatchMovementEvents(gameState, playerUid, card, fromZone, toZone, isEffect, options);
+    }
+
+    if (graveToDeckReplacementControllerUid) {
+      const sourceCard = graveToDeckReplacementSourceCardId
+        ? this.findCardById(gameState, graveToDeckReplacementSourceCardId)
+        : undefined;
+      this.dealDamage(gameState, playerUid, graveToDeckReplacementControllerUid, 1, 'EFFECT', undefined, sourceCard);
     }
 
     if (toZone === 'EROSION_BACK') {
