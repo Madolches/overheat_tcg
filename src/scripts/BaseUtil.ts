@@ -1075,6 +1075,18 @@ export const markPlacedByPromotion = (gameState: GameState, target: Card, source
   data.placedByPromotionTurn = gameState.turnCount;
   data.placedByPromotionSourceCardId = source.gamecardId;
   data.placedByPromotionSourceName = source.fullName;
+  EventEngine.dispatchEvent(gameState, {
+    type: 'CARD_PLACED_BY_PROMOTION',
+    sourceCard: target,
+    sourceCardId: target.gamecardId,
+    playerUid: ownerUidOf(gameState, target),
+    data: {
+      zone: 'UNIT',
+      targetZone: 'UNIT',
+      effectSourceCardId: source.gamecardId,
+      effectSourcePlayerUid: ownerUidOf(gameState, source)
+    }
+  });
 };
 
 export const promotionTargets = (playerState: PlayerState, source: Card) =>
@@ -1386,7 +1398,26 @@ export const addTempPower = (target: Card, source: Card, amount: number) => {
 };
 
 export const addTempPowerUntilEndOfTurn = (target: Card, source: Card, amount: number, gameState: GameState) => {
+  const beforePower = target.power || 0;
   addTempPower(target, source, amount);
+  const currentPower = target.power || 0;
+  if (currentPower !== beforePower) {
+    const event = {
+      type: 'CARD_POWER_CHANGED' as const,
+      sourceCard: target,
+      sourceCardId: target.gamecardId,
+      targetCardId: target.gamecardId,
+      playerUid: ownerUidOf(gameState, target),
+      data: {
+        previousPower: beforePower,
+        currentPower,
+        delta: currentPower - beforePower,
+        effectSourceCardId: source.gamecardId,
+        effectSourcePlayerUid: ownerUidOf(gameState, source)
+      }
+    };
+    EventEngine.dispatchEvent(gameState, event);
+  }
   const data = ensureData(target);
   data.endOfTurnTempPowerBuffs = [
     ...(data.endOfTurnTempPowerBuffs || []),

@@ -9,7 +9,8 @@ const cardEffects: CardEffect[] = [{
   triggerLocation: ['UNIT'],
   limitCount: 1,
   description: '1回合1次：这个单位力量变为3500以上时，可以选择卡组中1张<雷霆>卡加入手牌。',
-  condition: (gameState, playerState, instance) =>
+  condition: (gameState, playerState, instance, event) =>
+    (event?.type !== 'CARD_POWER_CHANGED' || event.targetCardId === instance.gamecardId) &&
     (instance.power || 0) >= 3500 &&
     ensureData(instance).powerSearchUsedTurn !== gameState.turnCount &&
     playerState.deck.some(card => card.faction === '雷霆'),

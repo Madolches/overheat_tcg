@@ -63,6 +63,7 @@ import bt07Y09 from '../src/scripts/305000062';
 import bt07Y10 from '../src/scripts/305000063';
 import bt07Y11 from '../src/scripts/105110386';
 import bt08G05 from '../src/scripts/103000419';
+import bt03R04 from '../src/scripts/102060193';
 import {
   awakenUnit,
   destroyByEffect,
@@ -963,7 +964,7 @@ async function testBlueAishaRecoversAfterOpponentExileAndHouseRevives(): Promise
     fullName: 'Wealth Carrier',
     type: 'UNIT',
     cardlocation: 'UNIT',
-    data: { wealthValue: 1 },
+    data: { grantedWealthValue: 1 },
   } as any);
   const reviveTarget = testCard({
     id: 'B09_REVIVE_TARGET',
@@ -1201,15 +1202,42 @@ async function testBlueWealthCoreAndEquipment(): Promise<ScenarioResult> {
   if (state.pendingQuery?.context?.effectId === '304020050_grant_wealth_to_blue_unit') {
     await answerPendingQuery(state, 'BOT', [granted.gamecardId]);
   }
-  const grantedWealth = Number((granted as any).data?.wealthValue || 0) === 1;
+  const grantedWealth = wealthCount(state.players.BOT, state) >= 2;
   EventEngine.recalculateContinuousEffects(state);
-  const kosakoWealth = wealthCount(state.players.BOT) >= 2;
+  const grantedWealthAfterRecalc = wealthCount(state.players.BOT, state) >= 2;
+  const kosakoWealth = wealthCount(state.players.BOT, state) >= 2;
   const kosakoDoesNotBuffSelf = !kosako.isHeroic;
+
+  const freshHouse = cloneScriptCard(bt07B09 as Card, 'ITEM', { gamecardId: 'B09_FRESH_HOUSE' });
+  const freshBlue = testCard({ id: 'B09_FRESH_BLUE', fullName: 'Fresh Blue Unit', type: 'UNIT', color: 'BLUE', cardlocation: 'HAND' });
+  const freshState = game({
+    hand: [freshBlue],
+    itemZone: [freshHouse],
+    erosionFront: [
+      testCard({ id: 'B09_FRESH_EF_0', cardlocation: 'EROSION_FRONT' }),
+      testCard({ id: 'B09_FRESH_EF_1', cardlocation: 'EROSION_FRONT' }),
+      testCard({ id: 'B09_FRESH_EF_2', cardlocation: 'EROSION_FRONT' }),
+    ],
+  });
+  ServerGameService.moveCard(freshState, 'BOT', 'HAND', 'BOT', 'UNIT', freshBlue.gamecardId, {
+    isEffect: true,
+    effectSourcePlayerUid: 'BOT',
+    effectSourceCardId: freshHouse.gamecardId
+  });
+  await confirmTrigger(freshState, 'BOT');
+  const freshOptions = (freshState.pendingQuery?.options || []).map((option: any) => option.card?.gamecardId || option.id);
+  const freshCanSelectEnteredUnit = freshState.pendingQuery?.context?.effectId === '304020050_grant_wealth_to_blue_unit' &&
+    freshOptions.includes(freshBlue.gamecardId);
+  if (freshCanSelectEnteredUnit) {
+    await answerPendingQuery(freshState, 'BOT', [freshBlue.gamecardId]);
+  }
+  EventEngine.recalculateContinuousEffects(freshState);
+  const freshGrantedWealth = wealthCount(freshState.players.BOT, freshState) >= 1;
 
   const lowErosionKosako = cloneScriptCard(bt07B11 as Card, 'UNIT', { gamecardId: 'B11_LOW_EROSION', baseHeroic: false, isHeroic: false });
   const lowErosionAlly = testCard({ id: 'B11_LOW_ALLY', type: 'UNIT', godMark: false, cardlocation: 'UNIT' });
   const lowErosionWealth = testCard({ id: 'B11_LOW_WEALTH', type: 'UNIT', cardlocation: 'UNIT' } as Partial<Card> & { data: any });
-  (lowErosionWealth as any).data = { wealthValue: 2 };
+  (lowErosionWealth as any).data = { grantedWealthValue: 2 };
   const lowErosionState = game({
     unitZone: [lowErosionKosako, lowErosionAlly, lowErosionWealth, null, null, null],
     erosionFront: [
@@ -1265,9 +1293,9 @@ async function testBlueWealthCoreAndEquipment(): Promise<ScenarioResult> {
   await confirmTrigger(kosakoState, 'BOT');
   const putKosako = kosakoState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === discardedKosako.gamecardId);
 
-  return grantedWealth && kosakoWealth && kosakoDoesNotBuffSelf && lowErosionNoBuff && equipped && targetDamage === 2 && noBlueNoTrigger && putKosako
-    ? pass(name, `grantedWealth=${grantedWealth}, equipped=${equipped}, damage=${targetDamage}, noBlueNoTrigger=${noBlueNoTrigger}, putKosako=${putKosako}`)
-    : fail(name, `grantedWealth=${grantedWealth}, kosakoWealth=${kosakoWealth}, selfHeroic=${kosako.isHeroic}, lowErosionNoBuff=${lowErosionNoBuff}, equipped=${equipped}, damage=${targetDamage}, noBlueNoTrigger=${noBlueNoTrigger}, putKosako=${putKosako}`);
+  return grantedWealth && grantedWealthAfterRecalc && freshCanSelectEnteredUnit && freshGrantedWealth && kosakoWealth && kosakoDoesNotBuffSelf && lowErosionNoBuff && equipped && targetDamage === 2 && noBlueNoTrigger && putKosako
+    ? pass(name, `grantedWealth=${grantedWealth}, freshSelect=${freshCanSelectEnteredUnit}, equipped=${equipped}, damage=${targetDamage}, noBlueNoTrigger=${noBlueNoTrigger}, putKosako=${putKosako}`)
+    : fail(name, `grantedWealth=${grantedWealth}, afterRecalc=${grantedWealthAfterRecalc}, freshSelect=${freshCanSelectEnteredUnit}, freshWealth=${freshGrantedWealth}, kosakoWealth=${kosakoWealth}, selfHeroic=${kosako.isHeroic}, lowErosionNoBuff=${lowErosionNoBuff}, equipped=${equipped}, damage=${targetDamage}, noBlueNoTrigger=${noBlueNoTrigger}, putKosako=${putKosako}`);
 }
 
 async function testHolyEightActivatesRequireGoddessMode(): Promise<ScenarioResult> {
@@ -1706,6 +1734,36 @@ async function testRedBatBladeItemAndTamiThresholds(): Promise<ScenarioResult> {
   return batDestroyed && recruited && itemDrew && bladeCounted && tamiThresholds && tamiDestroyed
     ? pass(name, `bat=${batDestroyed}, blade=${recruited}/${itemDrew}, tami=${tamiThresholds}/${tamiDestroyed}`)
     : fail(name, `bat=${batDestroyed}, recruited=${recruited}, itemDrew=${itemDrew}, bladeCounted=${bladeCounted}, tami=${tamiThresholds}/${tamiDestroyed}`);
+}
+
+function testThunderHighPowerRushThresholds(): ScenarioResult {
+  const name = 'BT03-R04/BT07-R04 thunder rush thresholds';
+  const flyer = cloneScriptCard(bt03R04 as Card, 'UNIT');
+  const warrior = cloneScriptCard(bt07R04 as Card, 'UNIT');
+  const lowState = game({
+    unitZone: [flyer, warrior, null, null, null, null],
+  });
+  EventEngine.recalculateContinuousEffects(lowState);
+  const lowOk =
+    !flyer.isrush &&
+    flyer.damage === flyer.baseDamage &&
+    !warrior.isrush &&
+    warrior.damage === warrior.baseDamage;
+
+  flyer.temporaryPowerBuff = 2000;
+  warrior.temporaryPowerBuff = 1500;
+  EventEngine.recalculateContinuousEffects(lowState);
+  const highOk =
+    flyer.power === 3500 &&
+    !!flyer.isrush &&
+    flyer.damage === (flyer.baseDamage || 0) + 1 &&
+    warrior.power === 3500 &&
+    !!warrior.isrush &&
+    warrior.damage === (warrior.baseDamage || 0) + 1;
+
+  return lowOk && highOk
+    ? pass(name, `low=${lowOk}, high=${highOk}`)
+    : fail(name, `flyer=${flyer.power}/${flyer.damage}/${flyer.isrush}, warrior=${warrior.power}/${warrior.damage}/${warrior.isrush}, low=${lowOk}, high=${highOk}`);
 }
 
 async function testRedAsuraSacrificeAndHiyeOrder(): Promise<ScenarioResult> {
@@ -2163,6 +2221,7 @@ const scenarios: ScenarioRun[] = [
   testGreenGrienOrderSanctuaryAndMessenger,
   testRedShieldSoulDevourAndDiscounts,
   testRedBatBladeItemAndTamiThresholds,
+  testThunderHighPowerRushThresholds,
   testRedAsuraSacrificeAndHiyeOrder,
   testYellowPainterStephanieAndSteelPuppet,
   testYellowGuardRawStoneAndStories,

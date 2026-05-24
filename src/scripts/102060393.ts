@@ -50,7 +50,9 @@ const cardEffects: CardEffect[] = [{
     totalErosionCount(playerState) >= 5 &&
     totalErosionCount(playerState) <= 8 &&
     event?.playerUid === playerState.uid &&
-    event.data?.isEffect === false &&
+    event.sourceCard?.type === 'UNIT' &&
+    (event.sourceCard as any).data?.lastMovedAsCostTurn === gameState.turnCount &&
+    !!(event.sourceCard as any).data?.lastMovedAsCostSourceCardId &&
     event.data?.targetZone === 'GRAVE' &&
     (event.data?.sourceZone === 'UNIT' || event.data?.zone === 'UNIT') &&
     playerState.deck.length > 0,

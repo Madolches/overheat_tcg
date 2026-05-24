@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, addTempPower, createSelectCardQuery, nameContains, ownUnits, story } from './BaseUtil';
+import { AtomicEffectExecutor, addTempPowerUntilEndOfTurn, createSelectCardQuery, nameContains, ownUnits, story } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [story('202060130_power', '选择你的1个卡名含有《炎雷》的单位，本回合力量+1500。', async (instance, gameState, playerState) => {
   createSelectCardQuery(gameState, playerState.uid, ownUnits(playerState).filter(unit => nameContains(unit, '炎雷')), '选择炎雷单位', '选择你的1个卡名含有《炎雷》的单位，本回合力量+1500。', 1, 1, {
@@ -21,7 +21,7 @@ const cardEffects: CardEffect[] = [story('202060130_power', '选择你的1个卡
   },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
-    if (target?.cardlocation === 'UNIT') addTempPower(target, instance, 1500);
+    if (target?.cardlocation === 'UNIT') addTempPowerUntilEndOfTurn(target, instance, 1500, gameState);
   }
 }), {
   id: '202060130_payment_substitute',

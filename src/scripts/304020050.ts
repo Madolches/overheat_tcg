@@ -97,7 +97,8 @@ const cardEffects: CardEffect[] = [{
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (!target || target.cardlocation !== 'UNIT' || target.color !== 'BLUE') return;
     const data = ensureData(target);
-    data.wealthValue = Math.max(Number(data.wealthValue || 0), 1);
+    data.grantedWealthValue = Math.max(Number(data.grantedWealthValue || 0), 1);
+    data.grantedWealthSourceName = instance.fullName;
     gameState.logs.push(`[${instance.fullName}] 使 [${target.fullName}] 获得财富1。`);
   }
 }, {

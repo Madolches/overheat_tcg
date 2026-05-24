@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { addContinuousDamage, addContinuousPower, ensureData, totalErosionCount } from './BaseUtil';
+import { addContinuousDamage, addContinuousPower, backErosionCount, ensureData } from './BaseUtil';
 
 const stackItemTargetsOwnField = (gameState: any, playerUid: string, item: any) => {
   const ownFieldIds = new Set([
@@ -61,12 +61,12 @@ const cardEffects: CardEffect[] = [{
   id: '103000418_erosion_stats',
   type: 'CONTINUOUS',
   triggerLocation: ['UNIT'],
-  erosionTotalLimit: [3, 99],
+  erosionBackLimit: [3, 99],
   description: '创痕3：这个单位伤害+1、力量+1000。',
   applyContinuous: (gameState, instance) => {
     const owner = Object.values((gameState as any).players)
       .find((player: any) => player.unitZone.some((unit: Card | null) => unit?.gamecardId === instance.gamecardId));
-    if (!owner || totalErosionCount(owner as any) < 3) return;
+    if (!owner || backErosionCount(owner as any) < 3) return;
     addContinuousDamage(instance, instance, 1);
     addContinuousPower(instance, instance, 1000);
   }

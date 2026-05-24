@@ -71,7 +71,7 @@ const card: Card = {
   colorReq: {},
   faction: '无',
   acValue: 1,
-  godMark: false,
+  godMark: true,
   displayState: 'FRONT_UPRIGHT',
   feijingMark: false,
   canResetCount: 0,

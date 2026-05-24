@@ -3247,6 +3247,33 @@ export const ServerGameService = {
     }
   },
 
+  async finalizeBattleAfterPendingQuery(gameState: GameState, onUpdate?: (state: GameState) => Promise<void>) {
+    const pendingBattle = (gameState as any).pendingBattleEndAfterQuery;
+    if (!pendingBattle || gameState.pendingQuery || gameState.phase !== 'DAMAGE_CALCULATION') return;
+
+    gameState.phase = 'MAIN';
+    gameState.phaseTimerStart = Date.now();
+    await ServerGameService.dispatchEventAndDrainTriggers(
+      gameState,
+      { type: 'PHASE_CHANGED', data: { phase: 'MAIN', reason: 'BATTLE_END' } },
+      onUpdate
+    );
+    if (gameState.pendingQuery) return;
+
+    delete (gameState as any).pendingBattleEndAfterQuery;
+    ServerGameService.clearAllianceAttackMarkers(gameState, pendingBattle.attackerIds);
+    gameState.battleState = undefined;
+    await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
+    if (!gameState.pendingQuery && gameState.phase === 'MAIN') {
+      await ServerGameService.enterForcedAttackBattleIfNeeded(
+        gameState,
+        pendingBattle.attackerPlayerId,
+        onUpdate,
+        'FORCED_ATTACK_CONTINUE'
+      );
+    }
+  },
+
   async resolvePlay(gameState: GameState, onUpdate?: (state: GameState) => Promise<void>) {
     return ServerGameService.resolveCounterStack(gameState, onUpdate);
   },
@@ -3699,6 +3726,7 @@ export const ServerGameService = {
       } else {
         await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
       }
+      await ServerGameService.finalizeBattleAfterPendingQuery(gameState, onUpdate);
       return gameState;
     }
 
@@ -3711,6 +3739,7 @@ export const ServerGameService = {
         gameState.logs.push(`[错误] 找不到选择的诱发效果: ${currentSelections[0] || 'none'}。`);
         await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
       }
+      await ServerGameService.finalizeBattleAfterPendingQuery(gameState, onUpdate);
       return gameState;
     }
 
@@ -3787,6 +3816,7 @@ export const ServerGameService = {
           // If not in a stack resolution and not in priority window, likely resuming a triggered effect chain
           await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
         }
+        await ServerGameService.finalizeBattleAfterPendingQuery(gameState, onUpdate);
         return gameState;
       } else {
         gameState.logs.push(`[错误] EFFECT_RESOLVE 找不到有效回调 (index: ${effectIndex}, id: ${effectId})`);
@@ -4984,7 +5014,13 @@ export const ServerGameService = {
           isAlliance: !!gameState.battleState.isAlliance
         }
       });
-      if (gameState.pendingQuery) return gameState;
+      if (gameState.pendingQuery) {
+        (gameState as any).pendingBattleEndAfterQuery = {
+          attackerIds: gameState.battleState.attackers || [],
+          attackerPlayerId: attackerId
+        };
+        return gameState;
+      }
       gameState.phase = 'MAIN';
       gameState.phaseTimerStart = Date.now();
       await ServerGameService.dispatchEventAndDrainTriggers(gameState, { type: 'PHASE_CHANGED', data: { phase: 'MAIN', reason: 'BATTLE_END' } });

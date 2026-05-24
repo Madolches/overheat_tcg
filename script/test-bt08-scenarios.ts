@@ -57,6 +57,8 @@ import bt08Y08 from '../src/scripts/205000152';
 import bt08Y09 from '../src/scripts/205000153';
 import bt08Y10 from '../src/scripts/305110083';
 import bt08Y11 from '../src/scripts/105110409';
+import bt04R07 from '../src/scripts/102060433';
+import bt04R09 from '../src/scripts/202060130';
 import { destroyByEffect, ensureData, moveCard, moveCardAsCost, wealthCount } from '../src/scripts/BaseUtil';
 
 type ScenarioResult = {
@@ -435,9 +437,56 @@ async function testPatrolReadiesHolyKingdomAllianceTarget(): Promise<ScenarioRes
   }
   await answerPendingQuery(state, 'BOT', [target.gamecardId]);
   const ready = !target.isExhausted;
-  return ready
-    ? pass(name, `ready=${ready}`)
-    : fail(name, `ready=${ready}`);
+
+  const battlePatrol = cloneScriptCard(bt08W05 as Card, 'UNIT', { gamecardId: 'PATROL_BATTLE' });
+  const battleAlly = testCard({
+    id: 'PATROL_BATTLE_ALLY',
+    fullName: 'Patrol Battle Ally',
+    type: 'UNIT',
+    faction: battlePatrol.faction,
+    cardlocation: 'UNIT',
+    power: 1000,
+    basePower: 1000,
+  });
+  const battleTarget = testCard({
+    id: 'PATROL_BATTLE_TARGET',
+    fullName: 'Patrol Battle Target',
+    type: 'UNIT',
+    faction: battlePatrol.faction,
+    cardlocation: 'UNIT',
+    isExhausted: true,
+  });
+  const defender = testCard({
+    id: 'PATROL_DEFENDER',
+    fullName: 'Patrol Defender',
+    type: 'UNIT',
+    cardlocation: 'UNIT',
+    power: 500,
+    basePower: 500,
+  });
+  const battleState = game({
+    unitZone: [battlePatrol, battleAlly, battleTarget, null, null, null],
+  }, {
+    unitZone: [defender, null, null, null, null, null],
+  }, {
+    phase: 'DAMAGE_CALCULATION',
+    battleState: {
+      attackers: [battlePatrol.gamecardId, battleAlly.gamecardId],
+      defender: defender.gamecardId,
+      isAlliance: true,
+      resolvedUnitIds: []
+    }
+  });
+  await ServerGameService.resolveDamage(battleState);
+  if (battleState.pendingQuery?.callbackKey === 'TRIGGER_CHOICE') {
+    await answerPendingQuery(battleState, 'BOT', ['YES']);
+  }
+  await answerPendingQuery(battleState, 'BOT', [battleTarget.gamecardId]);
+  const battleEndedCleanly = battleState.phase === 'MAIN' && !battleState.battleState;
+
+  return ready && battleEndedCleanly
+    ? pass(name, `ready=${ready}, battleClean=${battleEndedCleanly}`)
+    : fail(name, `ready=${ready}, battleClean=${battleEndedCleanly}, phase=${battleState.phase}`);
 }
 
 function testSculptorKeepsHeroicThroughContinuous(): ScenarioResult {
@@ -904,9 +953,67 @@ async function testSoulDevourPowerAndDraw(): Promise<ScenarioResult> {
   const boosted = devourer.power === (devourer.basePower || 0) + 500;
   const drew = state.players.BOT.hand.some((card: Card) => card.gamecardId === draw.gamecardId);
 
-  return sent && boosted && drew
-    ? pass(name, `sent=${sent}, boosted=${boosted}, drew=${drew}`)
-    : fail(name, `sent=${sent}, boosted=${boosted}, drew=${drew}`);
+  const lowDraw = testCard({ id: 'SOUL_LOW_DRAW', fullName: 'Soul Low Draw', cardlocation: 'DECK' });
+  const lowDevourer = cloneScriptCard(bt08R07 as Card, 'UNIT', { gamecardId: 'SOUL_LOW_DEVOURER' });
+  const lowCost = testCard({ id: 'SOUL_LOW_COST', fullName: 'Soul Low Cost', type: 'UNIT', godMark: false, cardlocation: 'UNIT' });
+  const lowState = game({
+    deck: [lowDraw],
+    unitZone: [lowDevourer, lowCost, null, null, null, null],
+    erosionFront: deckCards(4, 'SOUL_LOW_EROSION', 'RED').map(card => ({ ...card, cardlocation: 'EROSION_FRONT' as any })),
+  });
+  await activateAndResolveByOpponentPass(lowState, 'BOT', lowDevourer, 0);
+  await answerPendingQuery(lowState, 'BOT', [lowCost.gamecardId]);
+  await confirmTrigger(lowState, 'BOT');
+  const lowNoDraw = !lowState.players.BOT.hand.some((card: Card) => card.gamecardId === lowDraw.gamecardId);
+
+  const effectDraw = testCard({ id: 'SOUL_EFFECT_DRAW', fullName: 'Soul Effect Draw', cardlocation: 'DECK' });
+  const effectDevourer = cloneScriptCard(bt08R07 as Card, 'UNIT', { gamecardId: 'SOUL_EFFECT_DEVOURER' });
+  const effectMoved = testCard({ id: 'SOUL_EFFECT_MOVED', fullName: 'Soul Effect Moved', type: 'UNIT', godMark: false, cardlocation: 'UNIT' });
+  const effectSource = testCard({ id: 'SOUL_EFFECT_SOURCE', fullName: 'Soul Effect Source', type: 'UNIT', cardlocation: 'UNIT' });
+  const effectState = game({
+    deck: [effectDraw],
+    unitZone: [effectDevourer, effectMoved, null, null, null, null],
+    erosionFront: deckCards(5, 'SOUL_EFFECT_EROSION', 'RED').map(card => ({ ...card, cardlocation: 'EROSION_FRONT' as any })),
+  }, {
+    unitZone: [effectSource, null, null, null, null, null],
+  });
+  moveCard(effectState, 'BOT', effectMoved, 'GRAVE', effectSource);
+  await confirmTrigger(effectState, 'BOT');
+  const effectMoveNoDraw = !effectState.players.BOT.hand.some((card: Card) => card.gamecardId === effectDraw.gamecardId);
+
+  return sent && boosted && drew && lowNoDraw && effectMoveNoDraw
+    ? pass(name, `sent=${sent}, boosted=${boosted}, drew=${drew}, gated=${lowNoDraw}, effectNoDraw=${effectMoveNoDraw}`)
+    : fail(name, `sent=${sent}, boosted=${boosted}, drew=${drew}, gated=${lowNoDraw}, effectNoDraw=${effectMoveNoDraw}`);
+}
+
+async function testThunderLeaderPowerSearch(): Promise<ScenarioResult> {
+  const name = 'BT04-R07 searches Thunder when power reaches 3500';
+  const leader = cloneScriptCard(bt04R07 as Card, 'UNIT');
+  const story = cloneScriptCard(bt04R09 as Card, 'PLAY');
+  const thunder = testCard({
+    id: 'THUNDER_SEARCH',
+    fullName: 'Thunder Search',
+    type: 'UNIT',
+    faction: leader.faction,
+    cardlocation: 'DECK',
+  });
+  const state = game({
+    deck: [thunder],
+    unitZone: [leader, null, null, null, null, null],
+    playZone: [story],
+  });
+  await story.effects?.[0]?.execute?.(story, state, state.players.BOT);
+  await answerPendingQuery(state, 'BOT', [leader.gamecardId]);
+  await confirmTrigger(state, 'BOT');
+  const triggered = state.pendingQuery?.context?.effectId === '102060433_power_search';
+  if (triggered) {
+    await answerPendingQuery(state, 'BOT', [thunder.gamecardId]);
+  }
+  const searched = state.players.BOT.hand.some((card: Card) => card.gamecardId === thunder.gamecardId);
+
+  return triggered && searched
+    ? pass(name, `triggered=${triggered}, searched=${searched}`)
+    : fail(name, `triggered=${triggered}, searched=${searched}, pending=${state.pendingQuery?.context?.effectId || 'none'}`);
 }
 
 async function testPromotionEquipmentAndSquare(): Promise<ScenarioResult> {
@@ -995,9 +1102,41 @@ async function testPromotionEquipmentAndSquare(): Promise<ScenarioResult> {
   await confirmTrigger(stateB, 'BOT');
   const drew = stateB.players.BOT.hand.some((card: Card) => card.gamecardId === draw.gamecardId);
 
-  return equipped && buffed && protectedByBadge && protectedBySquare && secondLeft && noIleuNoProtect && drew
-    ? pass(name, `equipped=${equipped}, buffed=${buffed}, badge=${protectedByBadge}, square=${protectedBySquare}, noIleu=${noIleuNoProtect}, second=${secondLeft}, drew=${drew}`)
-    : fail(name, `equipped=${equipped}, buffed=${buffed}, badge=${protectedByBadge}, square=${protectedBySquare}, noIleu=${noIleuNoProtect}, second=${secondLeft}, drew=${drew}`);
+  const promotedByStory = testCard({
+    id: 'CITY_STORY_PROMOTED',
+    fullName: 'City Story Promoted',
+    type: 'UNIT',
+    faction: square.faction,
+    acValue: 2,
+    cardlocation: 'HAND',
+  });
+  const promotionSource = testCard({
+    id: 'CITY_STORY_SOURCE',
+    fullName: 'City Story Source',
+    type: 'UNIT',
+    faction: square.faction,
+    acValue: 1,
+    cardlocation: 'UNIT',
+  });
+  const promotionStory = cloneScriptCard(bt08R08 as Card, 'PLAY', { gamecardId: 'CITY_PROMOTION_STORY' });
+  const realDraw = testCard({ id: 'CITY_REAL_DRAW', fullName: 'City Real Draw', cardlocation: 'DECK' });
+  const storyState = game({
+    deck: [realDraw],
+    hand: [promotedByStory],
+    unitZone: [promotionSource, null, null, null, null, null],
+    itemZone: [cloneScriptCard(bt08R10 as Card, 'ITEM', { gamecardId: 'CITY_REAL_SQUARE' })],
+    playZone: [promotionStory],
+    erosionFront: deckCards(4, 'CITY_REAL_EROSION', 'RED').map(card => ({ ...card, cardlocation: 'EROSION_FRONT' as any })),
+  });
+  await promotionStory.effects?.[0]?.execute?.(promotionStory, storyState, storyState.players.BOT);
+  await answerPendingQuery(storyState, 'BOT', [promotionSource.gamecardId]);
+  await answerPendingQuery(storyState, 'BOT', [promotedByStory.gamecardId]);
+  await confirmTrigger(storyState, 'BOT');
+  const realPromotionDrew = storyState.players.BOT.hand.some((card: Card) => card.gamecardId === realDraw.gamecardId);
+
+  return equipped && buffed && protectedByBadge && protectedBySquare && secondLeft && noIleuNoProtect && drew && realPromotionDrew
+    ? pass(name, `equipped=${equipped}, buffed=${buffed}, badge=${protectedByBadge}, square=${protectedBySquare}, noIleu=${noIleuNoProtect}, second=${secondLeft}, drew=${drew}, realDrew=${realPromotionDrew}`)
+    : fail(name, `equipped=${equipped}, buffed=${buffed}, badge=${protectedByBadge}, square=${protectedBySquare}, noIleu=${noIleuNoProtect}, second=${secondLeft}, drew=${drew}, realDrew=${realPromotionDrew}`);
 }
 
 async function testGreenSilverMusicDestroyAndBonuses(): Promise<ScenarioResult> {
@@ -1053,7 +1192,7 @@ async function testGreenSilverMusicDestroyAndBonuses(): Promise<ScenarioResult> 
   const girls = cloneScriptCard(bt08G04 as Card, 'UNIT');
   const stateC = game({
     unitZone: [girls, null, null, null, null, null],
-    erosionFront: deckCards(3, 'G04_EROSION', 'GREEN').map(card => ({ ...card, cardlocation: 'EROSION_FRONT' as any })),
+    erosionBack: deckCards(3, 'G04_EROSION_BACK', 'GREEN').map(card => ({ ...card, cardlocation: 'EROSION_BACK' as any })),
   });
   EventEngine.recalculateContinuousEffects(stateC);
   const girlsBuffed = girls.power === (girls.basePower || 0) + 1000 && girls.damage === (girls.baseDamage || 0) + 1;
@@ -1065,6 +1204,14 @@ async function testGreenSilverMusicDestroyAndBonuses(): Promise<ScenarioResult> 
   EventEngine.recalculateContinuousEffects(stateLowGirls);
   const girlsGated = lowGirls.power === (lowGirls.basePower || 0) &&
     lowGirls.damage === (lowGirls.baseDamage || 0);
+  const frontOnlyGirls = cloneScriptCard(bt08G04 as Card, 'UNIT', { gamecardId: 'G04_FRONT_ONLY_GIRLS' });
+  const stateFrontOnlyGirls = game({
+    unitZone: [frontOnlyGirls, null, null, null, null, null],
+    erosionFront: deckCards(3, 'G04_FRONT_ONLY_EROSION', 'GREEN').map(card => ({ ...card, cardlocation: 'EROSION_FRONT' as any })),
+  });
+  EventEngine.recalculateContinuousEffects(stateFrontOnlyGirls);
+  const girlsFrontOnlyGated = frontOnlyGirls.power === (frontOnlyGirls.basePower || 0) &&
+    frontOnlyGirls.damage === (frontOnlyGirls.baseDamage || 0);
   const ownDestroyTarget = testCard({ id: 'G04_OWN_DESTROY_TARGET', fullName: 'G04 Own Target', type: 'UNIT', cardlocation: 'UNIT' });
   const opponentDestroyer = testCard({ id: 'G04_DESTROYER', fullName: 'G04 Destroyer', type: 'UNIT', cardlocation: 'UNIT' });
   const destroyEffect = {
@@ -1146,9 +1293,9 @@ async function testGreenSilverMusicDestroyAndBonuses(): Promise<ScenarioResult> 
   EventEngine.recalculateContinuousEffects(stateE);
   const awakenedAllowed = (gladiator as any).data?.cannotAttackThisTurn !== stateE.turnCount;
 
-  return conductorDestroyed && dancerBuffed && dancerGated && girlsBuffed && girlsGated && counteredOwnDestroy && rejectsNonOwnDestroy && battleZero && gated && preventedDeckReturn && awakenedAllowed
-    ? pass(name, `destroy=${conductorDestroyed}, dancer=${dancerBuffed}/${dancerGated}, girls=${girlsBuffed}/${girlsGated}/${counteredOwnDestroy}/${rejectsNonOwnDestroy}, battle=${battleZero}, gate=${gated}, return=${preventedDeckReturn}`)
-    : fail(name, `destroy=${conductorDestroyed}, dancer=${dancerBuffed}/${dancerGated}, girls=${girlsBuffed}/${girlsGated}/${counteredOwnDestroy}/${rejectsNonOwnDestroy}, battle=${battleZero}, gate=${gated}, return=${preventedDeckReturn}, awakened=${awakenedAllowed}`);
+  return conductorDestroyed && dancerBuffed && dancerGated && girlsBuffed && girlsGated && girlsFrontOnlyGated && counteredOwnDestroy && rejectsNonOwnDestroy && battleZero && gated && preventedDeckReturn && awakenedAllowed
+    ? pass(name, `destroy=${conductorDestroyed}, dancer=${dancerBuffed}/${dancerGated}, girls=${girlsBuffed}/${girlsGated}/${girlsFrontOnlyGated}/${counteredOwnDestroy}/${rejectsNonOwnDestroy}, battle=${battleZero}, gate=${gated}, return=${preventedDeckReturn}`)
+    : fail(name, `destroy=${conductorDestroyed}, dancer=${dancerBuffed}/${dancerGated}, girls=${girlsBuffed}/${girlsGated}/${girlsFrontOnlyGated}/${counteredOwnDestroy}/${rejectsNonOwnDestroy}, battle=${battleZero}, gate=${gated}, return=${preventedDeckReturn}, awakened=${awakenedAllowed}`);
 }
 
 async function testGreenResonanceAndSilverRecovery(): Promise<ScenarioResult> {
@@ -1555,7 +1702,7 @@ async function testBlueCounterAndCarriage(): Promise<ScenarioResult> {
     color: 'BLUE',
     faction: '九尾商会联盟',
     cardlocation: 'UNIT',
-    data: { wealthValue: 1 },
+    data: { grantedWealthValue: 1 },
   } as any));
   const stateC = game({
     unitZone: wealthyUnits,
@@ -1856,6 +2003,7 @@ const scenarios: { name: string; run: ScenarioRun }[] = [
   { name: 'BT08-R03/R11 destroy only on promotion turn and filter god/non-god targets', run: testRedPromotionDestroyModes },
   { name: 'BT08-R05/R06 grant attacking opponent units after promotion or hand reveal', run: testRedAttackUnitGrants },
   { name: 'BT08-R07 sends own non-god as cost, boosts units, and draws at erosion 5-8', run: testSoulDevourPowerAndDraw },
+  { name: 'BT04-R07 searches Thunder when power reaches 3500', run: testThunderLeaderPowerSearch },
   { name: 'BT08-R09 equips promoted unit and R10 protects first opponent-effect leave/draws', run: testPromotionEquipmentAndSquare },
   { name: 'BT08-G01/G03/G04/G05/G06 silver music destroy, stats, combat and awaken gate', run: testGreenSilverMusicDestroyAndBonuses },
   { name: 'BT08-G02/G08/G09 resonance and silver music recovery', run: testGreenResonanceAndSilverRecovery },
