@@ -103,6 +103,22 @@ export const isVirtualGodMarkReveal = (gameState: GameState, card: Card | undefi
     (card as any).data?.puppetRevealTurn === gameState.turnCount
   );
 
+export const isEffectiveGodMarkInDeck = (card: Card | undefined) =>
+  !!card &&
+  card.cardlocation === 'DECK' &&
+  (
+    card.godMark ||
+    VIRTUAL_GOD_MARK_IDS.has(String(card.id)) ||
+    card.effects?.some(effect =>
+      effect.type === 'CONTINUOUS' &&
+      effect.triggerLocation?.includes('DECK') &&
+      (effect as any).treatAsGodMarkInDeck
+    )
+  );
+
+export const isEffectiveGodMark = (card: Card | undefined) =>
+  !!card && (card.godMark || isEffectiveGodMarkInDeck(card));
+
 export const withVirtualGodMarkReveal = async <T>(
   gameState: GameState,
   card: Card | undefined,

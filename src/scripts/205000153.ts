@@ -4,6 +4,7 @@ import {
   canPutUnitOntoBattlefield,
   createSelectCardQuery,
   ensureData,
+  isEffectiveGodMark,
   isNonGodFieldCard,
   isNonGodUnit,
   moveCard,
@@ -20,7 +21,7 @@ const materialCandidates = (playerState: any) => [
   !!card &&
   (
     (['UNIT', 'ITEM'].includes(card.cardlocation || '') && isNonGodFieldCard(card)) ||
-    (card.cardlocation === 'DECK' && card.godMark)
+    (card.cardlocation === 'DECK' && isEffectiveGodMark(card))
   )
 );
 

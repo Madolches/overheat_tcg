@@ -5,8 +5,10 @@ import { canPutUnitOntoBattlefield } from './BaseUtil';
 const effect_105000472_virtual_godmark: CardEffect = {
   id: '105000472_virtual_godmark',
   type: 'CONTINUOUS',
+  triggerLocation: ['DECK'],
+  treatAsGodMarkInDeck: true,
   description: '在你的卡组中，这张卡也视为神蚀卡。'
-};
+} as CardEffect;
 
 const effect_105000472_reveal: CardEffect = {
   id: '105000472_reveal',

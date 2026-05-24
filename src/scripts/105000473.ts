@@ -5,8 +5,10 @@ import { createSelectCardQuery, getBattlefieldUnits } from './BaseUtil';
 const effect_105000473_virtual_godmark: CardEffect = {
   id: '105000473_virtual_godmark',
   type: 'CONTINUOUS',
+  triggerLocation: ['DECK'],
+  treatAsGodMarkInDeck: true,
   description: '在你的卡组中，这张卡也视为神蚀卡。'
-};
+} as CardEffect;
 
 const effect_105000473_reveal: CardEffect = {
   id: '105000473_reveal',
