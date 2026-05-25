@@ -6,6 +6,7 @@ const cardEffects: CardEffect[] = [{
   type: 'TRIGGER',
   triggerEvent: ['CARD_ENTERED_ZONE', 'CARD_LEFT_FIELD'],
   isMandatory: false,
+  sourceSnapshotOnLeftField: true,
   triggerLocation: ['UNIT', 'GRAVE', 'EXILE', 'HAND', 'DECK'],
   limitCount: 1,
   limitNameType: true,
@@ -15,7 +16,12 @@ const cardEffects: CardEffect[] = [{
       event.sourceCardId === instance.gamecardId &&
       event.data?.zone === 'UNIT' &&
       enteredFromHand(instance, event);
-    const left = event?.type === 'CARD_LEFT_FIELD' && event.sourceCardId === instance.gamecardId;
+    const left = event?.type === 'CARD_LEFT_FIELD' &&
+      (
+        event.sourceCard === instance ||
+        event.sourceCardId === instance.gamecardId ||
+        event.data?.previousSourceCardId === instance.gamecardId
+      );
     return (entered || left) &&
       playerState.grave.filter(card => isAlchemyCard(card)).length >= 3 &&
       playerState.deck.some(card => card.type === 'UNIT' && isAlchemyCard(card) && !card.godMark && canPutUnitOntoBattlefield(playerState, card));

@@ -5,6 +5,7 @@ const cardEffects: CardEffect[] = [{
   id: '102060196_high_power_keywords',
   type: 'CONTINUOUS',
   triggerLocation: ['UNIT'],
+  continuousPriority: -100,
   description: '力量4500以上时，获得【速攻】【歼灭】【神依】。',
   condition: (_gameState, _playerState, instance) => (instance.power || 0) >= 4500,
   applyContinuous: (_gameState, instance) => {

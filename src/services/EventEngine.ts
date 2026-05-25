@@ -334,6 +334,18 @@ export class EventEngine {
             delete (card as any).data.cannotAllianceByEffect;
             delete (card as any).data.canAttackExhausted;
             delete (card as any).data.canAttackReady;
+            if (
+              (card as any).data.canAttackAnyUnit !== undefined &&
+              (
+                (card as any).data.canAttackAnyUnitUntilTurn === undefined ||
+                (card as any).data.canAttackAnyUnitUntilTurn < gameState.turnCount
+              )
+            ) {
+              delete (card as any).data.canAttackAnyUnit;
+              delete (card as any).data.canAttackAnyUnitUntilTurn;
+              delete (card as any).data.canAttackAnyUnitSourceName;
+              delete (card as any).data.canAttackAnyUnitConsumeOnAttack;
+            }
             delete (card as any).data.cannotExhaustByEffect;
             delete (card as any).data.preventFirstOpponentEffectLeaveEachTurnSourceName;
             delete (card as any).data.preventFirstOpponentEffectLeaveEachTurnSourceCardId;
@@ -682,7 +694,9 @@ export class EventEngine {
       ).sort((a, b) => {
         const aPriority = a.effect.modifiesPowerIncreaseAmount ? 1 : 0;
         const bPriority = b.effect.modifiesPowerIncreaseAmount ? 1 : 0;
-        return bPriority - aPriority || a.order - b.order;
+        const aContinuousPriority = a.effect.continuousPriority ?? 0;
+        const bContinuousPriority = b.effect.continuousPriority ?? 0;
+        return bPriority - aPriority || bContinuousPriority - aContinuousPriority || a.order - b.order;
       });
       activeContinuousEntries.forEach(({ card, effect }) => {
         if (card && card.effects) {

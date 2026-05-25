@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { canPutUnitOntoBattlefield, moveCard, putUnitOntoField, story } from './BaseUtil';
+import { canPutUnitOntoBattlefield, moveCard, moveCardAsCost, putUnitOntoField, story } from './BaseUtil';
 
 const greenHandCards = (instance: Card) => (card: Card) =>
   card.gamecardId !== instance.gamecardId && card.color === 'GREEN';
@@ -68,7 +68,7 @@ const cardEffects: CardEffect[] = [story('203000093_cliff_rescue', '创痕1：�
     const discard = playerState.hand.find((card: Card) => card.gamecardId === selections[0] && greenHandCards(instance)(card));
     const target = graveUnitTargets(playerState).find((card: Card) => card.gamecardId === context.targetId);
     if (!discard || !target) return;
-    moveCard(gameState, playerState.uid, discard, 'GRAVE', instance);
+    moveCardAsCost(gameState, playerState.uid, discard, 'GRAVE', instance);
     putUnitOntoField(gameState, playerState.uid, target, instance);
     if (instance.cardlocation === 'PLAY' || instance.cardlocation === 'GRAVE') {
       moveCard(gameState, playerState.uid, instance, 'EXILE', instance);

@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { canPutUnitOntoBattlefield, createSelectCardQuery, discardHandCost, putUnitOntoField } from './BaseUtil';
+import { canPutUnitOntoBattlefield, createSelectCardQuery, moveCardAsCost, putUnitOntoField } from './BaseUtil';
 
 const chimeraInGrave = (playerState: any) =>
   playerState.grave.filter((card: Card) => card.type === 'UNIT' && (card.specialName === '奇美拉' || card.fullName.includes('奇美拉')));
@@ -17,7 +17,18 @@ const cardEffects: CardEffect[] = [{
   condition: (_gameState, playerState, instance) =>
     playerState.hand.some(greenHandCards(instance)) &&
     chimeraInGrave(playerState).some((card: Card) => canPutUnitOntoBattlefield(playerState, card)),
-  cost: async (gameState, playerState, instance) => discardHandCost(1, greenHandCards(instance))(gameState, playerState, instance),
+  targetSpec: {
+    title: '选择奇美拉',
+    description: '选择墓地中的1张「奇美拉」单位卡放置到战场上。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) =>
+      chimeraInGrave(playerState)
+        .filter((card: Card) => canPutUnitOntoBattlefield(playerState, card))
+        .map((card: Card) => ({ card, source: 'GRAVE' as const }))
+  },
   execute: async (instance, gameState, playerState) => {
     const candidates = chimeraInGrave(playerState).filter((card: Card) => canPutUnitOntoBattlefield(playerState, card));
     createSelectCardQuery(
@@ -28,13 +39,41 @@ const cardEffects: CardEffect[] = [{
       '选择墓地中的1张「奇美拉」单位卡放置到战场上。',
       1,
       1,
-      { sourceCardId: instance.gamecardId, effectId: '203000096_revive_chimera' },
+      { sourceCardId: instance.gamecardId, effectId: '203000096_revive_chimera', step: 'TARGET' },
       () => 'GRAVE'
     );
   },
-  onQueryResolve: async (instance, gameState, playerState, selections) => {
-    const target = chimeraInGrave(playerState).find((card: Card) => card.gamecardId === selections[0] && canPutUnitOntoBattlefield(playerState, card));
-    if (target) putUnitOntoField(gameState, playerState.uid, target, instance);
+  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step !== 'DISCARD') {
+      const target = chimeraInGrave(playerState).find((card: Card) =>
+        card.gamecardId === selections[0] &&
+        canPutUnitOntoBattlefield(playerState, card)
+      );
+      const discardCandidates = playerState.hand.filter(greenHandCards(instance));
+      if (!target || discardCandidates.length === 0) return;
+      createSelectCardQuery(
+        gameState,
+        playerState.uid,
+        discardCandidates,
+        '舍弃绿色手牌',
+        '选择1张绿色手牌舍弃作为费用。',
+        1,
+        1,
+        { sourceCardId: instance.gamecardId, effectId: '203000096_revive_chimera', step: 'DISCARD', targetId: target.gamecardId },
+        () => 'HAND'
+      );
+      return;
+    }
+
+    const discard = playerState.hand.find((card: Card) => card.gamecardId === selections[0] && greenHandCards(instance)(card));
+    const target = chimeraInGrave(playerState).find((card: Card) =>
+      card.gamecardId === context.targetId &&
+      canPutUnitOntoBattlefield(playerState, card)
+    );
+    if (discard && target) {
+      moveCardAsCost(gameState, playerState.uid, discard, 'GRAVE', instance);
+      putUnitOntoField(gameState, playerState.uid, target, instance);
+    }
   }
 }];
 

@@ -5,16 +5,21 @@ const cardEffects: CardEffect[] = [{
   id: '103100179_return',
   type: 'TRIGGER',
   triggerEvent: 'CARD_LEFT_FIELD',
+  sourceSnapshotOnLeftField: true,
   isMandatory: false,
-  triggerLocation: ['GRAVE'],
+  triggerLocation: ['UNIT', 'GRAVE'],
   limitCount: 1,
   limitNameType: true,
   description: '同名1回合1次，舍弃1张手牌：这个单位从战场送入墓地时，可以横置放置到战场。',
   condition: (_gameState, playerState, instance, event) =>
-    event?.sourceCardId === instance.gamecardId &&
+    (
+      event?.sourceCard === instance ||
+      event?.sourceCardId === instance.gamecardId ||
+      event?.data?.previousSourceCardId === instance.gamecardId
+    ) &&
     event.data?.sourceZone === 'UNIT' &&
     event.data?.targetZone === 'GRAVE' &&
-    instance.cardlocation === 'GRAVE' &&
+    (instance.cardlocation === 'GRAVE' || event?.sourceCard === instance) &&
     playerState.hand.length > 0 &&
     canPutUnitOntoBattlefield(playerState, instance),
   cost: discardHandCost(1),

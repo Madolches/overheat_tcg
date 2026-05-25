@@ -22,6 +22,7 @@ const cardEffects: CardEffect[] = [
     triggerLocation: ['UNIT'],
     triggerEvent: 'CARD_LEFT_FIELD',
     isGlobal: true,
+    sourceSnapshotOnLeftField: true,
     limitCount: 1,
     description: '1回合1次：你的单位由于卡的效果从战场离开时，可以将卡组中1张<神木森>非神蚀卡送入墓地。',
     condition: (_gameState, playerState, _instance, event) =>

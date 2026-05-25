@@ -4,14 +4,23 @@ import { AtomicEffectExecutor, grantedTotemReviveFromGrave } from './BaseUtil';
 const cardEffects: CardEffect[] = [{
   id: '103080213_leave_draw',
   type: 'TRIGGER',
-  triggerLocation: ['GRAVE', 'EXILE', 'HAND', 'DECK'],
+  triggerLocation: ['UNIT', 'GRAVE', 'EXILE', 'HAND', 'DECK'],
   triggerEvent: 'CARD_LEFT_FIELD',
+  sourceSnapshotOnLeftField: true,
   isMandatory: false,
   limitCount: 1,
   limitNameType: true,
   description: '通过卡的效果从战场离开时，可以抽1张卡。',
   condition: (_gameState, _playerState, instance, event) =>
-    event?.sourceCardId === instance.gamecardId &&
+    (
+      event?.sourceCard === instance ||
+      event?.sourceCardId === instance.gamecardId ||
+      event?.data?.previousSourceCardId === instance.gamecardId ||
+      (
+        !!event?.sourceCard?.runtimeFingerprint &&
+        event.sourceCard.runtimeFingerprint === instance.runtimeFingerprint
+      )
+    ) &&
     event.data?.sourceZone === 'UNIT' &&
     !!event.data?.isEffect,
   execute: async (instance, gameState, playerState) => {

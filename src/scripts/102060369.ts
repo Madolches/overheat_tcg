@@ -7,6 +7,7 @@ const cardEffects: CardEffect[] = [
     id: '102060369_high_power_damage_rush',
     type: 'CONTINUOUS',
     triggerLocation: ['UNIT'],
+    continuousPriority: -100,
     description: '力量值3500以上时，这个单位伤害+1并获得速攻。',
     condition: (_gameState, _playerState, instance) =>
       instance.cardlocation === 'UNIT' &&

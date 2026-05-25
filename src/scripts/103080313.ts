@@ -22,7 +22,15 @@ const cardEffects: CardEffect[] = [{
   limitNameType: true,
   description: '同名1回合1次：这个单位由于卡的效果从战场离开时，将卡组或墓地中1张《利牙剑虎》放置到战场。',
   condition: (_gameState, playerState, instance, event) =>
-    event?.sourceCardId === instance.gamecardId &&
+    (
+      event?.sourceCard === instance ||
+      event?.sourceCardId === instance.gamecardId ||
+      event?.data?.previousSourceCardId === instance.gamecardId ||
+      (
+        !!event?.sourceCard?.runtimeFingerprint &&
+        event.sourceCard.runtimeFingerprint === instance.runtimeFingerprint
+      )
+    ) &&
     event.data?.sourceZone === 'UNIT' &&
     event.data?.isEffect === true &&
     tigerTargets(playerState).length > 0,
