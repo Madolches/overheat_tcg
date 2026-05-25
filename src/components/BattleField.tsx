@@ -544,6 +544,16 @@ export const BattleField: React.FC = () => {
     // OFF Strategy: Always auto-pass
     // AUTO Strategy: Auto-pass ONLY if no cards/effects available
     const shouldAutoPass = localStrategy === 'OFF' || (localStrategy === 'AUTO' && !canConfront);
+    const shouldAutoDeclineDefense =
+      (localStrategy === 'OFF' || localStrategy === 'AUTO') &&
+      game.phase === 'DEFENSE_DECLARATION' &&
+      !me.isTurn &&
+      !me.unitZone.some(unit => canCardDefendInCurrentBattle(unit, game));
+
+    if (shouldAutoDeclineDefense) {
+      handleDeclareDefense(undefined);
+      return;
+    }
 
     if (shouldAutoPass) {
       if (game.phase === 'COUNTERING' && game.priorityPlayerId === myUid) {
@@ -1489,12 +1499,7 @@ export const BattleField: React.FC = () => {
           );
 
         if (validEffects.length === 1) {
-          setEffectConfirmation({
-            card,
-            effect: validEffects[0].effect,
-            effectIndex: validEffects[0].effectIndex,
-            triggerLocation
-          });
+          activateAbility(card, validEffects[0].effect, validEffects[0].effectIndex, triggerLocation);
           closeViewingZoneForCardAction(zone);
           return;
         }
@@ -2961,12 +2966,7 @@ export const BattleField: React.FC = () => {
                           'HAND'
                         ) as TriggerLocation;
                         if (validEffects.length === 1) {
-                          setEffectConfirmation({
-                            card: latestCard,
-                            effect: validEffects[0].effect,
-                            effectIndex: validEffects[0].index,
-                            triggerLocation
-                          });
+                          activateAbility(latestCard, validEffects[0].effect, validEffects[0].index, triggerLocation);
                         } else {
                           setEffectSelection({
                             card: latestCard,

@@ -2114,6 +2114,33 @@ export const ServerGameService = {
     return gameState;
   },
 
+  async applyDefenseStrategy(gameState: GameState, onUpdate?: (state: GameState) => Promise<void>) {
+    if (
+      gameState.phase !== 'DEFENSE_DECLARATION' ||
+      gameState.pendingQuery ||
+      gameState.isResolvingStack ||
+      gameState.currentProcessingItem
+    ) {
+      return gameState;
+    }
+
+    const defenderId = gameState.playerIds[gameState.currentTurnPlayer === 0 ? 1 : 0];
+    const defender = gameState.players[defenderId];
+    if (!defender) return gameState;
+
+    const strategy = defender.confrontationStrategy || 'AUTO';
+    if (strategy !== 'AUTO' && strategy !== 'OFF') return gameState;
+
+    const hasAvailableDefender = defender.unitZone.some(unit =>
+      ServerGameService.canUnitDefendInCurrentBattle(gameState, unit)
+    );
+    if (hasAvailableDefender) return gameState;
+
+    await ServerGameService.declareDefense(gameState, defenderId, undefined);
+    if (onUpdate) await onUpdate(gameState);
+    return gameState;
+  },
+
   payCost(gameState: GameState, playerId: string, cost: number, paymentSelection: { feijingCardId?: string, exhaustUnitIds?: string[], erosionFrontIds?: string[] }, cardColor?: string, playingCardId?: string, options?: { excludeExhaustUnitIds?: string[] }): PaymentSummary {
     const player = gameState.players[playerId];
     cardColor = cardColor === 'NONE' ? undefined : cardColor;

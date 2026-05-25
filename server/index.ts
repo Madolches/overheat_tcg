@@ -4016,6 +4016,9 @@ io.on('connection', (socket) => {
                             await ServerGameService.checkTriggeredEffects(gameState);
                         }
                         if (!gameState.pendingQuery) {
+                            await ServerGameService.applyDefenseStrategy(gameState, syncCallback);
+                        }
+                        if (!gameState.pendingQuery) {
                             await ServerGameService.applyConfrontationStrategy(gameState, syncCallback);
                         }
                         actionTimings.executeActionMs = elapsedMs(executeStart);
@@ -4035,12 +4038,18 @@ io.on('connection', (socket) => {
 
                 const postActionStart = process.hrtime.bigint();
                 if (!gameState.pendingQuery) {
+                    await ServerGameService.applyDefenseStrategy(gameState, syncCallback);
+                }
+                if (!gameState.pendingQuery) {
                     await ServerGameService.applyConfrontationStrategy(gameState, syncCallback);
                 }
 
                 // Ensure any dangling triggers are checked before saving state (Skip if game is over)
                 if (gameState.gameStatus !== 2 && !gameState.pendingQuery) {
                     await ServerGameService.checkTriggeredEffects(gameState);
+                    if (!gameState.pendingQuery) {
+                        await ServerGameService.applyDefenseStrategy(gameState, syncCallback);
+                    }
                     if (!gameState.pendingQuery) {
                         await ServerGameService.applyConfrontationStrategy(gameState, syncCallback);
                     }
