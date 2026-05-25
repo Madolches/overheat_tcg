@@ -59,21 +59,33 @@ async function migrateUserCardsTable(conn: mariadb.PoolConnection) {
         CREATE TABLE IF NOT EXISTS user_cards (
             user_id VARCHAR(50) NOT NULL,
             card_id VARCHAR(50) NOT NULL,
+            rarity VARCHAR(10) NOT NULL,
             quantity INT NOT NULL DEFAULT 0,
-            PRIMARY KEY (user_id, card_id)
+            PRIMARY KEY (user_id, card_id, rarity)
         )
     `);
 
     const hasIdColumn = await columnExists(conn, 'user_cards', 'id');
+    const hasRarityColumn = await columnExists(conn, 'user_cards', 'rarity');
     const hasQuantityColumn = await columnExists(conn, 'user_cards', 'quantity');
     if (!hasQuantityColumn) {
         await conn.query(`ALTER TABLE user_cards ADD COLUMN quantity INT NOT NULL DEFAULT 1 AFTER card_id`);
         await conn.query(`UPDATE user_cards SET quantity = 1 WHERE quantity IS NULL`);
     }
+    if (!hasRarityColumn) {
+        await conn.query(`ALTER TABLE user_cards ADD COLUMN rarity VARCHAR(10) NULL AFTER card_id`);
+    }
 
     const pkColumns = await primaryKeyColumns(conn, 'user_cards');
     const uniqueExists = await indexExists(conn, 'user_cards', 'PRIMARY');
-    const alreadyNormalized = !hasIdColumn && uniqueExists && pkColumns.length === 2 && pkColumns[0] === 'user_id' && pkColumns[1] === 'card_id';
+    const alreadyNormalized =
+        !hasIdColumn &&
+        hasRarityColumn &&
+        uniqueExists &&
+        pkColumns.length === 3 &&
+        pkColumns[0] === 'user_id' &&
+        pkColumns[1] === 'card_id' &&
+        pkColumns[2] === 'rarity';
     if (alreadyNormalized) {
         return;
     }
@@ -83,15 +95,30 @@ async function migrateUserCardsTable(conn: mariadb.PoolConnection) {
         CREATE TABLE user_cards_migrated (
             user_id VARCHAR(50) NOT NULL,
             card_id VARCHAR(50) NOT NULL,
+            rarity VARCHAR(10) NOT NULL,
             quantity INT NOT NULL DEFAULT 0,
-            PRIMARY KEY (user_id, card_id)
+            PRIMARY KEY (user_id, card_id, rarity)
         )
     `);
     await conn.query(`
-        INSERT INTO user_cards_migrated (user_id, card_id, quantity)
-        SELECT user_id, card_id, SUM(COALESCE(quantity, 1)) AS quantity
-        FROM user_cards
-        GROUP BY user_id, card_id
+        INSERT INTO user_cards_migrated (user_id, card_id, rarity, quantity)
+        SELECT user_id, normalized_card_id, normalized_rarity, SUM(COALESCE(quantity, 1)) AS quantity
+        FROM (
+            SELECT
+                user_id,
+                CASE
+                    WHEN card_id LIKE '%:%' THEN SUBSTRING_INDEX(card_id, ':', 1)
+                    ELSE card_id
+                END AS normalized_card_id,
+                CASE
+                    WHEN card_id LIKE '%:%' THEN UPPER(SUBSTRING_INDEX(card_id, ':', -1))
+                    ELSE UPPER(rarity)
+                END AS normalized_rarity,
+                quantity
+            FROM user_cards
+        ) normalized
+        WHERE normalized_rarity IS NOT NULL AND normalized_rarity <> ''
+        GROUP BY user_id, normalized_card_id, normalized_rarity
     `);
     await conn.query('DROP TABLE user_cards');
     await conn.query('RENAME TABLE user_cards_migrated TO user_cards');

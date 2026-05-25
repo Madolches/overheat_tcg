@@ -273,7 +273,7 @@ export const Collection: React.FC = () => {
   };
 
   const ownedCardCount = useMemo(() =>
-    cardLibrary.filter(card => (collection[card.uniqueId] || collection[card.id] || 0) > 0).length,
+    cardLibrary.filter(card => (collection[card.uniqueId] || 0) > 0).length,
     [cardLibrary, collection]
   );
 
@@ -289,7 +289,7 @@ export const Collection: React.FC = () => {
     if (filters.faction !== 'ALL' && card.faction !== filters.faction) return false;
     if (filters.godMark === 'GOD_MARK' && !card.godMark) return false;
     if (filters.godMark === 'NON_GOD_MARK' && card.godMark) return false;
-    const isOwned = (collection[card.uniqueId] || collection[card.id] || 0) > 0;
+    const isOwned = (collection[card.uniqueId] || 0) > 0;
     if (filters.ownership === 'OWNED' && !isOwned) return false;
     if (filters.ownership === 'NOT_OWNED' && isOwned) return false;
     return true;
@@ -523,7 +523,7 @@ export const Collection: React.FC = () => {
               {/* Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
                 {visibleCards.map((card, index) => {
-                  const qty = collection[card.uniqueId] || collection[card.id] || 0;
+                  const qty = collection[card.uniqueId] || 0;
                   const isOwned = qty > 0;
                   return (
                     <motion.div
@@ -682,7 +682,7 @@ export const Collection: React.FC = () => {
                       decoding="async"
                     />
                     <div className="absolute bottom-4 -right-2 bg-red-600 px-3 py-1.5 rounded-xl border border-red-400 font-black italic shadow-2xl rotate-12 z-20">
-                      <span className="text-sm">x{collection[selectedCard.uniqueId] || collection[selectedCard.id] || 0}</span>
+                      <span className="text-sm">x{collection[selectedCard.uniqueId] || 0}</span>
                     </div>
                   </div>
                 </div>
@@ -725,10 +725,10 @@ export const Collection: React.FC = () => {
                         </div>
                         <button
                           onClick={() => handleDecompose(selectedCard.uniqueId)}
-                          disabled={actionLoading || (collection[selectedCard.uniqueId] || collection[selectedCard.id] || 0) <= 0}
+                          disabled={actionLoading || (collection[selectedCard.uniqueId] || 0) <= 0}
                           className={cn(
                             "px-6 md:px-8 py-2 md:py-3 rounded-2xl font-black italic text-xs md:text-sm transition-all uppercase",
-                            (collection[selectedCard.uniqueId] || collection[selectedCard.id] || 0) > 0
+                            (collection[selectedCard.uniqueId] || 0) > 0
                               ? "bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/20"
                               : "bg-zinc-700 text-zinc-500 cursor-not-allowed"
                           )}

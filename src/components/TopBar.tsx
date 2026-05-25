@@ -16,6 +16,7 @@ export const TopBar: React.FC<{ onOpenRulebook: () => void; onlinePlayerCount?: 
   const [usernameDraft, setUsernameDraft] = useState(user?.username || user?.displayName || '');
   const [savingName, setSavingName] = useState(false);
   const [nameError, setNameError] = useState('');
+  const [bugCupPausedOpen, setBugCupPausedOpen] = useState(false);
 
   const isInGame = location.pathname.startsWith('/battle/');
   const isDeckBuilder = location.pathname === '/deck-builder';
@@ -113,14 +114,15 @@ export const TopBar: React.FC<{ onOpenRulebook: () => void; onlinePlayerCount?: 
   return (
     <>
       <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
-        <Link
-          to="/bug-cup"
+        <button
+          type="button"
+          onClick={() => setBugCupPausedOpen(true)}
           className="flex items-center gap-2 rounded-xl border border-red-400/20 bg-zinc-900/80 px-3 py-3 text-sm font-black text-white shadow-xl backdrop-blur-md transition-all hover:border-red-300/50 hover:bg-red-950/50"
           aria-label="bug杯"
         >
           <Trophy className="h-4 w-4 text-red-300" />
           <span className="hidden sm:inline">bug杯</span>
-        </Link>
+        </button>
         <button
           type="button"
           onClick={onToggleOnlinePlayers}
@@ -144,6 +146,36 @@ export const TopBar: React.FC<{ onOpenRulebook: () => void; onlinePlayerCount?: 
       </div>
 
       <AnimatePresence>
+        {bugCupPausedOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-zinc-950/80 p-4 text-white backdrop-blur-xl"
+            onClick={() => setBugCupPausedOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.94, opacity: 0, y: 16 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.94, opacity: 0, y: 16 }}
+              className="w-full max-w-sm rounded-3xl border border-red-400/20 bg-zinc-950 p-6 text-center shadow-2xl"
+              onClick={event => event.stopPropagation()}
+            >
+              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-red-500/15">
+                <Trophy className="h-6 w-6 text-red-300" />
+              </div>
+              <h2 className="text-2xl font-black italic tracking-tighter">bug杯暂停</h2>
+              <p className="mt-3 text-sm font-bold leading-6 text-zinc-300">杯赛目前暂停，请自由约战。</p>
+              <button
+                type="button"
+                onClick={() => setBugCupPausedOpen(false)}
+                className="mt-6 w-full rounded-xl bg-red-600 px-4 py-3 text-sm font-black text-white transition-colors hover:bg-red-500"
+              >
+                知道了
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
         {isMenuOpen && (
           <motion.div
             initial={{ opacity: 0 }}

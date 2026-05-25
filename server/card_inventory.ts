@@ -1,6 +1,12 @@
 import { Card } from '../src/types/game';
 import { SERVER_CARD_LIBRARY } from './card_loader';
 
+export type CardInventoryVariation = {
+    cardId: string;
+    rarity: string;
+    uniqueId: string;
+};
+
 function isLiveCard(card: Card | undefined): card is Card {
     return !!card?.uniqueId && !card.uniqueId.includes(':legacy');
 }
@@ -19,6 +25,14 @@ export function getLiveCardVariations(): Card[] {
     }
 
     return cards;
+}
+
+export function getLiveCardInventoryVariations(): CardInventoryVariation[] {
+    return getLiveCardVariations().map(card => ({
+        cardId: card.id,
+        rarity: card.rarity,
+        uniqueId: card.uniqueId
+    }));
 }
 
 export function getBaseCardIds(): string[] {

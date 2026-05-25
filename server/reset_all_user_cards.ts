@@ -1,6 +1,6 @@
 import { dbInit, pool } from './db';
 import { initServerCardLibrary } from './card_loader';
-import { getBaseCardIds } from './card_inventory';
+import { getLiveCardInventoryVariations } from './card_inventory';
 
 async function resetAllUserCards() {
     let conn;
@@ -9,7 +9,7 @@ async function resetAllUserCards() {
         await initServerCardLibrary();
         await dbInit();
 
-        const cardIds = getBaseCardIds();
+        const cardVariations = getLiveCardInventoryVariations();
         conn = await pool.getConnection();
 
         const users = await conn.query('SELECT id FROM users');
@@ -26,11 +26,11 @@ async function resetAllUserCards() {
                 [userId]
             );
 
-            for (const cardId of cardIds) {
+            for (const card of cardVariations) {
                 await conn.query(
-                    `INSERT INTO user_cards (user_id, card_id, quantity)
-                     VALUES (?, ?, 4)`,
-                    [userId, cardId]
+                    `INSERT INTO user_cards (user_id, card_id, rarity, quantity)
+                     VALUES (?, ?, ?, 4)`,
+                    [userId, card.cardId, card.rarity]
                 );
             }
         }
@@ -38,7 +38,7 @@ async function resetAllUserCards() {
         await conn.commit();
 
         console.log(
-            `[ResetCards] Rebuilt ${userIds.length} users with ${cardIds.length} base cards each (${userIds.length * cardIds.length} user_cards rows).`
+            `[ResetCards] Rebuilt ${userIds.length} users with ${cardVariations.length} card variations each (${userIds.length * cardVariations.length} user_cards rows).`
         );
     } catch (err) {
         if (conn) {

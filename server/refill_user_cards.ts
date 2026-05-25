@@ -1,6 +1,6 @@
 import { dbInit, pool } from './db';
 import { initServerCardLibrary } from './card_loader';
-import { getBaseCardIds } from './card_inventory';
+import { getLiveCardInventoryVariations } from './card_inventory';
 
 type CliOptions = {
     user: string;
@@ -42,7 +42,7 @@ async function refillUserCards() {
 
         const targetUser = userRows[0];
         const userId = String(targetUser.id);
-        const cardIds = getBaseCardIds();
+        const cardVariations = getLiveCardInventoryVariations();
 
         await conn.beginTransaction();
 
@@ -53,19 +53,19 @@ async function refillUserCards() {
             [userId]
         );
 
-        for (const cardId of cardIds) {
+        for (const card of cardVariations) {
             await conn.query(
-                `INSERT INTO user_cards (user_id, card_id, quantity)
-                 VALUES (?, ?, 4)
+                `INSERT INTO user_cards (user_id, card_id, rarity, quantity)
+                 VALUES (?, ?, ?, 4)
                  ON DUPLICATE KEY UPDATE quantity = GREATEST(quantity, 4)`,
-                [userId, cardId]
+                [userId, card.cardId, card.rarity]
             );
         }
 
         await conn.commit();
 
         console.log(
-            `[RefillCards] Ensured ${cardIds.length} base cards are at least 4 copies for user ${targetUser.username} (${userId}).`
+            `[RefillCards] Ensured ${cardVariations.length} card variations are at least 4 copies for user ${targetUser.username} (${userId}).`
         );
     } catch (err) {
         if (conn) {

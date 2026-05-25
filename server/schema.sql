@@ -25,8 +25,9 @@ CREATE TABLE IF NOT EXISTS games (
 CREATE TABLE IF NOT EXISTS user_cards (
     user_id VARCHAR(50) NOT NULL,
     card_id VARCHAR(50) NOT NULL,
+    rarity VARCHAR(10) NOT NULL,
     quantity INT NOT NULL DEFAULT 0,
-    PRIMARY KEY (user_id, card_id)
+    PRIMARY KEY (user_id, card_id, rarity)
 );
 
 CREATE TABLE IF NOT EXISTS deck_square_posts (

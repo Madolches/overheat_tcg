@@ -1,12 +1,13 @@
-import { pool } from './db.js';
+import { dbInit, pool } from './db.js';
 import { initServerCardLibrary } from './card_loader.js';
-import { getBaseCardIds } from './card_inventory.js';
+import { getLiveCardInventoryVariations } from './card_inventory.js';
 
 async function seedAdmin() {
     let conn;
     try {
         // console.log("Starting Admin Seeding...");
         await initServerCardLibrary();
+        await dbInit();
         conn = await pool.getConnection();
 
         // 1. Ensure tables exist
@@ -14,8 +15,9 @@ async function seedAdmin() {
             CREATE TABLE IF NOT EXISTS user_cards (
                 user_id VARCHAR(50) NOT NULL,
                 card_id VARCHAR(50) NOT NULL,
+                rarity VARCHAR(10) NOT NULL,
                 quantity INT DEFAULT 0,
-                PRIMARY KEY (user_id, card_id),
+                PRIMARY KEY (user_id, card_id, rarity),
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         `);
@@ -41,15 +43,15 @@ async function seedAdmin() {
         }
         // console.log("✅ Admin and test account balances set to 100k/100k");
 
-        const cardIds = getBaseCardIds();
+        const cardVariations = getLiveCardInventoryVariations();
         
         for (const uid of targetUserIds) {
 
-            for (const cardId of cardIds) {
+            for (const card of cardVariations) {
                 await conn.query(
-                    `INSERT INTO user_cards (user_id, card_id, quantity) VALUES (?, ?, 4)
+                    `INSERT INTO user_cards (user_id, card_id, rarity, quantity) VALUES (?, ?, ?, 4)
                      ON DUPLICATE KEY UPDATE quantity = 4`,
-                    [uid, cardId]
+                    [uid, card.cardId, card.rarity]
                 );
             }
         }

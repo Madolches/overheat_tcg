@@ -2228,6 +2228,8 @@ const buildDeckSquarePost = (row: any, likedPostIds: Set<string>) => ({
 const BUG_CUP_EDITION = 1;
 const BUG_CUP_NAME = 'bug杯';
 const BUG_CUP_TAG = '第1届bug杯杯赛';
+const BUG_CUP_PAUSED = true;
+const BUG_CUP_PAUSE_MESSAGE = '杯赛目前暂停，请自由约战。';
 const BUG_CUP_TURN_TIMER_SECONDS = 600;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BUG_CUP_START = Date.parse('2026-05-18T00:00:00+08:00');
@@ -2267,6 +2269,7 @@ function safeJsonArray(value: any): any[] {
 }
 
 function getBugCupPhase(now = getBugCupNow()) {
+    if (BUG_CUP_PAUSED) return 'PAUSED';
     if (now < BUG_CUP_START) return 'UPCOMING';
     if (now < BUG_CUP_SWISS_START) return 'PRELIM';
     if (now < BUG_CUP_ELIM_SEMI_START) return 'SWISS';
@@ -2287,8 +2290,10 @@ function buildBugCupCurrent(now = getBugCupNow()) {
         edition: BUG_CUP_EDITION,
         name: BUG_CUP_NAME,
         tag: BUG_CUP_TAG,
+        paused: BUG_CUP_PAUSED,
+        pauseMessage: BUG_CUP_PAUSE_MESSAGE,
         phase,
-        canEditDecks: now < BUG_CUP_SWISS_START,
+        canEditDecks: !BUG_CUP_PAUSED && now < BUG_CUP_SWISS_START,
         now,
         simulated: getBugCupMockNow() === now,
         swissRound,
@@ -2764,6 +2769,7 @@ async function createEliminationIfNeeded(now = Date.now()) {
 }
 
 async function ensureBugCupSchedule() {
+    if (BUG_CUP_PAUSED) return;
     const now = getBugCupNow();
     if (now >= BUG_CUP_SWISS_START) {
         await pool.query('UPDATE bug_cup_registrations SET locked_at = COALESCE(locked_at, ?) WHERE edition = ?', [BUG_CUP_SWISS_START, BUG_CUP_EDITION]);
@@ -2819,6 +2825,7 @@ app.post('/api/bug-cup/register', async (req, res): Promise<void> => {
     if (!user) { return; }
 
     try {
+        if (BUG_CUP_PAUSED) { res.status(423).json({ error: BUG_CUP_PAUSE_MESSAGE, current: buildBugCupCurrent() }); return; }
         await ensureBugCupSchedule();
         const deckIds = Array.isArray(req.body?.deckIds) ? req.body.deckIds : [];
         const registration = await saveBugCupRegistration(user, deckIds);
@@ -2833,6 +2840,7 @@ app.post('/api/bug-cup/decks/sync', async (req, res): Promise<void> => {
     if (!user) { return; }
 
     try {
+        if (BUG_CUP_PAUSED) { res.status(423).json({ error: BUG_CUP_PAUSE_MESSAGE, current: buildBugCupCurrent() }); return; }
         await ensureBugCupSchedule();
         const deckIds = Array.isArray(req.body?.deckIds) ? req.body.deckIds : null;
         const registration = deckIds ? await saveBugCupRegistration(user, deckIds) : await syncExistingBugCupDecks(user);
@@ -2847,6 +2855,7 @@ app.post('/api/bug-cup/admin/deck-code', async (req, res): Promise<void> => {
     if (!admin) { return; }
 
     try {
+        if (BUG_CUP_PAUSED) { res.status(423).json({ error: BUG_CUP_PAUSE_MESSAGE, current: buildBugCupCurrent() }); return; }
         const userId = String(req.body?.userId || '').trim();
         const slot = Number(req.body?.slot);
         const deckCode = String(req.body?.deckCode || '').trim();
@@ -2964,6 +2973,7 @@ app.post('/api/bug-cup/prelim/matchmaking', async (req, res): Promise<void> => {
     if (!user) { return; }
 
     try {
+        if (BUG_CUP_PAUSED) { res.status(423).json({ error: BUG_CUP_PAUSE_MESSAGE, current: buildBugCupCurrent() }); return; }
         await ensureBugCupSchedule();
         const current = buildBugCupCurrent();
         if (current.phase !== 'PRELIM') { res.status(400).json({ error: '当前不在预赛阶段' }); return; }
@@ -3038,6 +3048,7 @@ app.post('/api/bug-cup/matches/:id/ready', async (req, res): Promise<void> => {
 
     const matchId = req.params.id;
     try {
+        if (BUG_CUP_PAUSED) { res.status(423).json({ error: BUG_CUP_PAUSE_MESSAGE, current: buildBugCupCurrent() }); return; }
         await ensureBugCupSchedule();
         await withGameLock(`bugcup:${matchId}`, async () => {
             const rows = await pool.query('SELECT * FROM bug_cup_matches WHERE id = ? AND edition = ? LIMIT 1', [matchId, BUG_CUP_EDITION]);
@@ -3279,10 +3290,11 @@ app.get('/api/user/collection', async (req, res): Promise<void> => {
     if (!user) { return; }
 
     try {
-        const rows = await pool.query('SELECT card_id, quantity FROM user_cards WHERE user_id = ?', [user.userId]);
+        const rows = await pool.query('SELECT card_id, rarity, quantity FROM user_cards WHERE user_id = ?', [user.userId]);
         const collection: Record<string, number> = {};
         for (const r of rows) {
-            collection[r.card_id] = Number(r.quantity);
+            const uniqueId = `${r.card_id}:${r.rarity}`;
+            collection[uniqueId] = Number(r.quantity);
         }
         res.json({ collection });
     } catch (err) {
@@ -3320,6 +3332,19 @@ const CRYSTAL_VALUES: Record<string, { decompose: number, produce: number }> = {
 
 function pickRandom<T>(arr: T[]): T {
     return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function resolveInventoryCard(cardReference: string): Card | undefined {
+    if (!cardReference.includes(':')) {
+        return undefined;
+    }
+
+    const card = (SERVER_CARD_LIBRARY as any)[cardReference] as Card | undefined;
+    if (!card?.uniqueId || card.uniqueId !== cardReference || !card?.rarity) {
+        return undefined;
+    }
+
+    return card;
 }
 
 function serializeCatalogCard(card: Card, includeEffects: boolean): Card {
@@ -3391,7 +3416,7 @@ app.post('/api/store/buy-pack', async (req, res): Promise<void> => {
         await conn.beginTransaction();
 
         // Check coins
-        const userRows = await conn.query('SELECT coins FROM users WHERE id = ?', [user.userId]);
+        const userRows = await conn.query('SELECT coins FROM users WHERE id = ? FOR UPDATE', [user.userId]);
         const coins = Number(userRows[0].coins);
         if (coins < totalCost) {
             await conn.rollback();
@@ -3414,7 +3439,7 @@ app.post('/api/store/buy-pack', async (req, res): Promise<void> => {
             }
         } else {
             // Basic Pack Pity Setup
-            let pityRows = await conn.query('SELECT * FROM pack_history WHERE user_id = ?', [user.userId]);
+            let pityRows = await conn.query('SELECT * FROM pack_history WHERE user_id = ? FOR UPDATE', [user.userId]);
             if (pityRows.length === 0) {
                 await conn.query('INSERT INTO pack_history (user_id, total_packs, packs_since_sr, packs_since_ur) VALUES (?, 0, 0, 0)', [user.userId]);
                 pityRows = [{ total_packs: 0, packs_since_sr: 0, packs_since_ur: 0 }];
@@ -3475,16 +3500,20 @@ app.post('/api/store/buy-pack', async (req, res): Promise<void> => {
         // Deduct coins
         await conn.query('UPDATE users SET coins = coins - ? WHERE id = ?', [totalCost, user.userId]);
 
-        // Add cards to collection using batch logic (not really batch, but optimized loops)
-        // Group by cardId to reduce queries
-        const counts: Record<string, number> = {};
-        drawnCards.forEach(c => counts[c.uniqueId] = (counts[c.uniqueId] || 0) + 1);
+        const counts: Record<string, { cardId: string; rarity: string; quantity: number }> = {};
+        drawnCards.forEach(c => {
+            const key = c.uniqueId;
+            if (!counts[key]) {
+                counts[key] = { cardId: c.id, rarity: c.rarity, quantity: 0 };
+            }
+            counts[key].quantity++;
+        });
 
-        for (const [cardId, qty] of Object.entries(counts)) {
+        for (const item of Object.values(counts)) {
             await conn.query(
-                `INSERT INTO user_cards (user_id, card_id, quantity) VALUES (?, ?, ?)
+                `INSERT INTO user_cards (user_id, card_id, rarity, quantity) VALUES (?, ?, ?, ?)
                  ON DUPLICATE KEY UPDATE quantity = quantity + ?`,
-                [user.userId, cardId, qty, qty]
+                [user.userId, item.cardId, item.rarity, item.quantity, item.quantity]
             );
         }
 
@@ -3516,7 +3545,7 @@ app.post('/api/user/decompose', async (req, res): Promise<void> => {
     if (!user) { return; }
 
     const { cardId, quantity = 1 } = req.body;
-    const card = (SERVER_CARD_LIBRARY as any)[cardId];
+    const card = resolveInventoryCard(cardId);
     if (!card) { res.status(404).json({ error: '卡牌未找到' }); return; }
 
     const values = CRYSTAL_VALUES[card.rarity];
@@ -3528,7 +3557,10 @@ app.post('/api/user/decompose', async (req, res): Promise<void> => {
         await conn.beginTransaction();
 
         // Check ownership
-        const cardRows = await conn.query('SELECT quantity FROM user_cards WHERE user_id = ? AND card_id = ?', [user.userId, cardId]);
+        const cardRows = await conn.query(
+            'SELECT quantity FROM user_cards WHERE user_id = ? AND card_id = ? AND rarity = ?',
+            [user.userId, card.id, card.rarity]
+        );
         if (cardRows.length === 0 || Number(cardRows[0].quantity) < quantity) {
             await conn.rollback();
             res.status(400).json({ error: '持有数量不足' });
@@ -3539,9 +3571,15 @@ app.post('/api/user/decompose', async (req, res): Promise<void> => {
 
         // Update cards
         if (Number(cardRows[0].quantity) === quantity) {
-            await conn.query('DELETE FROM user_cards WHERE user_id = ? AND card_id = ?', [user.userId, cardId]);
+            await conn.query(
+                'DELETE FROM user_cards WHERE user_id = ? AND card_id = ? AND rarity = ?',
+                [user.userId, card.id, card.rarity]
+            );
         } else {
-            await conn.query('UPDATE user_cards SET quantity = quantity - ? WHERE user_id = ? AND card_id = ?', [quantity, user.userId, cardId]);
+            await conn.query(
+                'UPDATE user_cards SET quantity = quantity - ? WHERE user_id = ? AND card_id = ? AND rarity = ?',
+                [quantity, user.userId, card.id, card.rarity]
+            );
         }
 
         // Update crystals
@@ -3564,7 +3602,7 @@ app.post('/api/user/craft', async (req, res): Promise<void> => {
     if (!user) { return; }
 
     const { cardId } = req.body;
-    const card = (SERVER_CARD_LIBRARY as any)[cardId];
+    const card = resolveInventoryCard(cardId);
     if (!card) { res.status(404).json({ error: '卡牌未找到' }); return; }
 
     const values = CRYSTAL_VALUES[card.rarity];
@@ -3589,9 +3627,9 @@ app.post('/api/user/craft', async (req, res): Promise<void> => {
 
         // Add card
         await conn.query(
-            `INSERT INTO user_cards (user_id, card_id, quantity) VALUES (?, ?, 1)
+            `INSERT INTO user_cards (user_id, card_id, rarity, quantity) VALUES (?, ?, ?, 1)
              ON DUPLICATE KEY UPDATE quantity = quantity + 1`,
-            [user.userId, cardId]
+            [user.userId, card.id, card.rarity]
         );
 
         await conn.commit();

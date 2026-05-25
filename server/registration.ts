@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer';
-import { getBaseCardIds } from './card_inventory';
+import { getLiveCardInventoryVariations } from './card_inventory';
 
 const REGISTRATION_SENDER_EMAIL = '2032461502@qq.com';
 const REGISTRATION_SENDER_PASS =
@@ -96,7 +96,7 @@ export async function sendRegistrationVerificationEmail(targetEmail: string, cod
 }
 
 export async function seedStarterResources(conn: any, userId: string) {
-    const cardIds = getBaseCardIds();
+    const cardVariations = getLiveCardInventoryVariations();
 
     await conn.query(
         `INSERT INTO pack_history (user_id, total_packs, packs_since_sr, packs_since_ur)
@@ -105,12 +105,12 @@ export async function seedStarterResources(conn: any, userId: string) {
         [userId]
     );
 
-    for (const cardId of cardIds) {
+    for (const card of cardVariations) {
         await conn.query(
-            `INSERT INTO user_cards (user_id, card_id, quantity)
-             VALUES (?, ?, 4)
+            `INSERT INTO user_cards (user_id, card_id, rarity, quantity)
+             VALUES (?, ?, ?, 4)
              ON DUPLICATE KEY UPDATE quantity = 4`,
-            [userId, cardId]
+            [userId, card.cardId, card.rarity]
         );
     }
 }

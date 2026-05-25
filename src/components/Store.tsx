@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShoppingBag, Coins, Sparkles, ArrowLeft, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -26,19 +26,28 @@ const RARITY_TEXT: Record<string, string> = {
   SR: 'text-purple-400', UR: 'text-amber-400', SER: 'text-amber-300', PR: 'text-rose-400',
 };
 
+type DrawnCard = {
+  id: string;
+  uniqueId: string;
+  rarity: string;
+  revealed: boolean;
+};
+
 export const Store: React.FC = () => {
   const navigate = useNavigate();
   const [coins, setCoins] = useState(0);
   const [cardCrystals, setCardCrystals] = useState(0);
   const [loading, setLoading] = useState(true);
   const [buying, setBuying] = useState<string | null>(null);
-  const [drawnCards, setDrawnCards] = useState<{ id: string; rarity: string; revealed: boolean }[]>([]);
-  const [allDrawnPacks, setAllDrawnPacks] = useState<{ id: string; rarity: string; revealed: boolean }[][]>([]);
+  const [drawnCards, setDrawnCards] = useState<DrawnCard[]>([]);
+  const [allDrawnPacks, setAllDrawnPacks] = useState<DrawnCard[][]>([]);
   const [currentPackIndex, setCurrentPackIndex] = useState(0);
+  const [packOpenSessionId, setPackOpenSessionId] = useState(0);
   const [showResult, setShowResult] = useState(false);
   const [pityInfo, setPityInfo] = useState({ packsSinceSR: 0, packsSinceUR: 0, totalPacks: 0 });
   const [selectedBasicCount, setSelectedBasicCount] = useState<number | null>(null);
   const [selectedPrizeCount, setSelectedPrizeCount] = useState<number | null>(null);
+  const latestBuyRequestRef = useRef(0);
   const { getCardByReference } = useCardCatalog({
     includeEffects: false,
     enabled: showResult || allDrawnPacks.length > 0
@@ -61,10 +70,14 @@ export const Store: React.FC = () => {
   }, []);
 
   const handleBuyPack = async (packType: 'basic' | 'prize', count: number) => {
+    if (buying) return;
+
     const singleCost = packType === 'prize' ? 20 : 10;
     const totalCost = singleCost * count;
     if (coins < totalCost) { alert('金币不足！'); return; }
 
+    const requestId = latestBuyRequestRef.current + 1;
+    latestBuyRequestRef.current = requestId;
     setBuying(`${packType}-${count}`);
     setDrawnCards([]);
     setShowResult(false);
@@ -79,27 +92,35 @@ export const Store: React.FC = () => {
         body: JSON.stringify({ packType, count }),
       });
       const data = await res.json();
-      if (data.error) { alert(data.error); setBuying(null); return; }
+      if (requestId !== latestBuyRequestRef.current) return;
+      if (data.error) { alert(data.error); return; }
 
       try {
         await prefetchCardCatalog({ includeEffects: false });
       } catch (catalogError) {
         console.error('Failed to preload store card catalog:', catalogError);
       }
+      if (requestId !== latestBuyRequestRef.current) return;
 
       setCoins(data.newCoins);
       setCardCrystals(data.newCardCrystals);
 
       // Group cards into packs (Basic: 5, Prize: 1)
       const packSize = packType === 'prize' ? 1 : 5;
-      const packs: { id: string; rarity: string; revealed: boolean }[][] = [];
+      const packs: DrawnCard[][] = [];
       for (let i = 0; i < data.cards.length; i += packSize) {
-        packs.push(data.cards.slice(i, i + packSize).map((c: any) => ({ ...c, revealed: false })));
+        packs.push(data.cards.slice(i, i + packSize).map((c: any) => ({
+          id: String(c.id),
+          uniqueId: String(c.uniqueId || `${c.id}:${c.rarity}`),
+          rarity: String(c.rarity),
+          revealed: false
+        })));
       }
 
+      setPackOpenSessionId(requestId);
       setAllDrawnPacks(packs);
       setCurrentPackIndex(0);
-      setDrawnCards(packs[0]);
+      setDrawnCards(packs[0] || []);
 
       setPityInfo({
         packsSinceSR: data.packsSinceSR,
@@ -109,9 +130,11 @@ export const Store: React.FC = () => {
       setShowResult(true);
     } catch (e) {
       console.error(e);
-      alert('购买失败');
+      if (requestId === latestBuyRequestRef.current) alert('购买失败');
     } finally {
-      setBuying(null);
+      if (requestId === latestBuyRequestRef.current) {
+        setBuying(null);
+      }
     }
   };
 
@@ -143,6 +166,8 @@ export const Store: React.FC = () => {
   };
 
   const nextPack = () => {
+    if (!drawnCards.length || !drawnCards.every(c => c.revealed)) return;
+
     if (currentPackIndex < allDrawnPacks.length - 1) {
       const nextIdx = currentPackIndex + 1;
       setCurrentPackIndex(nextIdx);
@@ -152,7 +177,8 @@ export const Store: React.FC = () => {
     }
   };
 
-  const getCardInfo = (id: string) => getCardByReference(id);
+  const getCardInfo = (card: DrawnCard) => getCardByReference(card.uniqueId) || getCardByReference(card.id);
+  const currentPackRevealed = drawnCards.length > 0 && drawnCards.every(c => c.revealed);
 
   if (loading) {
     return (
@@ -221,9 +247,11 @@ export const Store: React.FC = () => {
               {[1, 10, 50].map(n => (
                 <button
                   key={n}
+                  disabled={!!buying}
                   onClick={() => setSelectedBasicCount(n)}
                   className={cn(
                     "flex-1 py-4 border rounded-2xl font-black italic text-sm transition-all flex flex-col items-center justify-center gap-1 group",
+                    buying && "opacity-60 cursor-not-allowed",
                     selectedBasicCount === n
                       ? "bg-red-600 border-red-500 text-white"
                       : "bg-zinc-900 border-white/5 text-zinc-400 hover:border-red-500/50"
@@ -241,7 +269,11 @@ export const Store: React.FC = () => {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: 10 }}
                   onClick={() => handleBuyPack('basic', selectedBasicCount)}
-                  className="w-full max-w-[288px] py-4 bg-red-600 hover:bg-red-500 rounded-2xl font-black italic text-sm transition-all flex items-center justify-center gap-2 group shadow-[0_0_30px_rgba(220,38,38,0.2)]"
+                  disabled={!!buying}
+                  className={cn(
+                    "w-full max-w-[288px] py-4 bg-red-600 hover:bg-red-500 rounded-2xl font-black italic text-sm transition-all flex items-center justify-center gap-2 group shadow-[0_0_30px_rgba(220,38,38,0.2)]",
+                    buying && "opacity-60 cursor-not-allowed hover:bg-red-600"
+                  )}
                 >
                   <Coins className="w-4 h-4" />
                   <span>购买 {selectedBasicCount} 包（{selectedBasicCount * 10} 金币）</span>
@@ -283,9 +315,11 @@ export const Store: React.FC = () => {
               {[1, 10, 50].map(n => (
                 <button
                   key={n}
+                  disabled={!!buying}
                   onClick={() => setSelectedPrizeCount(n)}
                   className={cn(
                     "flex-1 py-4 border rounded-2xl font-black italic text-sm transition-all flex flex-col items-center justify-center gap-1 group",
+                    buying && "opacity-60 cursor-not-allowed",
                     selectedPrizeCount === n
                       ? "bg-rose-600 border-rose-500 text-white"
                       : "bg-zinc-900 border-white/5 text-zinc-400 hover:border-rose-500/50"
@@ -303,7 +337,11 @@ export const Store: React.FC = () => {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: 10 }}
                   onClick={() => handleBuyPack('prize', selectedPrizeCount)}
-                  className="w-full max-w-[288px] py-4 bg-rose-600 hover:bg-rose-500 rounded-2xl font-black italic text-sm transition-all flex items-center justify-center gap-2 group shadow-[0_0_30px_rgba(244,63,94,0.2)]"
+                  disabled={!!buying}
+                  className={cn(
+                    "w-full max-w-[288px] py-4 bg-rose-600 hover:bg-rose-500 rounded-2xl font-black italic text-sm transition-all flex items-center justify-center gap-2 group shadow-[0_0_30px_rgba(244,63,94,0.2)]",
+                    buying && "opacity-60 cursor-not-allowed hover:bg-rose-600"
+                  )}
                 >
                   <Coins className="w-4 h-4" />
                   <span>购买 {selectedPrizeCount} 包（{selectedPrizeCount * 20} 金币）</span>
@@ -359,10 +397,10 @@ export const Store: React.FC = () => {
                 <div className="flex-1 flex flex-col items-center justify-center my-4">
                   <div className="flex flex-wrap items-center justify-center gap-3 md:gap-10 p-2 md:p-4 max-w-[320px] md:max-w-6xl mx-auto">
                     {drawnCards.map((drawn, i) => {
-                      const card = getCardInfo(drawn.id);
+                      const card = getCardInfo(drawn);
                       return (
                         <motion.div
-                          key={i}
+                          key={`${packOpenSessionId}-${currentPackIndex}-${drawn.uniqueId}-${i}`}
                           layout
                           initial={{ scale: 0.8, opacity: 0 }}
                           animate={{
@@ -411,7 +449,7 @@ export const Store: React.FC = () => {
                               {card ? (
                                 <>
                                   <img
-                                    src={card.fullImageUrl || getCardImageUrl(drawn.id, drawn.rarity, false, card.availableRarities)}
+                                    src={card.fullImageUrl || getCardImageUrl(card.id, drawn.rarity, false, card.availableRarities)}
                                     className="w-full h-full object-cover"
                                     decoding="async"
                                   />
@@ -436,17 +474,18 @@ export const Store: React.FC = () => {
                 <div className="mt-12 text-center pb-8 border-t border-white/5 pt-8">
                   <button
                     onClick={nextPack}
+                    disabled={!currentPackRevealed}
                     className={cn(
                       "px-10 md:px-20 py-3 md:py-5 rounded-full text-base md:text-xl font-black italic tracking-tighter uppercase transition-all hover:scale-110 active:scale-95",
-                      drawnCards.every(c => c.revealed)
+                      currentPackRevealed
                         ? "bg-red-600 shadow-[0_0_50px_rgba(220,38,38,0.4)] text-white"
-                        : "bg-zinc-900 text-zinc-500 cursor-not-allowed"
+                        : "bg-zinc-900 text-zinc-500 cursor-not-allowed hover:scale-100"
                     )}
                   >
                     {currentPackIndex < allDrawnPacks.length - 1 ? "下一包" : "确认"}
                   </button>
                   <p className="text-[10px] text-zinc-600 mt-4 font-bold uppercase tracking-widest transition-opacity duration-300">
-                    {drawnCards.every(c => c.revealed)
+                    {currentPackRevealed
                       ? (currentPackIndex < allDrawnPacks.length - 1 ? `已揭开第 ${currentPackIndex + 1} 包` : "所有卡牌已入库")
                       : "请先揭开本包所有卡牌"}
                   </p>

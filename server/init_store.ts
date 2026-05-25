@@ -1,6 +1,6 @@
 import { pool, dbInit } from './db';
 import { initServerCardLibrary } from './card_loader';
-import { getBaseCardIds } from './card_inventory';
+import { getLiveCardInventoryVariations } from './card_inventory';
 
 
 async function initStore() {
@@ -32,8 +32,9 @@ async function initStore() {
             CREATE TABLE IF NOT EXISTS user_cards (
                 user_id VARCHAR(50) NOT NULL,
                 card_id VARCHAR(50) NOT NULL,
+                rarity VARCHAR(10) NOT NULL,
                 quantity INT NOT NULL DEFAULT 0,
-                PRIMARY KEY (user_id, card_id),
+                PRIMARY KEY (user_id, card_id, rarity),
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         `);
@@ -53,14 +54,14 @@ async function initStore() {
 
         // 4. Give all existing users the initial card collection (4 copies of each base card)
         const users = await conn.query('SELECT id FROM users');
-        const cardIds = getBaseCardIds();
+        const cardVariations = getLiveCardInventoryVariations();
 
         for (const user of users) {
-            for (const cardId of cardIds) {
+            for (const card of cardVariations) {
                 await conn.query(
-                    `INSERT INTO user_cards (user_id, card_id, quantity) VALUES (?, ?, 4)
+                    `INSERT INTO user_cards (user_id, card_id, rarity, quantity) VALUES (?, ?, ?, 4)
                      ON DUPLICATE KEY UPDATE quantity = 4`,
-                    [user.id, cardId]
+                    [user.id, card.cardId, card.rarity]
                 );
             }
             // Initialize pack history

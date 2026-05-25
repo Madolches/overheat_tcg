@@ -444,7 +444,7 @@ export const DeckBuilder: React.FC = () => {
         return;
       }
 
-      const ownedQty = collection[card.uniqueId] || collection[card.id] || 0;
+      const ownedQty = collection[card.uniqueId] || 0;
       if (ownedQty <= count) {
         showNotice('卡牌数量不足', '你拥有的该卡牌数量不足。', 'warning');
         return;
@@ -549,8 +549,8 @@ export const DeckBuilder: React.FC = () => {
     const seenByCollectionKey: Record<string, number> = {};
 
     return deck.map(card => {
-      const ownedQty = collection[card.uniqueId] || collection[card.id] || 0;
-      const collectionKey = collection[card.uniqueId] ? card.uniqueId : card.id;
+      const ownedQty = collection[card.uniqueId] || 0;
+      const collectionKey = card.uniqueId;
       const copyNumber = (seenByCollectionKey[collectionKey] || 0) + 1;
       seenByCollectionKey[collectionKey] = copyNumber;
 
@@ -588,7 +588,7 @@ export const DeckBuilder: React.FC = () => {
     if (filters.rarity !== 'ALL' && c.rarity !== filters.rarity) return false;
 
     // Ownership
-    const isOwned = (collection[c.uniqueId] || collection[c.id] || 0) > 0;
+    const isOwned = (collection[c.uniqueId] || 0) > 0;
     if (filters.ownership === 'OWNED' && !isOwned) return false;
     if (filters.ownership === 'NOT_OWNED' && isOwned) return false;
 
@@ -1306,7 +1306,7 @@ export const DeckBuilder: React.FC = () => {
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {visibleCards.map((card, index) => {
-            const isOwned = (collection[card.uniqueId] || collection[card.id] || 0) > 0;
+            const isOwned = (collection[card.uniqueId] || 0) > 0;
             return (
               <div
                 key={card.uniqueId || card.id || `card-${index}`}
@@ -1327,7 +1327,7 @@ export const DeckBuilder: React.FC = () => {
                     <h4 className="font-black italic text-sm truncate">{card.fullName}</h4>
                     <p className="text-[10px] text-zinc-500 uppercase tracking-widest mb-1">{getCardTypeLabel(card.type)} - {card.rarity}</p>
                     <p className="text-[10px] text-zinc-500 mb-1">卡包：{card.cardPackage || '未知'}</p>
-                    <p className="text-[10px] text-zinc-400 font-bold">数量：{collection[card.uniqueId] || collection[card.id] || 0}</p>
+                    <p className="text-[10px] text-zinc-400 font-bold">数量：{collection[card.uniqueId] || 0}</p>
                   </div>
                 </div>
                 {isOwned && (

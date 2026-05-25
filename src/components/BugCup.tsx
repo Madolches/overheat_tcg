@@ -12,8 +12,10 @@ interface BugCupCurrent {
   edition: number;
   name: string;
   tag: string;
-  phase: 'UPCOMING' | 'PRELIM' | 'SWISS' | 'ELIMINATION' | 'FINISHED';
+  phase: 'PAUSED' | 'UPCOMING' | 'PRELIM' | 'SWISS' | 'ELIMINATION' | 'FINISHED';
   canEditDecks: boolean;
+  paused?: boolean;
+  pauseMessage?: string;
   now?: number;
   simulated?: boolean;
   swissRound: number;
@@ -68,6 +70,7 @@ interface Standing {
 }
 
 const phaseLabel: Record<BugCupCurrent['phase'], string> = {
+  PAUSED: '暂停',
   UPCOMING: '即将开始',
   PRELIM: '预赛',
   SWISS: '瑞士轮',
@@ -444,8 +447,15 @@ export const BugCup: React.FC = () => {
           </div>
         )}
 
+        {current?.paused && (
+          <div className="rounded-2xl border border-red-400/30 bg-red-500/10 px-4 py-4 text-sm font-black text-red-100">
+            {current.pauseMessage || '杯赛目前暂停，请自由约战。'}
+          </div>
+        )}
+
         {current && <PhaseProgress current={current} />}
 
+        {!current?.paused && (
         <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-zinc-950/40 p-5 shadow-2xl backdrop-blur-xl sm:p-6 md:p-8">
           <div className="absolute inset-0 bg-gradient-to-br from-white/[0.02] to-transparent pointer-events-none" />
           <div className="relative mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -516,8 +526,9 @@ export const BugCup: React.FC = () => {
             </div>
           )}
         </section>
+        )}
 
-        <DeckPickerModal
+        {!current?.paused && <DeckPickerModal
           slot={openPicker}
           decks={myDecks}
           selectedDeckIds={selectedDeckIds}
@@ -530,9 +541,9 @@ export const BugCup: React.FC = () => {
             setOpenPicker(null);
           }}
           onClose={() => setOpenPicker(null)}
-        />
+        />}
 
-        {isAdmin && (
+        {!current?.paused && isAdmin && (
           <section className="relative overflow-hidden rounded-3xl border border-amber-400/20 bg-zinc-950/40 p-5 shadow-2xl backdrop-blur-xl sm:p-6 md:p-8">
             <div className="absolute inset-0 bg-gradient-to-br from-amber-500/[0.04] to-transparent pointer-events-none" />
             <div className="relative mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -600,7 +611,7 @@ export const BugCup: React.FC = () => {
           </section>
         )}
 
-        {!!registration && submittedDeckCount > 0 && (
+        {!current?.paused && !!registration && submittedDeckCount > 0 && (
           <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-zinc-950/40 p-5 shadow-2xl backdrop-blur-xl sm:p-6 md:p-8">
             <div className="absolute inset-0 bg-gradient-to-tr from-rose-900/[0.03] to-transparent pointer-events-none" />
             <div className="relative mb-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -694,7 +705,7 @@ export const BugCup: React.FC = () => {
           </section>
         )}
 
-        {visibleSpectatableMatches.length > 0 && (
+        {!current?.paused && visibleSpectatableMatches.length > 0 && (
           <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-zinc-950/40 p-5 shadow-2xl backdrop-blur-xl sm:p-6 md:p-8">
             <div className="absolute inset-0 bg-gradient-to-br from-sky-900/[0.04] to-transparent pointer-events-none" />
             <div className="relative mb-5 flex items-center justify-between gap-3">
@@ -740,11 +751,11 @@ export const BugCup: React.FC = () => {
           </section>
         )}
 
-        {current?.phase === 'ELIMINATION' ? (
+        {!current?.paused && (current?.phase === 'ELIMINATION' ? (
           <EliminationBracket matches={eliminationMatches} standings={standings} />
         ) : (
           <StandingsTable standings={standings} myUid={myUid} />
-        )}
+        ))}
       </div>
 
       <RulesModal open={rulesOpen} onClose={() => setRulesOpen(false)} />
@@ -1104,6 +1115,7 @@ const DeckPickerModal = ({
 
 const PhaseProgress = ({ current }: { current: BugCupCurrent }) => {
   const steps = [
+    { key: 'PAUSED', label: '暂停', value: current.pauseMessage || '自由约战', active: current.phase === 'PAUSED' },
     { key: 'PRELIM', label: '预赛', value: `至 ${new Date(current.schedule.prelimEndAt).toLocaleDateString('zh-CN')}`, active: current.phase === 'PRELIM' },
     { key: 'SWISS', label: '瑞士轮', value: current.phase === 'SWISS' ? `第 ${current.swissRound} 轮` : '5 轮 BO1', active: current.phase === 'SWISS' },
     { key: 'SEMI', label: '半决赛', value: new Date(current.schedule.semiFinalAt).toLocaleDateString('zh-CN'), active: current.phase === 'ELIMINATION' && current.eliminationRound === 1 },
@@ -1122,7 +1134,7 @@ const PhaseProgress = ({ current }: { current: BugCupCurrent }) => {
           {phaseLabel[current.phase]}
         </span>
       </div>
-      <div className="relative grid gap-4 md:grid-cols-4">
+      <div className="relative grid gap-4 md:grid-cols-5">
         {/* Connecting lines for desktop */}
         <div className="hidden absolute left-[12.5%] right-[12.5%] top-6 h-0.5 bg-white/5 md:block">
           <div className="absolute left-0 top-0 h-full bg-gradient-to-r from-red-500 to-transparent opacity-50" style={{ width: `${(steps.findIndex(s => s.active) / (steps.length - 1)) * 100}%` }} />
