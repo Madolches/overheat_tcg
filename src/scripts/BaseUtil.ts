@@ -1265,8 +1265,10 @@ export const putCardOntoField = (
 };
 
 export const addContinuousPower = (target: Card, source: Card, amount: number) => {
-  target.power = (target.power || 0) + amount;
-  addInfluence(target, source, `力量${amount >= 0 ? '+' : ''}${amount}`);
+  const bonus = amount > 0 ? Number((target as any).data?.powerIncreaseBonus || 0) : 0;
+  const finalAmount = amount + bonus;
+  target.power = (target.power || 0) + finalAmount;
+  addInfluence(target, source, `力量${finalAmount >= 0 ? '+' : ''}${finalAmount}`);
 };
 
 export const addContinuousDamage = (target: Card, source: Card, amount: number) => {

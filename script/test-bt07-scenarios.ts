@@ -64,6 +64,7 @@ import bt07Y10 from '../src/scripts/305000063';
 import bt07Y11 from '../src/scripts/105110386';
 import bt08G05 from '../src/scripts/103000419';
 import bt03R04 from '../src/scripts/102060193';
+import rafa from '../src/scripts/102060244';
 import {
   awakenUnit,
   destroyByEffect,
@@ -673,9 +674,9 @@ async function testYukatiaAllianceProtectionAndDestroy(): Promise<ScenarioResult
   const godTarget = testCard({ id: 'W11_GOD', fullName: 'God Target', type: 'ITEM', godMark: true, cardlocation: 'ITEM' });
   const state = game({
     unitZone: [yukatia, partner, null, null, null, null],
-    erosionFront: [
-      testCard({ id: 'W11_EF_0', cardlocation: 'EROSION_FRONT' }),
-      testCard({ id: 'W11_EF_1', cardlocation: 'EROSION_FRONT' }),
+    erosionBack: [
+      testCard({ id: 'W11_EB_0', cardlocation: 'EROSION_BACK' }),
+      testCard({ id: 'W11_EB_1', cardlocation: 'EROSION_BACK' }),
     ],
   }, {
     itemZone: [target, godTarget],
@@ -700,9 +701,36 @@ async function testYukatiaAllianceProtectionAndDestroy(): Promise<ScenarioResult
     await answerPendingQuery(state, 'BOT', [target.gamecardId]);
   }
   const destroyed = state.players.P1.grave.some((card: Card) => card.gamecardId === target.gamecardId);
-  return protectedUntil !== undefined && destroyed
-    ? pass(name, `protectedUntil=${protectedUntil}, destroyed=${destroyed}`)
-    : fail(name, `protectedUntil=${protectedUntil}, destroyed=${destroyed}`);
+
+  const frontOnlyYukatia = cloneScriptCard(bt07W11 as Card, 'UNIT', { gamecardId: 'W11_FRONT_ONLY' });
+  const frontOnlyPartner = testCard({ id: 'W11_FRONT_PARTNER', fullName: '圣王国 Partner', faction: '圣王国', cardlocation: 'UNIT' });
+  const frontOnlyTarget = testCard({ id: 'W11_FRONT_TARGET', type: 'ITEM', godMark: false, cardlocation: 'ITEM' });
+  const frontOnlyState = game({
+    unitZone: [frontOnlyYukatia, frontOnlyPartner, null, null, null, null],
+    erosionFront: [
+      testCard({ id: 'W11_FRONT_EF_0', cardlocation: 'EROSION_FRONT' }),
+      testCard({ id: 'W11_FRONT_EF_1', cardlocation: 'EROSION_FRONT' }),
+    ],
+  }, {
+    itemZone: [frontOnlyTarget],
+  }, {
+    phase: 'BATTLE_FREE',
+    battleState: {
+      attackers: [frontOnlyYukatia.gamecardId, frontOnlyPartner.gamecardId],
+      isAlliance: true,
+    },
+  });
+  const frontOnlyBlocked = !ServerGameService.checkEffectLimitsAndReqs(
+    frontOnlyState,
+    'BOT',
+    frontOnlyYukatia,
+    frontOnlyYukatia.effects![effectIndex],
+    'UNIT'
+  ).valid;
+
+  return protectedUntil !== undefined && destroyed && frontOnlyBlocked
+    ? pass(name, `protectedUntil=${protectedUntil}, destroyed=${destroyed}, frontOnlyBlocked=${frontOnlyBlocked}`)
+    : fail(name, `protectedUntil=${protectedUntil}, destroyed=${destroyed}, frontOnlyBlocked=${frontOnlyBlocked}`);
 }
 
 async function testEmptyFantasyRecoverAndPreventEffectDamage(): Promise<ScenarioResult> {
@@ -1707,19 +1735,21 @@ async function testRedBatBladeItemAndTamiThresholds(): Promise<ScenarioResult> {
   const itemDrew = bladeState.players.BOT.hand.length === 1;
   const bladeCounted = totalUnitsSentFromFieldToGraveThisTurn(bladeState) >= 1;
 
+  const rafaUnit = cloneScriptCard(rafa as Card, 'UNIT');
   const tami = cloneScriptCard(bt07R11 as Card, 'UNIT');
   const ally = testCard({ id: 'R11_ALLY', fullName: 'Tami Ally', color: 'RED', cardlocation: 'UNIT', power: 1000, basePower: 1000 });
   const tamiTarget = testCard({ id: 'R11_TARGET', fullName: 'Tami Target', cardlocation: 'UNIT' });
   const tamiState = game({
-    unitZone: [tami, ally, null, null, null, null],
+    unitZone: [tami, ally, rafaUnit, null, null, null],
   }, {
     unitZone: [tamiTarget, null, null, null, null, null],
   });
   (tamiState as any)[`unitsSentFromFieldToGraveTurn_${tamiState.turnCount}_global`] = 6;
   EventEngine.recalculateContinuousEffects(tamiState);
   const tamiThresholds =
-    tami.power === 4000 &&
-    ally.power === 2000 &&
+    rafaUnit.power === 4500 &&
+    tami.power === 4500 &&
+    ally.power === 2500 &&
     !!tami.isrush &&
     !!tami.isHeroic &&
     !!tami.isShenyi &&
@@ -1916,6 +1946,7 @@ async function testYellowPainterStephanieAndSteelPuppet(): Promise<ScenarioResul
     erosionBack: [
       testCard({ id: 'Y03_BACK_1', cardlocation: 'EROSION_BACK' }),
       testCard({ id: 'Y03_BACK_2', cardlocation: 'EROSION_BACK' }),
+      testCard({ id: 'Y03_BACK_3', cardlocation: 'EROSION_BACK' }),
     ],
   });
   const stephanieIndex = stephanie.effects?.findIndex(effect => effect.id === '105110383_creation_scar_put_top_blueprint_or_puppet') ?? -1;
@@ -1931,16 +1962,20 @@ async function testYellowPainterStephanieAndSteelPuppet(): Promise<ScenarioResul
   const stephanieLow = cloneScriptCard(bt07Y03 as Card, 'UNIT', { gamecardId: 'Y03_LOW' });
   const stephanieLowState = game({
     unitZone: [stephanieLow, null, null, null, null, null],
-    erosionBack: [testCard({ id: 'Y03_LOW_BACK', cardlocation: 'EROSION_BACK' })],
+    erosionBack: [
+      testCard({ id: 'Y03_LOW_BACK_1', cardlocation: 'EROSION_BACK' }),
+      testCard({ id: 'Y03_LOW_BACK_2', cardlocation: 'EROSION_BACK' }),
+    ],
   });
   EventEngine.recalculateContinuousEffects(stephanieLowState);
-  const stephanieNeedsScar2 = stephanieLow.power === 2500 && stephanieLow.damage === 2 && !stephanieLow.isHeroic;
+  const stephanieNeedsScar3 = stephanieLow.power === 2500 && stephanieLow.damage === 2 && !stephanieLow.isHeroic;
 
   const revealedSteel = cloneScriptCard(bt07Y05 as Card, 'DECK', { gamecardId: 'Y05_REVEALED_TOP' });
+  const revealTop = testCard({ id: 'Y05_REVEAL_TOP', cardlocation: 'DECK' });
   const revealState = game({
-    deck: [testCard({ id: 'Y05_BOTTOM', cardlocation: 'DECK' }), revealedSteel],
+    deck: [testCard({ id: 'Y05_BOTTOM', cardlocation: 'DECK' }), revealedSteel, revealTop],
   });
-  revealDeckCards(revealState, 'BOT', 1, revealedSteel);
+  revealDeckCards(revealState, 'BOT', 2, revealedSteel);
   await confirmTrigger(revealState, 'BOT');
   EventEngine.recalculateContinuousEffects(revealState);
   const selfPutSteel = revealState.players.BOT.unitZone.some((unit: Card | null) =>
@@ -1949,9 +1984,9 @@ async function testYellowPainterStephanieAndSteelPuppet(): Promise<ScenarioResul
     !!unit.isHeroic
   );
 
-  return searchedBlueprint && stephanieBuffed && stephaniePutPuppet && stephanieNeedsScar2 && selfPutSteel
-    ? pass(name, `search=${searchedBlueprint}, stephanie=${stephanieBuffed}/${stephaniePutPuppet}/${stephanieNeedsScar2}, steel=${selfPutSteel}`)
-    : fail(name, `search=${searchedBlueprint}, stephanie=${stephanieBuffed}/${stephaniePutPuppet}/${stephanieNeedsScar2}, steel=${selfPutSteel}`);
+  return searchedBlueprint && stephanieBuffed && stephaniePutPuppet && stephanieNeedsScar3 && selfPutSteel
+    ? pass(name, `search=${searchedBlueprint}, stephanie=${stephanieBuffed}/${stephaniePutPuppet}/${stephanieNeedsScar3}, steel=${selfPutSteel}`)
+    : fail(name, `search=${searchedBlueprint}, stephanie=${stephanieBuffed}/${stephaniePutPuppet}/${stephanieNeedsScar3}, steel=${selfPutSteel}`);
 }
 
 async function testYellowGuardRawStoneAndStories(): Promise<ScenarioResult> {
@@ -2008,6 +2043,7 @@ async function testYellowGuardRawStoneAndStories(): Promise<ScenarioResult> {
     rawState.players.BOT.hand.some((card: Card) => card.gamecardId === immortalStone.gamecardId);
 
   const party = cloneScriptCard(bt07Y06 as Card, 'PLAY');
+  const staleParty = { ...party, cardlocation: 'HAND' as const };
   const partyTarget = testCard({ id: 'Y06_TARGET', type: 'UNIT', godMark: false, cardlocation: 'UNIT' });
   const partyState = game({
     playZone: [party],
@@ -2036,7 +2072,7 @@ async function testYellowGuardRawStoneAndStories(): Promise<ScenarioResult> {
     noScarParty.effects![0],
     'PLAY'
   ).valid;
-  await party.effects?.[0]?.execute?.(party, partyState, partyState.players.BOT);
+  await staleParty.effects?.[0]?.execute?.(staleParty, partyState, partyState.players.BOT);
   if (partyState.pendingQuery?.context?.effectId === '205000111_puppet_party') {
     await answerPendingQuery(partyState, 'BOT', [partyTarget.gamecardId]);
   }

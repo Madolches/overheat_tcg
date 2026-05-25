@@ -261,6 +261,7 @@ export interface CardEffect {
   isGlobal?: boolean; // If true, the effect triggers for any card meeting the criteria (e.g. any card entering), not just self.
   sourceSnapshotOnLeftField?: boolean; // Allows a left-field trigger to be queued from the source snapshot before refreshed instance IDs are applied.
   triggerPriority?: number; // Higher priority triggers are queued first for the same event.
+  continuousPriority?: number; // Higher priority continuous effects are applied first during recalculation.
   condition?: (gameState: GameState, playerState: PlayerState, card: Card, event?: GameEvent) => boolean;
   cost?: (gameState: GameState, playerState: PlayerState, card: Card) => boolean | Promise<boolean>;
   applyContinuous?: (gameState: GameState, card: Card) => void;

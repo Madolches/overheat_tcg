@@ -32,12 +32,11 @@ const effect_104000270_non_battle_grave: CardEffect = {
   type: 'TRIGGER',
   triggerEvent: 'CARD_LEFT_ZONE',
   isMandatory: false,
-  triggerLocation: ['GRAVE'],
+  triggerLocation: ['UNIT', 'GRAVE'],
   limitCount: 1,
   limitNameType: true,
   description: '【诱】同名1回合1次，战场上的这个单位由于战斗以外的方式送入墓地时：抽1张卡，将你的手牌中的1张红色或黄色的非神蚀卡放置在战场中。',
   condition: (gameState, playerState, instance, event) =>
-    instance.cardlocation === 'GRAVE' &&
     wasMovedToGraveByNonBattleWay(gameState, instance, event) &&
     playerState.deck.length > 0,
   execute: async (instance, gameState, playerState) => {
