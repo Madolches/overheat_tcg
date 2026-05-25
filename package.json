@@ -9,6 +9,7 @@
     "deletecards": "tsx server/delete_user_cards.ts",
     "resetcards": "tsx server/reset_all_user_cards.ts",
     "refillcards": "tsx server/refill_user_cards.ts",
+    "migrate:users": "tsx server/migrate_users.ts",
     "generate:card-scripts": "tsx script/generate-card-scripts.ts",
     "scripts:audit-progress": "tsx script/audit-card-script-progress.ts",
     "scripts:test-sp02": "tsx script/test-sp02-scenarios.ts",
