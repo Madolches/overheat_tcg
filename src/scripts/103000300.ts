@@ -72,7 +72,15 @@ const effect_103000300_leave_revive_seiso: CardEffect = {
   triggerLocation: ['UNIT', 'GRAVE', 'EXILE', 'HAND', 'DECK', 'EROSION_FRONT', 'EROSION_BACK'],
   description: '同名1回合1次：这张卡由于战斗或自己的卡牌效果离开战场时，将墓地1张ACCESS 3的《清霜》单位放置到战场。',
   condition: (_gameState, playerState, instance, event) => {
-    if (event?.sourceCardId !== instance.gamecardId && event?.data?.previousSourceCardId !== instance.gamecardId) return false;
+    const isSelfLeave =
+      event?.sourceCard === instance ||
+      event?.sourceCardId === instance.gamecardId ||
+      event?.data?.previousSourceCardId === instance.gamecardId ||
+      (
+        !!event?.sourceCard?.runtimeFingerprint &&
+        event.sourceCard.runtimeFingerprint === instance.runtimeFingerprint
+      );
+    if (!isSelfLeave) return false;
     if (event.data?.sourceZone !== 'UNIT') return false;
     const leftByOwnEffect = !!event.data?.isEffect && event.data?.effectSourcePlayerUid === playerState.uid;
     const leftByBattle = !event.data?.isEffect && event.data?.targetZone === 'GRAVE';

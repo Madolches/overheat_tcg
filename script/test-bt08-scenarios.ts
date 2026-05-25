@@ -1587,10 +1587,20 @@ async function testBlueErosionEntryAndAdventurers(): Promise<ScenarioResult> {
     unitZone: [bounceTarget, null, null, null, null, null],
   });
 
-  await activateAndResolveByOpponentPass(stateA, 'BOT', albert, 0);
+  await ServerGameService.activateEffect(stateA, 'BOT', albert.gamecardId, 0);
+  const albertOptions = (stateA.pendingQuery?.options || []).map((option: any) => option.card?.gamecardId || option.id);
+  const albertTargetLockedBeforeCost = stateA.pendingQuery?.callbackKey === 'DECLARE_EFFECT_TARGETS' &&
+    albertOptions.includes(sodo.gamecardId) &&
+    !albertOptions.includes(discard.gamecardId);
   await answerPendingQuery(stateA, 'BOT', [sodo.gamecardId]);
+  if (stateA.pendingQuery?.callbackKey === 'ACTIVATE_COST_RESOLVE') {
+    await answerPendingQuery(stateA, 'BOT', [discard.gamecardId]);
+  }
+  if (stateA.phase !== 'COUNTERING') throw new Error(`Expected COUNTERING after activation, got ${stateA.phase}`);
+  await ServerGameService.passConfrontation(stateA, stateA.priorityPlayerId);
   const sodoOnField = stateA.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === sodo.gamecardId);
-  const albertDiscarded = stateA.players.BOT.grave.some((card: Card) => card.gamecardId === discard.gamecardId) &&
+  const albertDiscarded = albertTargetLockedBeforeCost &&
+    stateA.players.BOT.grave.some((card: Card) => card.gamecardId === discard.gamecardId) &&
     !stateA.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === discard.gamecardId) &&
     !stateA.players.BOT.itemZone.some((item: Card | null) => item?.gamecardId === discard.gamecardId);
 
@@ -1618,11 +1628,16 @@ async function testBlueErosionEntryAndAdventurers(): Promise<ScenarioResult> {
     unitZone: [albertField, fieldTarget, null, null, null, null],
     grave: [graveDuplicate],
   });
-  await activateAndResolveByOpponentPass(stateField, 'BOT', albertField, 0);
+  await ServerGameService.activateEffect(stateField, 'BOT', albertField.gamecardId, 0);
   const fieldOptions = (stateField.pendingQuery?.options || []).map((option: any) => option.card.gamecardId);
   const fieldTargetAllowed = fieldOptions.includes(fieldTarget.gamecardId);
   const graveDuplicateBlocked = !fieldOptions.includes(graveDuplicate.gamecardId);
   await answerPendingQuery(stateField, 'BOT', [fieldTarget.gamecardId]);
+  if (stateField.pendingQuery?.callbackKey === 'ACTIVATE_COST_RESOLVE') {
+    await answerPendingQuery(stateField, 'BOT', [stateField.players.BOT.hand[0].gamecardId]);
+  }
+  if (stateField.phase !== 'COUNTERING') throw new Error(`Expected COUNTERING after activation, got ${stateField.phase}`);
+  await ServerGameService.passConfrontation(stateField, stateField.priorityPlayerId);
   const fieldTargetCycled = stateField.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === fieldTarget.gamecardId);
 
   await activateAndPassWithPayment(stateA, 'BOT', sodo, 0, { exhaustUnitIds: [payA.gamecardId, payB.gamecardId] });
@@ -1638,8 +1653,13 @@ async function testBlueErosionEntryAndAdventurers(): Promise<ScenarioResult> {
     unitZone: [albertB, freyaPay, null, null, null, null],
     grave: [freya],
   });
-  await activateAndResolveByOpponentPass(stateB, 'BOT', albertB, 0);
+  await ServerGameService.activateEffect(stateB, 'BOT', albertB.gamecardId, 0);
   await answerPendingQuery(stateB, 'BOT', [freya.gamecardId]);
+  if (stateB.pendingQuery?.callbackKey === 'ACTIVATE_COST_RESOLVE') {
+    await answerPendingQuery(stateB, 'BOT', [stateB.players.BOT.hand[0].gamecardId]);
+  }
+  if (stateB.phase !== 'COUNTERING') throw new Error(`Expected COUNTERING after activation, got ${stateB.phase}`);
+  await ServerGameService.passConfrontation(stateB, stateB.priorityPlayerId);
   await confirmTrigger(stateB, 'BOT');
   if (stateB.pendingQuery?.type === 'SELECT_PAYMENT') {
     await answerPendingQuery(stateB, 'BOT', [JSON.stringify({ exhaustUnitIds: [freyaPay.gamecardId] })]);

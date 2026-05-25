@@ -28,14 +28,21 @@ const cardEffects: CardEffect[] = [
   {
     id: '103080317_revive_self_after_own_unit_effect_leave',
     type: 'TRIGGER',
-    triggerLocation: ['GRAVE'],
+    triggerLocation: ['UNIT', 'GRAVE'],
     triggerEvent: 'CARD_LEFT_FIELD',
     isGlobal: true,
+    sourceSnapshotOnLeftField: true,
     limitCount: 1,
     limitNameType: true,
     description: '同名1回合1次：你的单位由于卡的效果从战场离开时，满足1绿并将卡组顶2张送入墓地，将墓地中的这张卡放置到战场。',
     condition: (_gameState, playerState, instance, event) =>
-      instance.cardlocation === 'GRAVE' &&
+      (
+        instance.cardlocation === 'GRAVE' ||
+        (
+          event?.sourceCard === instance &&
+          event.data?.targetZone === 'GRAVE'
+        )
+      ) &&
       event?.playerUid === playerState.uid &&
       event.data?.sourceZone === 'UNIT' &&
       event.data?.isEffect === true &&

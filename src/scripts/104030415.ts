@@ -28,6 +28,16 @@ const cardEffects: CardEffect[] = [{
   condition: (_gameState, playerState) =>
     playerState.hand.length > 0 &&
     targets(playerState).length > 0,
+  targetSpec: {
+    title: '选择冒险家公会单位',
+    description: '选择你战场上或墓地的1张冒险家公会非神蚀单位放置到侵蚀区，之后放置到战场。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT', 'GRAVE'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) =>
+      targets(playerState).map(({ card }) => ({ card, source: card.cardlocation as any }))
+  },
   cost: discardHandCost(1),
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(

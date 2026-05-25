@@ -28,7 +28,15 @@ const cardEffects: CardEffect[] = [{
   sourceSnapshotOnLeftField: true,
   description: '这张卡由于对手卡的效果从战场离开时，按离场前财富数量放置墓地或正面侵蚀区的<九尾商会联盟>单位。',
   condition: (_gameState, playerState, instance, event) =>
-    event?.sourceCardId === instance.gamecardId &&
+    (
+      event?.sourceCard === instance ||
+      event?.sourceCardId === instance.gamecardId ||
+      event?.data?.previousSourceCardId === instance.gamecardId ||
+      (
+        !!event?.sourceCard?.runtimeFingerprint &&
+        event.sourceCard.runtimeFingerprint === instance.runtimeFingerprint
+      )
+    ) &&
     event.playerUid === playerState.uid &&
     event.data?.sourceZone === 'ITEM' &&
     event.data?.isEffect === true &&

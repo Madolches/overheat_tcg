@@ -23,7 +23,15 @@ const cardEffects: CardEffect[] = [{
       event.sourceCardId === instance.gamecardId &&
       event.data?.zone === 'UNIT';
     const isSelfLeave = event?.type === 'CARD_LEFT_FIELD' &&
-      event.sourceCardId === instance.gamecardId &&
+      (
+        event.sourceCard === instance ||
+        event.sourceCardId === instance.gamecardId ||
+        event.data?.previousSourceCardId === instance.gamecardId ||
+        (
+          !!event.sourceCard?.runtimeFingerprint &&
+          event.sourceCard.runtimeFingerprint === instance.runtimeFingerprint
+        )
+      ) &&
       event.data?.sourceZone === 'UNIT';
     return (isSelfEnter || isSelfLeave) && greenNonGodGraveUnits(playerState).length > 0;
   },

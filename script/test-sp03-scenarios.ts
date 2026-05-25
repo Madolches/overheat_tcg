@@ -480,7 +480,7 @@ async function testBellIrodoriRevivesFromGrave(): Promise<ScenarioResult> {
   const bell = cloneScriptCard(sp03G04 as Card, 'HAND');
   const redCost = testCard({ id: 'RED_COST', fullName: 'Red Cost', color: 'RED', cardlocation: 'GRAVE' });
   const greenCost = testCard({ id: 'GREEN_COST', fullName: 'Green Cost', color: 'GREEN', cardlocation: 'GRAVE' });
-  const discard = testCard({ id: 'BELL_DISCARD', fullName: 'Bell Discard', cardlocation: 'HAND' });
+  const discard = cloneScriptCard(sp03W02 as Card, 'HAND', { gamecardId: 'BELL_DISCARD_UNIT' });
   const revive = cloneScriptCard(sp03W02 as Card, 'GRAVE');
   const invalid = testCard({ id: 'INVALID_REVIVE', fullName: 'Invalid Revive', type: 'UNIT', color: 'RED', acValue: 4, godMark: false, cardlocation: 'GRAVE' });
   const state = game({
@@ -493,23 +493,25 @@ async function testBellIrodoriRevivesFromGrave(): Promise<ScenarioResult> {
   if (state.pendingQuery?.callbackKey === 'TRIGGER_CHOICE') {
     await answerPendingQuery(state, 'BOT', ['YES']);
   }
-  if (state.pendingQuery?.callbackKey === 'ACTIVATE_COST_RESOLVE') {
-    await answerPendingQuery(state, 'BOT', [discard.gamecardId]);
-  }
   if (state.pendingQuery?.context?.effectId !== '103000302_irodori_revive') {
     return fail(name, `expected revive query, got ${state.pendingQuery?.context?.effectId || state.pendingQuery?.callbackKey || 'none'}`);
   }
   const options = (state.pendingQuery.options || []).map((option: any) => option.card.gamecardId);
-  if (!options.includes(revive.gamecardId) || options.includes(invalid.gamecardId)) {
+  if (!options.includes(revive.gamecardId) || options.includes(invalid.gamecardId) || options.includes(discard.gamecardId)) {
     return fail(name, `options=${options.join(',')}`);
   }
   await answerPendingQuery(state, 'BOT', [revive.gamecardId]);
+  if (state.pendingQuery?.context?.step !== 'DISCARD') {
+    return fail(name, `expected discard query, got ${state.pendingQuery?.context?.step || state.pendingQuery?.callbackKey || 'none'}`);
+  }
+  await answerPendingQuery(state, 'BOT', [discard.gamecardId]);
 
   const liveBell = state.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === bell.gamecardId);
   const liveRevive = state.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === revive.gamecardId);
-  return liveBell && liveRevive
+  const discardStayedGrave = state.players.BOT.grave.some((card: Card) => card.gamecardId === discard.gamecardId);
+  return liveBell && liveRevive && discardStayedGrave
     ? pass(name, `bell=${liveBell}, revive=${liveRevive}`)
-    : fail(name, `bell=${liveBell}, revive=${liveRevive}`);
+    : fail(name, `bell=${liveBell}, revive=${liveRevive}, discard=${discardStayedGrave}`);
 }
 
 async function testKuyaBeastGirlSearchAndGravePut(): Promise<ScenarioResult> {

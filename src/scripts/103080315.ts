@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { awakenEffect, canPutUnitOntoBattlefield, discardHandCost, putUnitOntoField, selectFromEntries } from './BaseUtil';
+import { awakenEffect, canPutUnitOntoBattlefield, createSelectCardQuery, moveCardAsCost, putUnitOntoField, selectFromEntries } from './BaseUtil';
 
 const graveNonGodUnits = (playerState: any) =>
   playerState.grave.filter((card: Card) =>
@@ -16,6 +16,7 @@ const cardEffects: CardEffect[] = [
     triggerLocation: ['UNIT'],
     triggerEvent: 'CARD_LEFT_FIELD',
     isGlobal: true,
+    sourceSnapshotOnLeftField: true,
     limitCount: 1,
     erosionBackLimit: [1, 10],
     description: '1回合1次：你的单位由于卡的效果从战场放置到卡组时，选择墓地1张非神蚀单位卡，舍弃1张手牌，将其放置到战场。',
@@ -26,7 +27,6 @@ const cardEffects: CardEffect[] = [
       event.data?.isEffect === true &&
       playerState.hand.length > 0 &&
       graveNonGodUnits(playerState).length > 0,
-    cost: discardHandCost(1),
     execute: async (instance, gameState, playerState) => {
       selectFromEntries(
         gameState,
@@ -36,12 +36,32 @@ const cardEffects: CardEffect[] = [
         '选择墓地中1张非神蚀单位卡放置到战场。',
         1,
         1,
-        { sourceCardId: instance.gamecardId, effectId: '103080315_unit_to_deck_put_grave_unit' }
+        { sourceCardId: instance.gamecardId, effectId: '103080315_unit_to_deck_put_grave_unit', step: 'TARGET' }
       );
     },
-    onQueryResolve: async (instance, gameState, playerState, selections) => {
-      const target = playerState.grave.find((card: Card) => card.gamecardId === selections[0]);
-      if (target && target.type === 'UNIT' && !target.godMark && canPutUnitOntoBattlefield(playerState, target)) {
+    onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+      if (context?.step === 'TARGET') {
+        const target = graveNonGodUnits(playerState).find((card: Card) => card.gamecardId === selections[0]);
+        if (!target || playerState.hand.length === 0) return;
+        createSelectCardQuery(
+          gameState,
+          playerState.uid,
+          playerState.hand,
+          '支付舍弃费用',
+          `选择1张手牌舍弃以发动 [${instance.fullName}]。`,
+          1,
+          1,
+          { sourceCardId: instance.gamecardId, effectId: '103080315_unit_to_deck_put_grave_unit', step: 'DISCARD', targetId: target.gamecardId },
+          () => 'HAND'
+        );
+        return;
+      }
+
+      if (context?.step !== 'DISCARD') return;
+      const discard = playerState.hand.find((card: Card) => card.gamecardId === selections[0]);
+      const target = graveNonGodUnits(playerState).find((card: Card) => card.gamecardId === context.targetId);
+      if (discard && target) {
+        moveCardAsCost(gameState, playerState.uid, discard, 'GRAVE', instance);
         putUnitOntoField(gameState, playerState.uid, target, instance);
       }
     }

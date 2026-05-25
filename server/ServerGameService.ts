@@ -105,9 +105,17 @@ export const ServerGameService = {
 
   getEffectivePlayCost(player: PlayerState, card: Card, gameState?: GameState) {
     const baseCost = card.id === '202000080' ? 6 : (card.baseAcValue ?? card.acValue ?? 0);
-    const soulDevourDiscount = gameState && card.cardlocation === 'HAND'
+    const soulDevourCount = gameState && card.cardlocation === 'HAND'
       ? Number((player as any)[`soulDevourActivatedTurn_${gameState.turnCount}`] || 0)
       : 0;
+    const thunderPriestCount = gameState && card.cardlocation === 'HAND'
+      ? player.unitZone.filter(unit =>
+        unit?.id === '102060321' &&
+        !ServerGameService.isFullEffectSilencedThisTurn(gameState, unit) &&
+        unit.effects?.some(effect => effect.id === '102060321_hand_access_discount')
+      ).length
+      : 0;
+    const soulDevourDiscount = soulDevourCount * thunderPriestCount;
     const isThunderUnit =
       card.type === 'UNIT' &&
       (
@@ -3115,6 +3123,14 @@ export const ServerGameService = {
     return (option as any)?.selectionId || option?.id || option?.value || selection;
   },
 
+  markBattleEndAfterPendingQuery(gameState: GameState, attackerPlayerId?: string) {
+    if (!gameState.pendingQuery || !gameState.battleState || gameState.phase !== 'DAMAGE_CALCULATION') return;
+    (gameState as any).pendingBattleEndAfterQuery = {
+      attackerIds: gameState.battleState.attackers || [],
+      attackerPlayerId: attackerPlayerId || gameState.playerIds[gameState.currentTurnPlayer]
+    };
+  },
+
   async processSelectedTriggerRecord(gameState: GameState, trigger: any, onUpdate?: (state: GameState) => Promise<void>) {
     ServerGameService.hydrateVirtualTriggerRecord(trigger);
     let { card, effect, effectIndex, playerUid, event } = trigger;
@@ -3174,6 +3190,7 @@ export const ServerGameService = {
         event
       }
     };
+    ServerGameService.markBattleEndAfterPendingQuery(gameState, playerUid);
   },
 
   async checkTriggeredEffects(gameState: GameState, onUpdate?: (state: GameState) => Promise<void>) {
@@ -3249,16 +3266,19 @@ export const ServerGameService = {
 
   async finalizeBattleAfterPendingQuery(gameState: GameState, onUpdate?: (state: GameState) => Promise<void>) {
     const pendingBattle = (gameState as any).pendingBattleEndAfterQuery;
-    if (!pendingBattle || gameState.pendingQuery || gameState.phase !== 'DAMAGE_CALCULATION') return;
+    if (!pendingBattle || gameState.pendingQuery || !gameState.battleState) return;
+    if (gameState.phase !== 'DAMAGE_CALCULATION' && gameState.phase !== 'MAIN') return;
 
-    gameState.phase = 'MAIN';
-    gameState.phaseTimerStart = Date.now();
-    await ServerGameService.dispatchEventAndDrainTriggers(
-      gameState,
-      { type: 'PHASE_CHANGED', data: { phase: 'MAIN', reason: 'BATTLE_END' } },
-      onUpdate
-    );
-    if (gameState.pendingQuery) return;
+    if (gameState.phase === 'DAMAGE_CALCULATION') {
+      gameState.phase = 'MAIN';
+      gameState.phaseTimerStart = Date.now();
+      await ServerGameService.dispatchEventAndDrainTriggers(
+        gameState,
+        { type: 'PHASE_CHANGED', data: { phase: 'MAIN', reason: 'BATTLE_END' } },
+        onUpdate
+      );
+      if (gameState.pendingQuery) return;
+    }
 
     delete (gameState as any).pendingBattleEndAfterQuery;
     ServerGameService.clearAllianceAttackMarkers(gameState, pendingBattle.attackerIds);
@@ -3899,8 +3919,14 @@ export const ServerGameService = {
         }
 
         selectedCards.forEach(card => {
+          (card as any).data = {
+            ...((card as any).data || {}),
+            lastMovedAsCostTurn: gameState.turnCount,
+            lastMovedAsCostSourceCardId: sourceCard.gamecardId,
+            lastMovedAsCostSourceName: sourceCard.fullName
+          };
           ServerGameService.moveCard(gameState, activationPlayerUid, 'HAND', activationPlayerUid, 'GRAVE', card.gamecardId, {
-            isEffect: true,
+            isEffect: false,
             effectSourcePlayerUid: activationPlayerUid,
             effectSourceCardId: sourceCard.gamecardId
           });
@@ -3952,6 +3978,7 @@ export const ServerGameService = {
 
       const shouldResumeEffectQuery =
         !!effect?.onQueryResolve &&
+        query.context?.costType !== 'DISCARD_HAND_COST' &&
         (normalizedType !== 'SELECT_PAYMENT' || query.context?.step !== undefined || query.context?.effectId !== undefined);
 
       if (shouldResumeEffectQuery) {
@@ -6324,6 +6351,8 @@ export const ServerGameService = {
     // 9. Continue trigger queue if no new query was opened
     if (!gameState.pendingQuery) {
       await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
+    } else {
+      ServerGameService.markBattleEndAfterPendingQuery(gameState, playerUid);
     }
   },
 

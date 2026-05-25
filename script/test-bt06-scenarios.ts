@@ -1493,20 +1493,33 @@ async function testGreenStoriesAndChimera(): Promise<ScenarioResult> {
 
   const ambush = cloneScriptCard(bt06G09 as Card, 'HAND');
   const chimera = cloneScriptCard(bt06G11 as Card, 'GRAVE');
-  const greenCost = testCard({ id: 'G09_COST', color: 'GREEN', cardlocation: 'HAND' });
+  const greenCost = cloneScriptCard(bt06G11 as Card, 'HAND', { gamecardId: 'G09_COST_CHIMERA' });
   const reviveState = game({
     hand: [ambush, greenCost],
     grave: [chimera],
   });
-  await playStoryAndResolve(reviveState, 'BOT', ambush);
+  await ServerGameService.playCard(reviveState, 'BOT', ambush.gamecardId, {});
+  const declaredChimeraOptions = (reviveState.pendingQuery?.options || []).map((option: any) => option.card?.gamecardId || option.id);
+  const chimeraTargetLockedBeforeCost = reviveState.pendingQuery?.callbackKey === 'DECLARE_EFFECT_TARGETS' &&
+    declaredChimeraOptions.includes(chimera.gamecardId) &&
+    !declaredChimeraOptions.includes(greenCost.gamecardId);
+  await answerPendingQuery(reviveState, 'BOT', [chimera.gamecardId]);
+  if (reviveState.pendingQuery?.type === 'SELECT_PAYMENT') {
+    await answerPendingQuery(reviveState, 'BOT', [JSON.stringify({})]);
+  }
   if (reviveState.pendingQuery?.callbackKey === 'ACTIVATE_COST_RESOLVE') {
     await answerPendingQuery(reviveState, 'BOT', [greenCost.gamecardId]);
   }
-  if (reviveState.pendingQuery?.context?.effectId === '203000096_revive_chimera') {
-    await answerPendingQuery(reviveState, 'BOT', [chimera.gamecardId]);
+  if (reviveState.phase !== 'COUNTERING') throw new Error(`Expected COUNTERING after story play, got ${reviveState.phase}`);
+  await ServerGameService.passConfrontation(reviveState, reviveState.priorityPlayerId);
+  if (reviveState.pendingQuery?.context?.step === 'DISCARD') {
+    await answerPendingQuery(reviveState, 'BOT', [greenCost.gamecardId]);
   }
   const liveChimera = reviveState.players.BOT.unitZone.find((unit: Card | null) => unit?.id === bt06G11.id);
-  const revived = !!liveChimera && (liveChimera as any).data?.enteredFromGraveTurn === reviveState.turnCount;
+  const revivedOriginalChimera = !!liveChimera && liveChimera.gamecardId === chimera.gamecardId;
+  const revivedFromGraveMarked = !!liveChimera && (liveChimera as any).data?.enteredFromGraveTurn === reviveState.turnCount;
+  const discardedChimeraStayedGrave = reviveState.players.BOT.grave.some((card: Card) => card.gamecardId === greenCost.gamecardId);
+  const revived = chimeraTargetLockedBeforeCost && revivedOriginalChimera && revivedFromGraveMarked && discardedChimeraStayedGrave;
 
   const salala = cloneScriptCard(bt06G07 as Card, 'UNIT');
   const victim = testCard({ id: 'G11_VICTIM', type: 'UNIT', color: 'RED', godMark: false, cardlocation: 'UNIT' });
@@ -1526,7 +1539,7 @@ async function testGreenStoriesAndChimera(): Promise<ScenarioResult> {
 
   return itemDestroyed && resonanceAttackEnabled && revived && chimeraResolved
     ? pass(name, `itemDestroyed=${itemDestroyed}, resonance=${resonanceAttackEnabled}, revived=${revived}, chimera=${chimeraResolved}`)
-    : fail(name, `itemDestroyed=${itemDestroyed}, resonance=${resonanceAttackEnabled}, revived=${revived}, chimera=${chimeraResolved}`);
+    : fail(name, `itemDestroyed=${itemDestroyed}, resonance=${resonanceAttackEnabled}, revived=${revived}(${chimeraTargetLockedBeforeCost}/${revivedOriginalChimera}/${revivedFromGraveMarked}/${discardedChimeraStayedGrave}), chimera=${chimeraResolved}`);
 }
 
 async function testRedDikaiTrackExplore(): Promise<ScenarioResult> {
@@ -2672,6 +2685,61 @@ async function testAnnihilationAngelsCombatDamageTriggerFinishesBattle(): Promis
     : fail(name, `directAsked=${directAsked}, directFinished=${directFinished}, directBottomed=${directBottomed}, annihilationAsked=${annihilationAsked}, damage=${annihilationDamage}, annihilationFinished=${annihilationFinished}, annihilationBottomed=${annihilationBottomed}, askedSacrifice=${askedSacrifice}, sacrificeTrigger=${sacrificeAskedTrigger}, sacrificeDamage=${sacrificeDamage}, sacrificeFinished=${sacrificeFinished}, survived=${sacrificeAngelSurvived}, phase=${sacrificeState.phase}, pending=${sacrificeState.pendingQuery?.callbackKey || annihilationState.pendingQuery?.callbackKey || directState.pendingQuery?.callbackKey || 'none'}`);
 }
 
+async function testSimpleAiResolvesAnnihilationAngelsDamageTrigger(): Promise<ScenarioResult> {
+  const name = 'Simple AI resolves Annihilation Angels combat damage trigger during damage calculation';
+  const angel = cloneScriptCard(annihilationAngels as Card, 'UNIT', {
+    gamecardId: 'AI_ANGELS',
+    playedTurn: 1,
+    damage: 2,
+    baseDamage: 2,
+  });
+  const graveA = testCard({ id: 'AI_ANGELS_GRAVE_A', fullName: 'AI Angels grave A', cardlocation: 'GRAVE' });
+  const graveB = testCard({ id: 'AI_ANGELS_GRAVE_B', fullName: 'AI Angels grave B', cardlocation: 'GRAVE' });
+  const state = game({
+    botDifficulty: 'simple',
+    grave: [graveA, graveB],
+    erosionFront: [testCard({ id: 'AI_ANGELS_EROSION', cardlocation: 'EROSION_FRONT' })],
+    unitZone: [angel, null, null, null, null, null],
+  }, {
+    uid: 'P1',
+    displayName: 'P1',
+    isTurn: false,
+    unitZone: [null, null, null, null, null, null],
+  }, {
+    phase: 'DAMAGE_CALCULATION',
+    playerIds: ['BOT_PLAYER', 'P1'],
+    battleState: {
+      attackers: [angel.gamecardId],
+      isAlliance: false,
+      resolvedUnitIds: [],
+      battleId: 'simple_ai_angels_direct_battle',
+    },
+  });
+  state.players.BOT.uid = 'BOT_PLAYER';
+  state.players.BOT.displayName = 'BOT_PLAYER';
+  state.players.BOT_PLAYER = state.players.BOT;
+  delete state.players.BOT;
+
+  await ServerGameService.resolveDamage(state);
+  const asked = state.pendingQuery?.callbackKey === 'TRIGGER_CHOICE' &&
+    state.pendingQuery.playerUid === 'BOT_PLAYER' &&
+    state.pendingQuery.context?.effectId === '101130104_damage_bottom';
+  await ServerGameService.botMoveForPlayer(state, 'BOT_PLAYER');
+  const openedSelection = state.pendingQuery?.callbackKey === 'EFFECT_RESOLVE' &&
+    state.pendingQuery.playerUid === 'BOT_PLAYER' &&
+    state.pendingQuery.context?.effectId === '101130104_damage_bottom';
+  const markedForBattleEnd = !!(state as any).pendingBattleEndAfterQuery;
+  await ServerGameService.botMoveForPlayer(state, 'BOT_PLAYER');
+
+  const finished = state.phase === 'MAIN' && !state.battleState && !state.pendingQuery;
+  const bottomed = state.players.BOT_PLAYER.deck.some((card: Card) => card.gamecardId === graveA.gamecardId) &&
+    state.players.BOT_PLAYER.deck.some((card: Card) => card.gamecardId === graveB.gamecardId);
+
+  return asked && openedSelection && markedForBattleEnd && finished && bottomed
+    ? pass(name, `asked=${asked}, selected=${openedSelection}, marked=${markedForBattleEnd}, phase=${state.phase}`)
+    : fail(name, `asked=${asked}, selected=${openedSelection}, marked=${markedForBattleEnd}, finished=${finished}, bottomed=${bottomed}, phase=${state.phase}, pending=${state.pendingQuery?.callbackKey || 'none'}`);
+}
+
 async function testTyaHeroicAuraStopsOutsideZeroToThree(): Promise<ScenarioResult> {
   const name = 'BT03-W05 Tya heroic aura stops outside 0-3 erosion';
   const tyaUnit = cloneScriptCard(tya as Card, 'UNIT', { baseHeroic: false, isHeroic: false });
@@ -2903,6 +2971,7 @@ const scenarios: ScenarioRun[] = [
   testMainPhaseStartTriggersBeforeActions,
   testAttackAndDamageTriggersUseUnifiedFlow,
   testAnnihilationAngelsCombatDamageTriggerFinishesBattle,
+  testSimpleAiResolvesAnnihilationAngelsDamageTrigger,
   testTyaHeroicAuraStopsOutsideZeroToThree,
   testMandatoryEndTurnOrderWithValkyrieAndGreatAlchemist,
   testTriggerOrderAcceptsDisplayedCardIds,

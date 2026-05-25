@@ -108,9 +108,17 @@ const costDetails = (
 
 const getEffectivePlayCostDetails = (gameState: GameState | null, player: PlayerState, card: Card): EffectivePlayCostDetails => {
   const baseCost = card.id === '202000080' ? 6 : (card.baseAcValue ?? card.acValue ?? 0);
-  const soulDevourDiscount = gameState && card.cardlocation === 'HAND'
+  const soulDevourCount = gameState && card.cardlocation === 'HAND'
     ? Number((player as any)[`soulDevourActivatedTurn_${gameState.turnCount}`] || 0)
     : 0;
+  const thunderPriestCount = gameState && card.cardlocation === 'HAND'
+    ? player.unitZone.filter(unit =>
+      unit?.id === '102060321' &&
+      !isFullEffectSilencedThisTurn(gameState, unit) &&
+      unit.effects?.some(effect => effect.id === '102060321_hand_access_discount')
+    ).length
+    : 0;
+  const soulDevourDiscount = soulDevourCount * thunderPriestCount;
   const isThunderUnit =
     card.type === 'UNIT' &&
     (

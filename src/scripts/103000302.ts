@@ -92,25 +92,6 @@ const effect_103000302_irodori_revive: CardEffect = {
     playerState.hand.length > 0 &&
     ownUnits(playerState).length < 6 &&
     reviveCandidates(playerState).length > 0,
-  cost: async (gameState, playerState, instance) => {
-    createSelectCardQuery(
-      gameState,
-      playerState.uid,
-      playerState.hand.filter((card: Card) => card.gamecardId !== instance.gamecardId),
-      '舍弃手牌',
-      '舍弃1张手牌作为费用。',
-      1,
-      1,
-      {
-        sourceCardId: instance.gamecardId,
-        effectId: '103000302_irodori_revive',
-        costType: 'DISCARD_HAND_COST',
-        discardCostAmount: 1
-      },
-      () => 'HAND'
-    );
-    return true;
-  },
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,
@@ -120,13 +101,34 @@ const effect_103000302_irodori_revive: CardEffect = {
       '选择墓地中的1张白色或蓝色ACCESS 3以下非神蚀单位，或卡名含有《兽神》的单位卡放置到战场上。',
       1,
       1,
-      { sourceCardId: instance.gamecardId, effectId: '103000302_irodori_revive' },
+      { sourceCardId: instance.gamecardId, effectId: '103000302_irodori_revive', step: 'TARGET' },
       () => 'GRAVE'
     );
   },
-  onQueryResolve: async (instance, gameState, playerState, selections) => {
-    const target = selections[0] ? playerState.grave.find((card: Card) => card.gamecardId === selections[0]) : undefined;
-    if (target && (isWhiteOrBlueAccessThreeOrLessNonGodUnit(target) || isBeastGodUnit(target))) {
+  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step === 'TARGET') {
+      const target = selections[0] ? reviveCandidates(playerState).find((card: Card) => card.gamecardId === selections[0]) : undefined;
+      const discardCandidates = playerState.hand.filter((card: Card) => card.gamecardId !== instance.gamecardId);
+      if (!target || discardCandidates.length === 0) return;
+      createSelectCardQuery(
+        gameState,
+        playerState.uid,
+        discardCandidates,
+        '舍弃手牌',
+        '舍弃1张手牌作为费用。',
+        1,
+        1,
+        { sourceCardId: instance.gamecardId, effectId: '103000302_irodori_revive', step: 'DISCARD', targetId: target.gamecardId },
+        () => 'HAND'
+      );
+      return;
+    }
+
+    if (context?.step !== 'DISCARD') return;
+    const discard = playerState.hand.find((card: Card) => card.gamecardId === selections[0] && card.gamecardId !== instance.gamecardId);
+    const target = context?.targetId ? reviveCandidates(playerState).find((card: Card) => card.gamecardId === context.targetId) : undefined;
+    if (discard && target) {
+      moveCardAsCost(gameState, playerState.uid, discard, 'GRAVE', instance);
       putUnitOntoField(gameState, playerState.uid, target, instance);
     }
   }

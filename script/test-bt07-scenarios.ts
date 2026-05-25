@@ -1,4 +1,5 @@
 import { ServerGameService } from '../server/ServerGameService';
+import { GameService } from '../src/services/gameService';
 import { EventEngine } from '../src/services/EventEngine';
 import { AtomicEffectExecutor } from '../src/services/AtomicEffectExecutor';
 import { Card, TriggerLocation } from '../src/types/game';
@@ -40,6 +41,7 @@ import bt07G08 from '../src/scripts/203000093';
 import bt07G09 from '../src/scripts/203000094';
 import bt07G10 from '../src/scripts/303000052';
 import bt07G11 from '../src/scripts/103000318';
+import bt05G05 from '../src/scripts/103080213';
 import bt07R01 from '../src/scripts/102050319';
 import bt07R02 from '../src/scripts/102060320';
 import bt07R03 from '../src/scripts/102060321';
@@ -71,6 +73,7 @@ import {
   addContinuousPower,
   awakenUnit,
   destroyByEffect,
+  markReturnToDeckBottomAtEnd,
   moveCardAsCost,
   revealDeckCards,
   totalUnitsSentFromFieldToGraveThisTurn,
@@ -223,6 +226,13 @@ async function confirmTrigger(state: any, playerUid: string) {
   if (state.pendingQuery?.callbackKey === 'TRIGGER_CHOICE') {
     await answerPendingQuery(state, playerUid, ['YES']);
   }
+}
+
+async function processTurnEndDelayedEffects(state: any, playerUid = 'BOT') {
+  EventEngine.dispatchEvent(state, { type: 'TURN_END' as any, playerUid });
+  ServerGameService.enqueueMandatoryEndTurnDelayedEffects(state, playerUid);
+  await ServerGameService.checkTriggeredEffects(state);
+  await ServerGameService.checkTriggeredEffects(state);
 }
 
 function optionIdByValue(state: any, value: string): string {
@@ -1449,6 +1459,23 @@ async function testGreenAwakenSnowRabbitAndCliffRescue(): Promise<ScenarioResult
     totemState.players.BOT.deck.some((card: Card) => card.gamecardId === graveA.gamecardId) &&
     totemState.players.BOT.deck.some((card: Card) => card.gamecardId === graveB.gamecardId);
 
+  const shinboku = cloneScriptCard(bt05G05 as Card, 'UNIT');
+  const shinbokuAwakenSource = testCard({ id: 'G05_SHINBOKU_AWAKEN', cardlocation: 'UNIT' });
+  const shinbokuDraw = testCard({ id: 'G05_SHINBOKU_DRAW', cardlocation: 'DECK' });
+  const shinbokuState = game({
+    unitZone: [shinboku, shinbokuAwakenSource, null, null, null, null],
+    deck: [shinbokuDraw],
+  });
+  awakenUnit(shinbokuState, 'BOT', shinboku, shinbokuAwakenSource);
+  markReturnToDeckBottomAtEnd(shinboku, shinbokuAwakenSource, shinbokuState, 'BOT');
+  await processTurnEndDelayedEffects(shinbokuState, 'BOT');
+  const shinbokuAsked = shinbokuState.pendingQuery?.callbackKey === 'TRIGGER_CHOICE' &&
+    shinbokuState.pendingQuery?.context?.effectId === '103080213_leave_draw';
+  if (shinbokuAsked) {
+    await answerPendingQuery(shinbokuState, 'BOT', ['YES']);
+  }
+  const shinbokuDrew = shinbokuState.players.BOT.hand.some((card: Card) => card.gamecardId === shinbokuDraw.gamecardId);
+
   const monkey = cloneScriptCard(bt07G04 as Card, 'UNIT');
   const ally = testCard({ id: 'G04_ALLY', fullName: 'Ally', cardlocation: 'UNIT', power: 1000, basePower: 1000 });
   const monkeyState = game({
@@ -1461,6 +1488,25 @@ async function testGreenAwakenSnowRabbitAndCliffRescue(): Promise<ScenarioResult
     await answerPendingQuery(monkeyState, 'BOT', [ally.gamecardId]);
   }
   const boostedAndMarked = ally.power === 2000 && (ally as any).data?.returnToDeckBottomAtTurnEnd === monkeyState.turnCount;
+
+  const selfMonkey = cloneScriptCard(bt07G04 as Card, 'UNIT', { gamecardId: 'G04_SELF_MONKEY' });
+  const shinbokuMill = testCard({ id: 'G04_SELF_MILL', fullName: '神木森候补', faction: '神木森', godMark: false, cardlocation: 'DECK' });
+  const selfMonkeyState = game({
+    unitZone: [selfMonkey, null, null, null, null, null],
+    deck: [shinbokuMill],
+  });
+  awakenUnit(selfMonkeyState, 'BOT', selfMonkey, selfMonkey);
+  markReturnToDeckBottomAtEnd(selfMonkey, selfMonkey, selfMonkeyState, 'BOT');
+  await processTurnEndDelayedEffects(selfMonkeyState, 'BOT');
+  const selfMonkeyAsked = selfMonkeyState.pendingQuery?.callbackKey === 'TRIGGER_CHOICE' &&
+    selfMonkeyState.pendingQuery?.context?.effectId === '103080314_own_unit_effect_leave_mill_shinboku';
+  if (selfMonkeyAsked) {
+    await answerPendingQuery(selfMonkeyState, 'BOT', ['YES']);
+  }
+  if (selfMonkeyState.pendingQuery?.context?.effectId === '103080314_own_unit_effect_leave_mill_shinboku') {
+    await answerPendingQuery(selfMonkeyState, 'BOT', [shinbokuMill.gamecardId]);
+  }
+  const selfMonkeyMilled = selfMonkeyState.players.BOT.grave.some((card: Card) => card.gamecardId === shinbokuMill.gamecardId);
 
   const snowRabbit = cloneScriptCard(bt07G05 as Card, 'UNIT');
   const returnedUnit = testCard({ id: 'G05_RETURNED', cardlocation: 'UNIT' });
@@ -1479,13 +1525,49 @@ async function testGreenAwakenSnowRabbitAndCliffRescue(): Promise<ScenarioResult
     effectSourceCardId: snowRabbit.gamecardId,
   });
   await confirmTrigger(rabbitState, 'BOT');
-  if (rabbitState.pendingQuery?.callbackKey === 'ACTIVATE_COST_RESOLVE') {
-    await answerPendingQuery(rabbitState, 'BOT', [discard.gamecardId]);
-  }
-  if (rabbitState.pendingQuery?.context?.effectId === '103080315_unit_to_deck_put_grave_unit') {
+  const rabbitOptions = (rabbitState.pendingQuery?.options || []).map((option: any) => option.card?.gamecardId || option.id);
+  const rabbitTargetLockedBeforeCost = rabbitOptions.includes(revive.gamecardId) && !rabbitOptions.includes(discard.gamecardId);
+  if (rabbitState.pendingQuery?.context?.effectId === '103080315_unit_to_deck_put_grave_unit' &&
+    rabbitState.pendingQuery?.context?.step === 'TARGET') {
     await answerPendingQuery(rabbitState, 'BOT', [revive.gamecardId]);
   }
-  const rabbitRevived = rabbitState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === revive.gamecardId);
+  if (rabbitState.pendingQuery?.context?.step === 'DISCARD') {
+    await answerPendingQuery(rabbitState, 'BOT', [discard.gamecardId]);
+  }
+  const rabbitRevived = rabbitTargetLockedBeforeCost &&
+    rabbitState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === revive.gamecardId) &&
+    rabbitState.players.BOT.grave.some((card: Card) => card.gamecardId === discard.gamecardId);
+
+  const selfRabbit = cloneScriptCard(bt07G05 as Card, 'UNIT', { gamecardId: 'G05_SELF_RABBIT' });
+  const selfRabbitRevive = testCard({ id: 'G05_SELF_REVIVE', type: 'UNIT', godMark: false, cardlocation: 'GRAVE' });
+  const selfRabbitDiscard = testCard({ id: 'G05_SELF_DISCARD', color: 'GREEN', cardlocation: 'HAND' });
+  const selfRabbitState = game({
+    hand: [selfRabbitDiscard],
+    unitZone: [selfRabbit, null, null, null, null, null],
+    grave: [selfRabbitRevive],
+    erosionBack: [testCard({ id: 'G05_SELF_BACK', cardlocation: 'EROSION_BACK' })],
+  });
+  awakenUnit(selfRabbitState, 'BOT', selfRabbit, selfRabbit);
+  markReturnToDeckBottomAtEnd(selfRabbit, selfRabbit, selfRabbitState, 'BOT');
+  await processTurnEndDelayedEffects(selfRabbitState, 'BOT');
+  const selfRabbitAsked = selfRabbitState.pendingQuery?.callbackKey === 'TRIGGER_CHOICE' &&
+    selfRabbitState.pendingQuery?.context?.effectId === '103080315_unit_to_deck_put_grave_unit';
+  if (selfRabbitAsked) {
+    await answerPendingQuery(selfRabbitState, 'BOT', ['YES']);
+  }
+  const selfRabbitOptions = (selfRabbitState.pendingQuery?.options || []).map((option: any) => option.card?.gamecardId || option.id);
+  const selfRabbitTargetLockedBeforeCost = selfRabbitOptions.includes(selfRabbitRevive.gamecardId) &&
+    !selfRabbitOptions.includes(selfRabbitDiscard.gamecardId);
+  if (selfRabbitState.pendingQuery?.context?.effectId === '103080315_unit_to_deck_put_grave_unit' &&
+    selfRabbitState.pendingQuery?.context?.step === 'TARGET') {
+    await answerPendingQuery(selfRabbitState, 'BOT', [selfRabbitRevive.gamecardId]);
+  }
+  if (selfRabbitState.pendingQuery?.context?.step === 'DISCARD') {
+    await answerPendingQuery(selfRabbitState, 'BOT', [selfRabbitDiscard.gamecardId]);
+  }
+  const selfRabbitRevived = selfRabbitTargetLockedBeforeCost &&
+    selfRabbitState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === selfRabbitRevive.gamecardId) &&
+    selfRabbitState.players.BOT.grave.some((card: Card) => card.gamecardId === selfRabbitDiscard.gamecardId);
 
   const rescue = cloneScriptCard(bt07G08 as Card, 'PLAY');
   const graveUnit = testCard({ id: 'G08_GRAVE_UNIT', type: 'UNIT', cardlocation: 'GRAVE' });
@@ -1510,9 +1592,9 @@ async function testGreenAwakenSnowRabbitAndCliffRescue(): Promise<ScenarioResult
     rescueState.players.BOT.erosionFront.some((card: Card | null) => card?.gamecardId === erosionUnit.gamecardId) &&
     rescueState.players.BOT.exile.some((card: Card) => card.gamecardId === rescue.gamecardId);
 
-  return recovered && boostedAndMarked && rabbitRevived && rescued
-    ? pass(name, `recovered=${recovered}, boosted=${boostedAndMarked}, rabbit=${rabbitRevived}, rescued=${rescued}`)
-    : fail(name, `recovered=${recovered}, boosted=${boostedAndMarked}, rabbit=${rabbitRevived}, rescued=${rescued}`);
+  return recovered && shinbokuDrew && boostedAndMarked && selfMonkeyMilled && rabbitRevived && selfRabbitRevived && rescued
+    ? pass(name, `recovered=${recovered}, shinboku=${shinbokuDrew}, boosted=${boostedAndMarked}, monkey=${selfMonkeyMilled}, rabbit=${rabbitRevived}/${selfRabbitRevived}, rescued=${rescued}`)
+    : fail(name, `recovered=${recovered}, shinboku=${shinbokuDrew}/${shinbokuAsked}, boosted=${boostedAndMarked}, monkey=${selfMonkeyMilled}/${selfMonkeyAsked}, rabbit=${rabbitRevived}/${selfRabbitRevived}/${selfRabbitAsked}, rescued=${rescued}`);
 }
 
 async function testGreenGrienOrderSanctuaryAndMessenger(): Promise<ScenarioResult> {
@@ -1693,9 +1775,53 @@ async function testRedShieldSoulDevourAndDiscounts(): Promise<ScenarioResult> {
   const copiedExhausted = !!copiedGoblin?.isExhausted;
   const discounted = redHand.acValue === 1 && thunderHand.acValue === 1;
 
-  return shieldDestroyedTarget && soulCount && sentCount && copiedExhausted && discounted
-    ? pass(name, `shield=${shieldDestroyedTarget}, soul=${soulCount}, copy=${copiedExhausted}, discount=${redHand.acValue}/${thunderHand.acValue}`)
-    : fail(name, `shield=${shieldDestroyedTarget}, soul=${soulCount}, sent=${sentCount}, copy=${!!copiedGoblin}/${copiedGoblin?.isExhausted}, discount=${redHand.acValue}/${thunderHand.acValue}`);
+  const priestA = cloneScriptCard(bt07R03 as Card, 'UNIT', { gamecardId: 'R03_STACK_PRIEST_A' });
+  const priestB = cloneScriptCard(bt07R03 as Card, 'UNIT', { gamecardId: 'R03_STACK_PRIEST_B' });
+  const fodderA = cloneScriptCard(bt07R02 as Card, 'UNIT', { gamecardId: 'R03_STACK_FODDER_A' });
+  const fodderB = cloneScriptCard(bt07R02 as Card, 'UNIT', { gamecardId: 'R03_STACK_FODDER_B' });
+  const stackRedHand = testCard({
+    id: 'R03_STACK_RED_HAND',
+    fullName: 'Red Stack Discount Hand',
+    type: 'STORY',
+    color: 'RED',
+    cardlocation: 'HAND',
+    acValue: 5,
+    baseAcValue: 5,
+    godMark: false,
+  });
+  const stackThunderHand = cloneScriptCard(bt07R02 as Card, 'HAND', {
+    gamecardId: 'R03_STACK_THUNDER_HAND',
+    acValue: 5,
+    baseAcValue: 5,
+  });
+  const stackState = game({
+    hand: [stackRedHand, stackThunderHand],
+    unitZone: [priestA, priestB, fodderA, fodderB, null, null],
+  });
+  const stackSoulIndex = priestA.effects?.findIndex(effect => effect.id === '102060321_soul_devour_power') ?? -1;
+  await priestA.effects?.[stackSoulIndex]?.execute?.(priestA, stackState, stackState.players.BOT);
+  if (stackState.pendingQuery?.context?.effectId === '102060321_soul_devour_power') {
+    await answerPendingQuery(stackState, 'BOT', [fodderA.gamecardId]);
+  }
+  await priestB.effects?.[stackSoulIndex]?.execute?.(priestB, stackState, stackState.players.BOT);
+  if (stackState.pendingQuery?.context?.effectId === '102060321_soul_devour_power') {
+    await answerPendingQuery(stackState, 'BOT', [fodderB.gamecardId]);
+  }
+  EventEngine.recalculateContinuousEffects(stackState);
+
+  const stackedSoulCount = (stackState.players.BOT as any)[`soulDevourActivatedTurn_${stackState.turnCount}`] === 2;
+  const stackedScriptDiscount = stackRedHand.acValue === 1 && stackThunderHand.acValue === 1;
+  const stackedServerDiscount =
+    ServerGameService.getEffectivePlayCost(stackState.players.BOT, stackRedHand, stackState) === 1 &&
+    ServerGameService.getEffectivePlayCost(stackState.players.BOT, stackThunderHand, stackState) === 1;
+  const stackedClientDiscount =
+    GameService.getEffectivePlayCostDetails(stackState, stackState.players.BOT, stackRedHand).cost === 1 &&
+    GameService.getEffectivePlayCostDetails(stackState, stackState.players.BOT, stackThunderHand).cost === 1;
+
+  return shieldDestroyedTarget && soulCount && sentCount && copiedExhausted && discounted &&
+    stackedSoulCount && stackedScriptDiscount && stackedServerDiscount && stackedClientDiscount
+    ? pass(name, `shield=${shieldDestroyedTarget}, soul=${soulCount}, copy=${copiedExhausted}, discount=${redHand.acValue}/${thunderHand.acValue}, stacked=${stackRedHand.acValue}/${stackThunderHand.acValue}`)
+    : fail(name, `shield=${shieldDestroyedTarget}, soul=${soulCount}, sent=${sentCount}, copy=${!!copiedGoblin}/${copiedGoblin?.isExhausted}, discount=${redHand.acValue}/${thunderHand.acValue}, stacked=${stackedSoulCount}/${stackRedHand.acValue}/${stackThunderHand.acValue}/${stackedServerDiscount}/${stackedClientDiscount}`);
 }
 
 async function testRedBatBladeItemAndTamiThresholds(): Promise<ScenarioResult> {

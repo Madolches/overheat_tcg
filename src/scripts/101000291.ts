@@ -73,7 +73,15 @@ const effect_101000291_leave_destroy: CardEffect = {
   triggerLocation: ['UNIT', 'GRAVE', 'EXILE', 'HAND', 'DECK', 'EROSION_FRONT', 'EROSION_BACK'],
   description: '同名1回合1次：这张卡由于战斗或自己的卡牌效果离开战场时，选择战场1个ACCESS 3以下非神蚀单位破坏。',
   condition: (gameState, playerState, instance, event) => {
-    if (event?.sourceCardId !== instance.gamecardId && event?.data?.previousSourceCardId !== instance.gamecardId) return false;
+    const isSelfLeave =
+      event?.sourceCard === instance ||
+      event?.sourceCardId === instance.gamecardId ||
+      event?.data?.previousSourceCardId === instance.gamecardId ||
+      (
+        !!event?.sourceCard?.runtimeFingerprint &&
+        event.sourceCard.runtimeFingerprint === instance.runtimeFingerprint
+      );
+    if (!isSelfLeave) return false;
     if (event.data?.sourceZone !== 'UNIT') return false;
     const leftByOwnEffect = !!event.data?.isEffect && event.data?.effectSourcePlayerUid === playerState.uid;
     const leftByBattle = !event.data?.isEffect && event.data?.targetZone === 'GRAVE';

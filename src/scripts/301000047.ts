@@ -72,14 +72,19 @@ const cardEffects: CardEffect[] = [{
 }, {
   id: '301000047_exile_on_leave',
   type: 'TRIGGER',
-  triggerLocation: ['GRAVE'],
+  triggerLocation: ['ITEM', 'GRAVE'],
   triggerEvent: 'CARD_LEFT_FIELD',
+  sourceSnapshotOnLeftField: true,
   isMandatory: false,
   description: '这张卡从战场离开时，将这张卡放逐。',
   condition: (_gameState, _playerState, instance, event) =>
-    event?.sourceCardId === instance.gamecardId &&
+    (
+      event?.sourceCard === instance ||
+      event?.sourceCardId === instance.gamecardId ||
+      event?.data?.previousSourceCardId === instance.gamecardId
+    ) &&
     event.data?.sourceZone === 'ITEM' &&
-    instance.cardlocation === 'GRAVE',
+    (instance.cardlocation === 'GRAVE' || event?.sourceCard === instance),
   execute: async (instance, gameState, playerState) => {
     moveCard(gameState, playerState.uid, instance, 'EXILE', instance);
   }

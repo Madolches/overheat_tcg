@@ -14,7 +14,15 @@ const cardEffects: CardEffect[] = [{
   condition: (_gameState, playerState, instance, event) => {
     const entered = event?.type === 'CARD_ENTERED_ZONE' && event.sourceCardId === instance.gamecardId && event.data?.zone === 'UNIT';
     const left = event?.type === 'CARD_LEFT_FIELD' &&
-      (event.sourceCardId === instance.gamecardId || event.data?.previousSourceCardId === instance.gamecardId) &&
+      (
+        event.sourceCard === instance ||
+        event.sourceCardId === instance.gamecardId ||
+        event.data?.previousSourceCardId === instance.gamecardId ||
+        (
+          !!event.sourceCard?.runtimeFingerprint &&
+          event.sourceCard.runtimeFingerprint === instance.runtimeFingerprint
+        )
+      ) &&
       event.data?.sourceZone === 'UNIT';
     return (entered || left) && playerState.deck.some(card => isFeijingCard(card) && !card.godMark);
   },
