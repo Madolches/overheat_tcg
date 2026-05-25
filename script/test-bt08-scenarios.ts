@@ -1053,14 +1053,14 @@ async function testGreenSilverMusicDestroyAndBonuses(): Promise<ScenarioResult> 
   const girls = cloneScriptCard(bt08G04 as Card, 'UNIT');
   const stateC = game({
     unitZone: [girls, null, null, null, null, null],
-    erosionFront: deckCards(3, 'G04_EROSION', 'GREEN').map(card => ({ ...card, cardlocation: 'EROSION_FRONT' as any })),
+    erosionBack: deckCards(3, 'G04_EROSION', 'GREEN').map(card => ({ ...card, cardlocation: 'EROSION_BACK' as any })),
   });
   EventEngine.recalculateContinuousEffects(stateC);
   const girlsBuffed = girls.power === (girls.basePower || 0) + 1000 && girls.damage === (girls.baseDamage || 0) + 1;
   const lowGirls = cloneScriptCard(bt08G04 as Card, 'UNIT', { gamecardId: 'G04_LOW_GIRLS' });
   const stateLowGirls = game({
     unitZone: [lowGirls, null, null, null, null, null],
-    erosionFront: deckCards(2, 'G04_LOW_EROSION', 'GREEN').map(card => ({ ...card, cardlocation: 'EROSION_FRONT' as any })),
+    erosionFront: deckCards(3, 'G04_LOW_EROSION', 'GREEN').map(card => ({ ...card, cardlocation: 'EROSION_FRONT' as any })),
   });
   EventEngine.recalculateContinuousEffects(stateLowGirls);
   const girlsGated = lowGirls.power === (lowGirls.basePower || 0) &&

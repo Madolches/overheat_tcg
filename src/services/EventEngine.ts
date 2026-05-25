@@ -677,48 +677,53 @@ export class EventEngine {
         card.effects?.some(effect => effect.type === 'CONTINUOUS' && effect.content === 'SELF_HAND_COST')
       );
       const activeZones = [...player.unitZone, ...player.itemZone, ...player.erosionFront, ...handContinuousCards];
-      activeZones.forEach(card => {
+      const activeContinuousEntries = activeZones.flatMap((card, zoneIndex) =>
+        card?.effects?.map((effect, effectIndex) => ({ card, effect, order: zoneIndex * 1000 + effectIndex })) || []
+      ).sort((a, b) => {
+        const aPriority = a.effect.modifiesPowerIncreaseAmount ? 1 : 0;
+        const bPriority = b.effect.modifiesPowerIncreaseAmount ? 1 : 0;
+        return bPriority - aPriority || a.order - b.order;
+      });
+      activeContinuousEntries.forEach(({ card, effect }) => {
         if (card && card.effects) {
           if (this.isFullEffectSilenced(gameState, card)) {
             return;
           }
-          card.effects.forEach(effect => {
-            const cardLoc = card.cardlocation as TriggerLocation;
-            if (effect.type === 'CONTINUOUS' && !this.isContinuousEffectActiveAtLocation(card, effect, cardLoc)) {
-              return;
-            }
-            const checkResult = GameService.checkEffectLimitsAndReqs(gameState, player.uid, card, effect, cardLoc);
-            if (!checkResult.valid) {
-              return;
-            }
-            if (effect.type === 'CONTINUOUS') {
-              const activeKey = `${card.gamecardId}:${effect.id || effect.description}`;
-              const activeContinuousLogs = ((gameState as any).activeContinuousEffectLogKeys || {}) as Record<string, number>;
-              if (activeContinuousLogs[activeKey] !== gameState.turnCount) {
-                addBattleLog(gameState, {
-                  category: 'CONTINUOUS_EFFECT',
-                  actorUid: player.uid,
-                  actorName: player.displayName,
-                  sourceCard: cardToBattleLogRef(gameState, card, player.uid, cardLoc),
-                  text: `[永续效果] ${getCardIdentity(gameState, player.uid, card)} ${card.fullName} 的永续效果生效：${effect.description}`,
-                  metadata: { effectId: effect.id, effectDescription: effect.description }
-                });
-                (gameState as any).activeContinuousEffectLogKeys = {
-                  ...activeContinuousLogs,
-                  [activeKey]: gameState.turnCount
-                };
-              }
-            }
-            if (effect.applyContinuous) {
-              effect.applyContinuous(gameState, card);
-            }
-            if (effect.type === 'CONTINUOUS' && effect.atomicEffects) {
-              effect.atomicEffects.forEach(atomic => {
-                // Only applying stat changes for continuous atomic effects for now
-                AtomicEffectExecutor.execute(gameState, player.uid, atomic, card);
+          const cardLoc = card.cardlocation as TriggerLocation;
+          if (effect.type === 'CONTINUOUS' && !this.isContinuousEffectActiveAtLocation(card, effect, cardLoc)) {
+            return;
+          }
+          const checkResult = GameService.checkEffectLimitsAndReqs(gameState, player.uid, card, effect, cardLoc);
+          if (!checkResult.valid) {
+            return;
+          }
+          if (effect.type === 'CONTINUOUS') {
+            const activeKey = `${card.gamecardId}:${effect.id || effect.description}`;
+            const activeContinuousLogs = ((gameState as any).activeContinuousEffectLogKeys || {}) as Record<string, number>;
+            if (activeContinuousLogs[activeKey] !== gameState.turnCount) {
+              addBattleLog(gameState, {
+                category: 'CONTINUOUS_EFFECT',
+                actorUid: player.uid,
+                actorName: player.displayName,
+                sourceCard: cardToBattleLogRef(gameState, card, player.uid, cardLoc),
+                text: `[永续效果] ${getCardIdentity(gameState, player.uid, card)} ${card.fullName} 的永续效果生效：${effect.description}`,
+                metadata: { effectId: effect.id, effectDescription: effect.description }
               });
+              (gameState as any).activeContinuousEffectLogKeys = {
+                ...activeContinuousLogs,
+                [activeKey]: gameState.turnCount
+              };
             }
-          });
+          }
+          if (effect.applyContinuous) {
+            effect.applyContinuous(gameState, card);
+          }
+          if (effect.type === 'CONTINUOUS' && effect.atomicEffects) {
+            effect.atomicEffects.forEach(atomic => {
+              // Only applying stat changes for continuous atomic effects for now
+              AtomicEffectExecutor.execute(gameState, player.uid, atomic, card);
+            });
+          }
         }
       });
     };

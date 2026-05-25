@@ -51,6 +51,8 @@ import bt07R08 from '../src/scripts/202000107';
 import bt07R09 from '../src/scripts/202000108';
 import bt07R10 from '../src/scripts/302000058';
 import bt07R11 from '../src/scripts/102060373';
+import bt05R07 from '../src/scripts/102060244';
+import bt04R07 from '../src/scripts/102060433';
 import bt07Y01 from '../src/scripts/105110381';
 import bt07Y02 from '../src/scripts/105110382';
 import bt07Y03 from '../src/scripts/105110383';
@@ -1664,13 +1666,18 @@ async function testRedBatBladeItemAndTamiThresholds(): Promise<ScenarioResult> {
   const blade = cloneScriptCard(bt07R06 as Card, 'UNIT');
   const vessel = cloneScriptCard(bt07R10 as Card, 'ITEM', { equipTargetId: blade.gamecardId });
   const recruit = cloneScriptCard(bt07R04 as Card, 'DECK', { gamecardId: 'R06_RECRUIT' });
+  const bladeInDeck = cloneScriptCard(bt07R06 as Card, 'DECK', { gamecardId: 'R06_BLADE_IN_DECK' });
   const bladeState = game({
     unitZone: [blade, null, null, null, null, null],
     itemZone: [vessel],
-    deck: [recruit, ...deckCards(3, 'R10_DRAW', 'RED')],
+    deck: [bladeInDeck, recruit, ...deckCards(3, 'R10_DRAW', 'RED')],
   });
   const bladeIndex = blade.effects?.findIndex(effect => effect.id === '102070371_self_cost_put_soul_devour') ?? -1;
   await blade.effects?.[bladeIndex]?.execute?.(blade, bladeState, bladeState.players.BOT);
+  const bladeOptionIds = (bladeState.pendingQuery?.options || []).map((option: any) => option.card.gamecardId);
+  if (bladeOptionIds.includes(bladeInDeck.gamecardId) || !bladeOptionIds.includes(recruit.gamecardId)) {
+    return fail(name, `blade options=${bladeOptionIds.join(',')}`);
+  }
   if (bladeState.pendingQuery?.context?.effectId === '102070371_self_cost_put_soul_devour') {
     await answerPendingQuery(bladeState, 'BOT', [recruit.gamecardId]);
   }
@@ -1680,18 +1687,20 @@ async function testRedBatBladeItemAndTamiThresholds(): Promise<ScenarioResult> {
   const bladeCounted = totalUnitsSentFromFieldToGraveThisTurn(bladeState) >= 1;
 
   const tami = cloneScriptCard(bt07R11 as Card, 'UNIT');
+  const rafa = cloneScriptCard(bt05R07 as Card, 'UNIT');
   const ally = testCard({ id: 'R11_ALLY', fullName: 'Tami Ally', color: 'RED', cardlocation: 'UNIT', power: 1000, basePower: 1000 });
   const tamiTarget = testCard({ id: 'R11_TARGET', fullName: 'Tami Target', cardlocation: 'UNIT' });
   const tamiState = game({
-    unitZone: [tami, ally, null, null, null, null],
+    unitZone: [tami, rafa, ally, null, null, null],
   }, {
     unitZone: [tamiTarget, null, null, null, null, null],
   });
   (tamiState as any)[`unitsSentFromFieldToGraveTurn_${tamiState.turnCount}_global`] = 6;
   EventEngine.recalculateContinuousEffects(tamiState);
   const tamiThresholds =
-    tami.power === 4000 &&
-    ally.power === 2000 &&
+    tami.power === 4500 &&
+    rafa.power === 4500 &&
+    ally.power === 2500 &&
     !!tami.isrush &&
     !!tami.isHeroic &&
     !!tami.isShenyi &&
@@ -1706,6 +1715,59 @@ async function testRedBatBladeItemAndTamiThresholds(): Promise<ScenarioResult> {
   return batDestroyed && recruited && itemDrew && bladeCounted && tamiThresholds && tamiDestroyed
     ? pass(name, `bat=${batDestroyed}, blade=${recruited}/${itemDrew}, tami=${tamiThresholds}/${tamiDestroyed}`)
     : fail(name, `bat=${batDestroyed}, recruited=${recruited}, itemDrew=${itemDrew}, bladeCounted=${bladeCounted}, tami=${tamiThresholds}/${tamiDestroyed}`);
+}
+
+async function testSoulDevourTriggersThunderLeaderAndClearsInterruptedBattle(): Promise<ScenarioResult> {
+  const name = 'Soul devour power change triggers leader and clears interrupted battle';
+  const leader = cloneScriptCard(bt04R07 as Card, 'UNIT', { power: 3000, basePower: 3000 });
+  const warrior = cloneScriptCard(bt07R04 as Card, 'UNIT');
+  const cost = testCard({ id: 'SOUL_COST', fullName: 'Soul Cost', type: 'UNIT', color: 'RED', godMark: false, cardlocation: 'UNIT' });
+  const thunderSearch = testCard({ id: 'THUNDER_SEARCH', fullName: 'Thunder Search', type: 'UNIT', faction: '雷霆', cardlocation: 'DECK' });
+  const state = game({
+    unitZone: [leader, warrior, cost, null, null, null],
+    deck: [thunderSearch, ...deckCards(4, 'LEADER_FILL', 'RED')],
+  });
+
+  const soulIndex = warrior.effects?.findIndex(effect => effect.id === '102060369_soul_devour_power') ?? -1;
+  await warrior.effects?.[soulIndex]?.execute?.(warrior, state, state.players.BOT);
+  if (state.pendingQuery?.context?.effectId === '102060369_soul_devour_power') {
+    await answerPendingQuery(state, 'BOT', [cost.gamecardId]);
+  }
+  await confirmTrigger(state, 'BOT');
+  const leaderPrompted = state.pendingQuery?.context?.effectId === '102060433_power_search';
+
+  const battleLeader = cloneScriptCard(bt04R07 as Card, 'UNIT', { gamecardId: 'BATTLE_LEADER', power: 3000, basePower: 3000, inAllianceGroup: true, isAttacking: true } as any);
+  const battleWarrior = cloneScriptCard(bt07R04 as Card, 'UNIT', { gamecardId: 'BATTLE_WARRIOR' });
+  const attackCost = testCard({ id: 'SOUL_ATTACK_COST', fullName: 'Soul Attack Cost', type: 'UNIT', color: 'RED', godMark: false, cardlocation: 'UNIT', isDefending: true } as any);
+  const defender = testCard({ id: 'SOUL_DEFENDER', fullName: 'Soul Defender', type: 'UNIT', cardlocation: 'UNIT' });
+  const battleState = game({
+    unitZone: [battleLeader, battleWarrior, attackCost, null, null, null],
+  }, {
+    unitZone: [defender, null, null, null, null, null],
+  }, {
+    phase: 'BATTLE_FREE',
+    battleState: {
+      attackers: [battleLeader.gamecardId],
+      defender: attackCost.gamecardId,
+      unitTargetId: attackCost.gamecardId,
+      isAlliance: false,
+    },
+  });
+  const battleSoulIndex = battleWarrior.effects?.findIndex(effect => effect.id === '102060369_soul_devour_power') ?? -1;
+  await battleWarrior.effects?.[battleSoulIndex]?.execute?.(battleWarrior, battleState, battleState.players.BOT);
+  if (battleState.pendingQuery?.context?.effectId === '102060369_soul_devour_power') {
+    await answerPendingQuery(battleState, 'BOT', [attackCost.gamecardId]);
+  }
+  const battleCleared =
+    battleState.phase === 'MAIN' &&
+    !battleState.battleState &&
+    !battleLeader.inAllianceGroup &&
+    !(battleLeader as any).isAttacking &&
+    !(attackCost as any).isDefending;
+
+  return leaderPrompted && battleCleared
+    ? pass(name, `leaderPrompted=${leaderPrompted}, battleCleared=${battleCleared}`)
+    : fail(name, `leaderPrompted=${leaderPrompted}, pending=${state.pendingQuery?.context?.effectId || 'none'}, phase=${battleState.phase}, battle=${!!battleState.battleState}, attacking=${!!(battleLeader as any).isAttacking}, defending=${!!(attackCost as any).isDefending}`);
 }
 
 async function testRedAsuraSacrificeAndHiyeOrder(): Promise<ScenarioResult> {
@@ -2163,6 +2225,7 @@ const scenarios: ScenarioRun[] = [
   testGreenGrienOrderSanctuaryAndMessenger,
   testRedShieldSoulDevourAndDiscounts,
   testRedBatBladeItemAndTamiThresholds,
+  testSoulDevourTriggersThunderLeaderAndClearsInterruptedBattle,
   testRedAsuraSacrificeAndHiyeOrder,
   testYellowPainterStephanieAndSteelPuppet,
   testYellowGuardRawStoneAndStories,

@@ -49,7 +49,7 @@ const card: Card = {
   godMark: false,
   displayState: 'FRONT_UPRIGHT',
   isExhausted: false,
-  isrush: true,
+  isrush: false,
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,

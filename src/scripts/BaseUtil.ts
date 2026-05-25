@@ -1269,8 +1269,10 @@ export const putCardOntoField = (
 };
 
 export const addContinuousPower = (target: Card, source: Card, amount: number) => {
-  target.power = (target.power || 0) + amount;
-  addInfluence(target, source, `力量${amount >= 0 ? '+' : ''}${amount}`);
+  const bonus = amount > 0 ? Number((target as any).data?.powerIncreaseBonus || 0) : 0;
+  const finalAmount = amount + bonus;
+  target.power = (target.power || 0) + finalAmount;
+  addInfluence(target, source, `力量${finalAmount >= 0 ? '+' : ''}${finalAmount}`);
 };
 
 export const addContinuousDamage = (target: Card, source: Card, amount: number) => {
@@ -1314,8 +1316,14 @@ export const recordSoulDevourActivation = (gameState: GameState, playerState: Pl
 export const isSoulDevourUnit = (card: Card) =>
   card.type === 'UNIT' &&
   (card.effects || []).some(effect =>
-    /soul_devour|souldevour/i.test(effect.id || '') ||
-    (effect.description || '').includes('噬魂')
+    effect.type === 'ACTIVATE' &&
+    (
+      /^.+_(soul_devour|souldevour)_power$/i.test(effect.id || '') ||
+      (effect.description || '').startsWith('噬魂') ||
+      (effect.description || '').startsWith('噬魂：') ||
+      (effect.description || '').includes('【启】噬魂') ||
+      (effect.description || '').includes('【启】【噬魂】')
+    )
   );
 
 export const isThunderUnit = (card: Card) =>
@@ -1371,7 +1379,7 @@ export const genericSoulDevourPowerEffect = (id: string): CardEffect => ({
   }
 });
 
-export const addTempPower = (target: Card, source: Card, amount: number) => {
+export const addTempPower = (target: Card, source: Card, amount: number, gameState?: GameState) => {
   const bonus = amount > 0 ? Number((target as any).data?.powerIncreaseBonus || 0) : 0;
   const finalAmount = amount + bonus;
   target.temporaryPowerBuff = (target.temporaryPowerBuff || 0) + amount;
@@ -1383,10 +1391,19 @@ export const addTempPower = (target: Card, source: Card, amount: number) => {
   const details = target.temporaryBuffDetails?.power || [];
   details.push({ sourceCardName: source.fullName, value: finalAmount });
   target.temporaryBuffDetails = { ...(target.temporaryBuffDetails || {}), power: details };
+  if (gameState && finalAmount !== 0) {
+    EventEngine.dispatchEvent(gameState, {
+      type: 'CARD_POWER_CHANGED',
+      targetCardId: target.gamecardId,
+      sourceCard: source,
+      sourceCardId: source.gamecardId,
+      data: { delta: finalAmount }
+    });
+  }
 };
 
 export const addTempPowerUntilEndOfTurn = (target: Card, source: Card, amount: number, gameState: GameState) => {
-  addTempPower(target, source, amount);
+  addTempPower(target, source, amount, gameState);
   const data = ensureData(target);
   data.endOfTurnTempPowerBuffs = [
     ...(data.endOfTurnTempPowerBuffs || []),

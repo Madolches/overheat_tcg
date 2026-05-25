@@ -259,6 +259,7 @@ export interface CardEffect {
   isMandatory?: boolean;
   isGlobal?: boolean; // If true, the effect triggers for any card meeting the criteria (e.g. any card entering), not just self.
   treatAsGodMarkInDeck?: boolean; // Continuous marker: this card is treated as god-marked while in deck.
+  modifiesPowerIncreaseAmount?: boolean; // Continuous marker: modifies how later positive power increases are applied.
   sourceSnapshotOnLeftField?: boolean; // Allows a left-field trigger to be queued from the source snapshot before refreshed instance IDs are applied.
   triggerPriority?: number; // Higher priority triggers are queued first for the same event.
   condition?: (gameState: GameState, playerState: PlayerState, card: Card, event?: GameEvent) => boolean;

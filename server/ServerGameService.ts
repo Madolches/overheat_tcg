@@ -94,6 +94,40 @@ export const ServerGameService = {
     });
   },
 
+  clearBattleCombatMarkers(gameState: GameState, attackerIds?: string[]) {
+    const attackerSet = attackerIds?.length ? new Set(attackerIds) : undefined;
+    const defenderId = gameState.battleState?.defender || gameState.battleState?.unitTargetId;
+    const defenderSet = defenderId ? new Set([defenderId]) : undefined;
+
+    ServerGameService.clearAllianceAttackMarkers(gameState, attackerIds);
+
+    Object.values(gameState.players || {}).forEach(player => {
+      player.unitZone.forEach(unit => {
+        if (!unit) return;
+        if (!attackerSet || attackerSet.has(unit.gamecardId)) {
+          (unit as any).isAttacking = false;
+        }
+        if (!defenderSet || defenderSet.has(unit.gamecardId)) {
+          (unit as any).isDefending = false;
+        }
+      });
+    });
+  },
+
+  clearBattleAndReturnMain(gameState: GameState, reason: string, options?: { log?: string }) {
+    const attackerIds = gameState.battleState?.attackers;
+    ServerGameService.clearBattleCombatMarkers(gameState, attackerIds);
+    gameState.battleState = undefined;
+    gameState.phase = 'MAIN';
+    gameState.previousPhase = undefined;
+    gameState.phaseTimerStart = Date.now();
+    if (options?.log) gameState.logs.push(options.log);
+    EventEngine.dispatchEvent(gameState, {
+      type: 'PHASE_CHANGED',
+      data: { phase: 'MAIN', reason }
+    });
+  },
+
   isFullEffectSilencedThisTurn(gameState: GameState, card: Card) {
     const data = (card as any).data;
     if (data?.permanentEffectSilenced) return true;
@@ -3006,13 +3040,10 @@ export const ServerGameService = {
       !gameState.isResolvingStack &&
       gameState.isCountering === 0
     ) {
-      ServerGameService.clearAllianceAttackMarkers(gameState);
-      gameState.phase = 'MAIN';
-      gameState.previousPhase = undefined;
-      gameState.battleState = undefined;
-      gameState.phaseTimerStart = Date.now();
-      await ServerGameService.dispatchEventAndDrainTriggers(gameState, { type: 'PHASE_CHANGED', data: { phase: 'MAIN', reason: 'BATTLE_INTERRUPTED' } }, onUpdate);
-      gameState.logs.push(`[阶段切换] 战斗已中止，返回主要阶段`);
+      ServerGameService.clearBattleAndReturnMain(gameState, 'BATTLE_INTERRUPTED', {
+        log: `[阶段切换] 战斗已中止，返回主要阶段`
+      });
+      await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
     }
 
     const currentPlayerId = gameState.playerIds[gameState.currentTurnPlayer];
@@ -3508,6 +3539,19 @@ export const ServerGameService = {
       const { defenderId } = query.context;
       await ServerGameService.declareDefense(gameState, playerUid, defenderId, true);
       return gameState;
+    }
+
+    if (!gameState.pendingQuery) {
+      const interruptedByChoice = ServerGameService.checkBattleInterruption(gameState);
+      if (
+        interruptedByChoice &&
+        !gameState.pendingQuery &&
+        !gameState.isResolvingStack &&
+        gameState.isCountering === 0 &&
+        gameState.phase === 'MAIN'
+      ) {
+        await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
+      }
     }
 
     if (query.callbackKey === 'RESET_AFTER_BATTLE_DESTROY_CHOICE') {
@@ -4088,6 +4132,7 @@ export const ServerGameService = {
       const attackingUnits = gameState.battleState!.attackers.map(id =>
         attacker.unitZone.find(c => c?.gamecardId === id)
       ).filter(Boolean) as Card[];
+      const attackerIds = [...(gameState.battleState?.attackers || [])];
 
       // Exhaust remaining units
       attackingUnits.forEach(u => {
@@ -4100,7 +4145,7 @@ export const ServerGameService = {
       ServerGameService.applyAllianceAnnihilationDamage(gameState, defenderId, survivors);
 
       // Cleanup battle state
-      ServerGameService.clearAllianceAttackMarkers(gameState, gameState.battleState?.attackers);
+      ServerGameService.clearBattleCombatMarkers(gameState, attackerIds);
       if (gameState.phase === 'SHENYI_CHOICE') {
         gameState.previousPhase = 'MAIN';
       } else {
@@ -6056,7 +6101,7 @@ export const ServerGameService = {
       contextPhase = gameState.previousPhase || gameState.phase;
     }
 
-    const battlePhases: GamePhase[] = ['BATTLE_DECLARATION', 'DEFENSE_DECLARATION', 'BATTLE_FREE'];
+    const battlePhases: GamePhase[] = ['BATTLE_DECLARATION', 'DEFENSE_DECLARATION', 'BATTLE_FREE', 'DAMAGE_CALCULATION'];
     if (!battlePhases.includes(contextPhase)) return false;
 
     const turnPlayerId = gameState.playerIds[gameState.currentTurnPlayer];
@@ -6091,8 +6136,10 @@ export const ServerGameService = {
     if (defenderGone || allAttackersGone) {
       gameState.logs.push(`[战斗中止] ${defenderGone ? '防御/目标单位' : '所有攻击单位'} 已离开字段，战斗中止。`);
       const interruptedBattle = gameState.battleState;
+      const interruptedAttackers = [...(interruptedBattle.attackers || [])];
 
       const inConfrontation = gameState.isResolvingStack || (gameState.counterStack && gameState.counterStack.length > 0) || gameState.isCountering > 0;
+      ServerGameService.clearBattleCombatMarkers(gameState, interruptedAttackers);
 
       if (inConfrontation) {
         if (gameState.phase === 'COUNTERING') {
