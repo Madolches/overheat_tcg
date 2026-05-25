@@ -7,8 +7,10 @@ import judgeNekomata from '../src/scripts/103000274';
 import sp02B04 from '../src/scripts/104000271';
 import sp02B01 from '../src/scripts/104010268';
 import sp02Y01 from '../src/scripts/105110284';
+import sp02Y02 from '../src/scripts/105000285';
 import sp02Y03 from '../src/scripts/105000323';
 import sp02Y09 from '../src/scripts/105000325';
+import { moveCardAsCost } from '../src/scripts/BaseUtil';
 
 type ScenarioResult = {
   name: string;
@@ -627,6 +629,45 @@ async function testCanglanBattleSupportAndMainBounce(): Promise<ScenarioResult> 
     : fail(name, `boosted=${boosted}, openedDiscard=${openedDiscard}, drewDiscarded=${drewAndDiscarded}, canglanExhausted=${canglan.isExhausted}, costs=${bounceCostsExiled}, bounced=${bounced}, query=${state.pendingQuery?.callbackKey || 'none'}`);
 }
 
+async function testCoachTriggersWhenPaidForSoulDevour(): Promise<ScenarioResult> {
+  const name = 'SP02-Y02 triggers when sent to grave as soul-devour cost';
+  const coach = cloneScriptCard(sp02Y02 as Card, 'UNIT');
+  const soulDevourSource = testCard({
+    id: 'SOUL_DEVOUR_SOURCE',
+    fullName: 'Soul Devour Source',
+    cardlocation: 'UNIT',
+  });
+  const redPick = testCard({ id: 'COACH_RED_PICK', fullName: 'Coach Red Pick', color: 'RED', cardlocation: 'DECK' });
+  const greenMiss = testCard({ id: 'COACH_GREEN_MISS', fullName: 'Coach Green Miss', color: 'GREEN', cardlocation: 'DECK' });
+  const bluePick = testCard({ id: 'COACH_BLUE_PICK', fullName: 'Coach Blue Pick', color: 'BLUE', cardlocation: 'DECK' });
+  const state = game({
+    deck: [...deckCards(5, 'BOT_COACH_DECK'), redPick, greenMiss, bluePick],
+    unitZone: [coach, soulDevourSource, null, null, null, null],
+  });
+
+  moveCardAsCost(state, 'BOT', coach, 'GRAVE', soulDevourSource);
+  await ServerGameService.checkTriggeredEffects(state);
+
+  if (state.pendingQuery?.callbackKey !== 'TRIGGER_CHOICE') {
+    return fail(name, `expected coach optional trigger, got ${state.pendingQuery?.callbackKey || 'none'}`);
+  }
+
+  await answerPendingQuery(state, 'BOT', ['YES']);
+  if (!state.pendingQuery?.options?.some((option: any) => option.id === redPick.gamecardId)) {
+    return fail(name, `expected red/blue deck selection, got ${state.pendingQuery?.callbackKey || 'none'}`);
+  }
+
+  await answerPendingQuery(state, 'BOT', [redPick.gamecardId]);
+
+  const coachInGrave = state.players.BOT.grave.some((card: Card) => card.gamecardId === coach.gamecardId);
+  const redInHand = state.players.BOT.hand.some((card: Card) => card.gamecardId === redPick.gamecardId);
+  const greenNotInHand = !state.players.BOT.hand.some((card: Card) => card.gamecardId === greenMiss.gamecardId);
+
+  return coachInGrave && redInHand && greenNotInHand && !state.pendingQuery
+    ? pass(name, `coachInGrave=${coachInGrave}, hand=${state.players.BOT.hand.length}`)
+    : fail(name, `coachInGrave=${coachInGrave}, redInHand=${redInHand}, greenNotInHand=${greenNotInHand}, query=${state.pendingQuery?.callbackKey || 'none'}`);
+}
+
 async function testTruthResetAndExtraTurn(): Promise<ScenarioResult> {
   const name = 'SP02-Y09 enters from hand, resets zones, locks attacks, and queues extra turn';
   const truth = cloneScriptCard(sp02Y09 as Card, 'HAND');
@@ -688,6 +729,7 @@ const scenarios: { name: string; run: ScenarioRun }[] = [
   { name: 'SP02-G03 Judge Nekomata declared color pays color requirement', run: testJudgeNekomataDeclaredColorPaysRequirement },
   { name: 'SP02-B01 marks non-battle leave and exhausts a field card', run: testFuhuaMarksNonBattleLeaveAndExhaustsCard },
   { name: 'SP02-B04 supports battle draw-discard and bounces opponent card', run: testCanglanBattleSupportAndMainBounce },
+  { name: 'SP02-Y02 triggers when sent to grave as soul-devour cost', run: testCoachTriggersWhenPaidForSoulDevour },
   { name: 'SP02-Y09 enters from hand, resets zones, locks attacks, and queues extra turn', run: testTruthResetAndExtraTurn },
 ];
 

@@ -65,6 +65,8 @@ import valkyrieZero from '../src/scripts/105110114';
 import chocolate from '../src/scripts/205000149';
 import devotion from '../src/scripts/201100099';
 import prayer from '../src/scripts/201000102';
+import annihilationAngels from '../src/scripts/101130104';
+import tya from '../src/scripts/101130204';
 
 type ScenarioResult = {
   name: string;
@@ -2502,6 +2504,239 @@ async function testAttackAndDamageTriggersUseUnifiedFlow(): Promise<ScenarioResu
     : fail(name, `askedAttack=${askedAttack}, attack=${attackResolved}, askedDamage=${askedDamage}, damage=${damageResolved}, phase=${state.phase}, pending=${state.pendingQuery?.callbackKey || 'none'}`);
 }
 
+async function testAnnihilationAngelsCombatDamageTriggerFinishesBattle(): Promise<ScenarioResult> {
+  const name = 'BT01-W09 Annihilation Angels trigger resolves after direct and annihilation battle damage';
+  const directAngel = cloneScriptCard(annihilationAngels as Card, 'UNIT', {
+    playedTurn: 1,
+    damage: 2,
+    baseDamage: 2,
+  });
+  const graveA = testCard({ id: 'ANGELS_GRAVE_A', fullName: 'Angels grave A', cardlocation: 'GRAVE' });
+  const graveB = testCard({ id: 'ANGELS_GRAVE_B', fullName: 'Angels grave B', cardlocation: 'GRAVE' });
+  const directState = game({
+    grave: [graveA, graveB],
+    erosionFront: [testCard({ id: 'ANGELS_EROSION_1', cardlocation: 'EROSION_FRONT' })],
+    unitZone: [directAngel, null, null, null, null, null],
+  }, {}, {
+    phase: 'DAMAGE_CALCULATION',
+    battleState: {
+      attackers: [directAngel.gamecardId],
+      isAlliance: false,
+      resolvedUnitIds: [],
+      battleId: 'angels_direct_battle',
+    },
+  });
+
+  await ServerGameService.resolveDamage(directState);
+  const directAsked = directState.pendingQuery?.context?.effectId === '101130104_damage_bottom';
+  if (directAsked) {
+    await ServerGameService.handleQueryChoice(directState, 'BOT', directState.pendingQuery.id, ['YES']);
+  }
+  if (directState.pendingQuery?.context?.effectId === '101130104_damage_bottom') {
+    await ServerGameService.handleQueryChoice(directState, 'BOT', directState.pendingQuery.id, [graveA.gamecardId, graveB.gamecardId]);
+  }
+  const directFinished = directState.phase === 'MAIN' && !directState.battleState && !directState.pendingQuery;
+  const directBottomed = directState.players.BOT.deck.some((card: Card) => card.gamecardId === graveA.gamecardId) &&
+    directState.players.BOT.deck.some((card: Card) => card.gamecardId === graveB.gamecardId);
+
+  const allianceAngel = cloneScriptCard(annihilationAngels as Card, 'UNIT', {
+    playedTurn: 1,
+    damage: 2,
+    baseDamage: 2,
+    isAnnihilation: false,
+    baseAnnihilation: false,
+  });
+  const ally = testCard({
+    id: 'ANGELS_ALLY',
+    fullName: 'Angels Ally',
+    cardlocation: 'UNIT',
+    color: 'WHITE',
+    power: 500,
+    basePower: 500,
+    damage: 1,
+    baseDamage: 1,
+    playedTurn: 1,
+  });
+  const defender = testCard({
+    id: 'ANGELS_DEFENDER',
+    fullName: 'Angels Defender',
+    cardlocation: 'UNIT',
+    power: 1000,
+    basePower: 1000,
+  });
+  const graveC = testCard({ id: 'ANGELS_GRAVE_C', fullName: 'Angels grave C', cardlocation: 'GRAVE' });
+  const graveD = testCard({ id: 'ANGELS_GRAVE_D', fullName: 'Angels grave D', cardlocation: 'GRAVE' });
+  const annihilationState = game({
+    grave: [graveC, graveD],
+    erosionFront: [testCard({ id: 'ANGELS_EROSION_2', cardlocation: 'EROSION_FRONT' })],
+    unitZone: [allianceAngel, ally, null, null, null, null],
+  }, {
+    unitZone: [defender, null, null, null, null, null],
+  }, {
+    phase: 'DAMAGE_CALCULATION',
+    battleState: {
+      attackers: [allianceAngel.gamecardId, ally.gamecardId],
+      defender: defender.gamecardId,
+      unitTargetId: defender.gamecardId,
+      isAlliance: true,
+      resolvedUnitIds: [],
+      battleId: 'angels_annihilation_battle',
+    },
+  });
+  allianceAngel.inAllianceGroup = true;
+  ally.inAllianceGroup = true;
+  EventEngine.recalculateContinuousEffects(annihilationState);
+
+  await ServerGameService.resolveDamage(annihilationState);
+  const annihilationAsked = annihilationState.pendingQuery?.context?.effectId === '101130104_damage_bottom';
+  const annihilationDamage = annihilationState.players.P1.erosionFront.length === 2;
+  if (annihilationAsked) {
+    await ServerGameService.handleQueryChoice(annihilationState, 'BOT', annihilationState.pendingQuery.id, ['YES']);
+  }
+  if (annihilationState.pendingQuery?.context?.effectId === '101130104_damage_bottom') {
+    await ServerGameService.handleQueryChoice(annihilationState, 'BOT', annihilationState.pendingQuery.id, [graveC.gamecardId, graveD.gamecardId]);
+  }
+  const annihilationFinished = annihilationState.phase === 'MAIN' && !annihilationState.battleState && !annihilationState.pendingQuery;
+  const annihilationBottomed = annihilationState.players.BOT.deck.some((card: Card) => card.gamecardId === graveC.gamecardId) &&
+    annihilationState.players.BOT.deck.some((card: Card) => card.gamecardId === graveD.gamecardId);
+
+  const sacrificeAngel = cloneScriptCard(annihilationAngels as Card, 'UNIT', {
+    playedTurn: 1,
+    power: 2500,
+    basePower: 2500,
+    damage: 2,
+    baseDamage: 2,
+    isAnnihilation: false,
+    baseAnnihilation: false,
+  });
+  const sacrificeAlly = testCard({
+    id: 'ANGELS_SACRIFICE_ALLY',
+    fullName: 'Angels Sacrifice Ally',
+    cardlocation: 'UNIT',
+    color: 'WHITE',
+    power: 1000,
+    basePower: 1000,
+    damage: 1,
+    baseDamage: 1,
+    playedTurn: 1,
+  });
+  const sacrificeDefender = testCard({
+    id: 'ANGELS_SACRIFICE_DEFENDER',
+    fullName: 'Angels Sacrifice Defender',
+    cardlocation: 'UNIT',
+    power: 3000,
+    basePower: 3000,
+  });
+  const graveE = testCard({ id: 'ANGELS_GRAVE_E', fullName: 'Angels grave E', cardlocation: 'GRAVE' });
+  const graveF = testCard({ id: 'ANGELS_GRAVE_F', fullName: 'Angels grave F', cardlocation: 'GRAVE' });
+  const sacrificeState = game({
+    grave: [graveE, graveF],
+    erosionFront: [testCard({ id: 'ANGELS_EROSION_3', cardlocation: 'EROSION_FRONT' })],
+    unitZone: [sacrificeAngel, sacrificeAlly, null, null, null, null],
+  }, {
+    unitZone: [sacrificeDefender, null, null, null, null, null],
+  }, {
+    phase: 'DAMAGE_CALCULATION',
+    battleState: {
+      attackers: [sacrificeAngel.gamecardId, sacrificeAlly.gamecardId],
+      defender: sacrificeDefender.gamecardId,
+      unitTargetId: sacrificeDefender.gamecardId,
+      isAlliance: true,
+      resolvedUnitIds: [],
+      battleId: 'angels_alliance_sacrifice_battle',
+    },
+  });
+  sacrificeAngel.inAllianceGroup = true;
+  sacrificeAlly.inAllianceGroup = true;
+  EventEngine.recalculateContinuousEffects(sacrificeState);
+
+  await ServerGameService.resolveDamage(sacrificeState);
+  const askedSacrifice = sacrificeState.pendingQuery?.callbackKey === 'ALLIANCE_DESTRUCTION_RESOLVE';
+  if (askedSacrifice) {
+    await ServerGameService.handleQueryChoice(sacrificeState, 'BOT', sacrificeState.pendingQuery.id, [sacrificeAlly.gamecardId]);
+  }
+  const sacrificeAskedTrigger = sacrificeState.pendingQuery?.context?.effectId === '101130104_damage_bottom';
+  const sacrificeDamage = sacrificeState.players.P1.erosionFront.length === 2;
+  if (sacrificeAskedTrigger) {
+    await ServerGameService.handleQueryChoice(sacrificeState, 'BOT', sacrificeState.pendingQuery.id, ['YES']);
+  }
+  if (sacrificeState.pendingQuery?.context?.effectId === '101130104_damage_bottom') {
+    await ServerGameService.handleQueryChoice(sacrificeState, 'BOT', sacrificeState.pendingQuery.id, [graveE.gamecardId, graveF.gamecardId]);
+  }
+  const sacrificeFinished = sacrificeState.phase === 'MAIN' && !sacrificeState.battleState && !sacrificeState.pendingQuery;
+  const sacrificeAngelSurvived = sacrificeState.players.BOT.unitZone.some((card: Card | null) => card?.gamecardId === sacrificeAngel.gamecardId);
+
+  return directAsked && directFinished && directBottomed && annihilationAsked && annihilationDamage && annihilationFinished && annihilationBottomed &&
+    askedSacrifice && sacrificeAskedTrigger && sacrificeDamage && sacrificeFinished && sacrificeAngelSurvived
+    ? pass(name, `direct=${directFinished}/${directBottomed}, annihilation=${annihilationDamage}/${annihilationFinished}/${annihilationBottomed}, sacrifice=${sacrificeDamage}/${sacrificeFinished}`)
+    : fail(name, `directAsked=${directAsked}, directFinished=${directFinished}, directBottomed=${directBottomed}, annihilationAsked=${annihilationAsked}, damage=${annihilationDamage}, annihilationFinished=${annihilationFinished}, annihilationBottomed=${annihilationBottomed}, askedSacrifice=${askedSacrifice}, sacrificeTrigger=${sacrificeAskedTrigger}, sacrificeDamage=${sacrificeDamage}, sacrificeFinished=${sacrificeFinished}, survived=${sacrificeAngelSurvived}, phase=${sacrificeState.phase}, pending=${sacrificeState.pendingQuery?.callbackKey || annihilationState.pendingQuery?.callbackKey || directState.pendingQuery?.callbackKey || 'none'}`);
+}
+
+async function testTyaHeroicAuraStopsOutsideZeroToThree(): Promise<ScenarioResult> {
+  const name = 'BT03-W05 Tya heroic aura stops outside 0-3 erosion';
+  const tyaUnit = cloneScriptCard(tya as Card, 'UNIT', { baseHeroic: false, isHeroic: false });
+  const ally = testCard({
+    id: 'TYA_ALLY',
+    fullName: 'Tya Ally',
+    cardlocation: 'UNIT',
+    color: 'WHITE',
+    godMark: false,
+    baseHeroic: false,
+    isHeroic: false,
+    power: 1000,
+    basePower: 1000,
+    damage: 1,
+    baseDamage: 1,
+  });
+  const godAlly = testCard({
+    id: 'TYA_GOD_ALLY',
+    fullName: 'Tya God Ally',
+    cardlocation: 'UNIT',
+    color: 'WHITE',
+    godMark: true,
+    baseHeroic: false,
+    isHeroic: false,
+    power: 1000,
+    basePower: 1000,
+    damage: 1,
+    baseDamage: 1,
+  });
+  const state = game({
+    erosionFront: [
+      testCard({ id: 'TYA_EROSION_1', cardlocation: 'EROSION_FRONT' }),
+      testCard({ id: 'TYA_EROSION_2', cardlocation: 'EROSION_FRONT' }),
+      testCard({ id: 'TYA_EROSION_3', cardlocation: 'EROSION_FRONT' }),
+    ],
+    unitZone: [tyaUnit, ally, godAlly, null, null, null],
+  });
+
+  EventEngine.recalculateContinuousEffects(state);
+  const auraActive =
+    tyaUnit.isHeroic === true &&
+    ally.isHeroic === true &&
+    tyaUnit.power === 3000 &&
+    ally.power === 1500 &&
+    tyaUnit.damage === 3 &&
+    ally.damage === 2 &&
+    godAlly.isHeroic !== true &&
+    godAlly.power === 1000 &&
+    godAlly.damage === 1;
+
+  state.players.BOT.erosionFront.push(testCard({ id: 'TYA_EROSION_4', cardlocation: 'EROSION_FRONT' }));
+  EventEngine.recalculateContinuousEffects(state);
+  const auraExpired =
+    tyaUnit.isHeroic !== true &&
+    ally.isHeroic !== true &&
+    tyaUnit.power === 2500 &&
+    ally.power === 1000 &&
+    tyaUnit.damage === 2 &&
+    ally.damage === 1;
+
+  return auraActive && auraExpired
+    ? pass(name, `active=${auraActive}, expired=${auraExpired}`)
+    : fail(name, `active=${auraActive}, expired=${auraExpired}, tya=${tyaUnit.isHeroic}/${tyaUnit.power}/${tyaUnit.damage}, ally=${ally.isHeroic}/${ally.power}/${ally.damage}, god=${godAlly.isHeroic}/${godAlly.power}/${godAlly.damage}`);
+}
+
 async function testMandatoryEndTurnOrderWithValkyrieAndGreatAlchemist(): Promise<ScenarioResult> {
   const name = 'Mandatory end triggers ask order for Valkyrie Zero Forbidden Alchemy and Great Alchemist loss';
   const zero = cloneScriptCard(valkyrieZero as Card, 'UNIT');
@@ -2667,6 +2902,8 @@ const scenarios: ScenarioRun[] = [
   testNonEndTriggerBucketsUseUnifiedOrder,
   testMainPhaseStartTriggersBeforeActions,
   testAttackAndDamageTriggersUseUnifiedFlow,
+  testAnnihilationAngelsCombatDamageTriggerFinishesBattle,
+  testTyaHeroicAuraStopsOutsideZeroToThree,
   testMandatoryEndTurnOrderWithValkyrieAndGreatAlchemist,
   testTriggerOrderAcceptsDisplayedCardIds,
   testSerializedVirtualEndTriggersResolve,

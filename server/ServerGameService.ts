@@ -4128,6 +4128,14 @@ export const ServerGameService = {
       // Annihilation for survivor
       const survivors = attackingUnits.filter(u => u.gamecardId !== selectedId);
       ServerGameService.applyAllianceAnnihilationDamage(gameState, defenderId, survivors);
+      await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
+      if (gameState.pendingQuery) {
+        (gameState as any).pendingBattleEndAfterQuery = {
+          attackerIds: gameState.battleState.attackers || [],
+          attackerPlayerId: attackerId
+        };
+        return gameState;
+      }
 
       // Cleanup battle state
       ServerGameService.clearAllianceAttackMarkers(gameState, gameState.battleState?.attackers);
@@ -4762,7 +4770,8 @@ export const ServerGameService = {
             isAlliance: !!gameState.battleState.isAlliance
           }
         });
-        if (gameState.pendingQuery) return gameState;
+        // Keep running battle cleanup even if combat-damage triggers opened a query.
+        // Query resolution will finish the pending battle after the trigger settles.
       }
     } else {
       // Unit combat

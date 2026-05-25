@@ -677,12 +677,16 @@ export class EventEngine {
         card.effects?.some(effect => effect.type === 'CONTINUOUS' && effect.content === 'SELF_HAND_COST')
       );
       const activeZones = [...player.unitZone, ...player.itemZone, ...player.erosionFront, ...handContinuousCards];
-      activeZones.forEach(card => {
+      const continuousEntries = activeZones.flatMap((card, zoneIndex) => {
+        if (!card || !card.effects || this.isFullEffectSilenced(gameState, card)) return [];
+        return card.effects.map((effect, effectIndex) => ({ card, effect, zoneIndex, effectIndex }));
+      }).sort((a, b) =>
+        (b.effect.continuousPriority || 0) - (a.effect.continuousPriority || 0) ||
+        a.zoneIndex - b.zoneIndex ||
+        a.effectIndex - b.effectIndex
+      );
+      continuousEntries.forEach(({ card, effect }) => {
         if (card && card.effects) {
-          if (this.isFullEffectSilenced(gameState, card)) {
-            return;
-          }
-          card.effects.forEach(effect => {
             const cardLoc = card.cardlocation as TriggerLocation;
             if (effect.type === 'CONTINUOUS' && !this.isContinuousEffectActiveAtLocation(card, effect, cardLoc)) {
               return;
@@ -718,7 +722,6 @@ export class EventEngine {
                 AtomicEffectExecutor.execute(gameState, player.uid, atomic, card);
               });
             }
-          });
         }
       });
     };

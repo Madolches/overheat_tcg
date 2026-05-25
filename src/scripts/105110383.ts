@@ -62,7 +62,7 @@ const cardEffects: CardEffect[] = [{
   id: '105110383_creation_scar_stats',
   type: 'CONTINUOUS',
   triggerLocation: ['UNIT'],
-  erosionBackLimit: [2, 99],
+  erosionBackLimit: [3, 99],
   description: '创痕：这张卡伤害+2，力量+1500，并获得【英勇】。',
   applyContinuous: (_gameState, instance) => {
     addContinuousDamage(instance, instance, 2);

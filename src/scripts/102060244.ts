@@ -5,6 +5,7 @@ const cardEffects: CardEffect[] = [{
   id: '102060244_power_bonus',
   type: 'CONTINUOUS',
   triggerLocation: ['UNIT'],
+  continuousPriority: 100,
   description: '处理将你的单位力量值上升的卡效果时，上升数值+500。',
   applyContinuous: (gameState, instance) => {
     const ownerUid = ownerUidOf(gameState, instance);

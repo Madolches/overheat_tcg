@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { allCardsOnField, attackingUnits, createSelectCardQuery, destroyByEffect, ensureData, isBattleFreeContext, totalErosionCount, untilOpponentEndTurn } from './BaseUtil';
+import { allCardsOnField, attackingUnits, backErosionCount, createSelectCardQuery, destroyByEffect, ensureData, isBattleFreeContext, untilOpponentEndTurn } from './BaseUtil';
 
 const HOLY_KINGDOM = '圣王国';
 
@@ -43,12 +43,12 @@ const cardEffects: CardEffect[] = [{
   type: 'ACTIVATE',
   triggerLocation: ['UNIT'],
   limitCount: 1,
-  erosionTotalLimit: [2, 99],
+  erosionBackLimit: [2, 99],
   description: '创痕2，1回合1次：这个单位与<圣王国>单位的联军攻击的战斗自由步骤中，选择对手战场1张非神蚀卡破坏。',
   condition: (gameState, playerState, instance) =>
     isBattleFreeContext(gameState) &&
     instance.cardlocation === 'UNIT' &&
-    totalErosionCount(playerState) >= 2 &&
+    backErosionCount(playerState) >= 2 &&
     isYukatiaAllianceAttack(gameState, playerState, instance) &&
     nonGodOpponentFieldCards(gameState, playerState.uid).length > 0,
   execute: async (instance, gameState, playerState) => {

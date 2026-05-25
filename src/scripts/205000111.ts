@@ -40,8 +40,9 @@ const cardEffects: CardEffect[] = [story(
       if (target && ['UNIT', 'ITEM'].includes(target.cardlocation || '') && revealed.some(card => isVirtualGodMarkReveal(gameState, card))) {
         destroyByEffect(gameState, target, instance);
       }
-      if (instance.cardlocation === 'PLAY') {
-        moveCard(gameState, playerState.uid, instance, 'EXILE', instance);
+      const liveSelf = AtomicEffectExecutor.findCardById(gameState, instance.gamecardId);
+      if (liveSelf?.cardlocation === 'PLAY') {
+        moveCard(gameState, playerState.uid, liveSelf, 'EXILE', instance);
       }
       await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'SHUFFLE_DECK' }, instance);
     }
