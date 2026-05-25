@@ -38,7 +38,6 @@ const LOG_FILTERS = [
   { value: 'CARD_PLAYED', label: '打出' },
   { value: 'EFFECT_ACTIVATED', label: '效果' },
   { value: 'TRIGGERED_EFFECT', label: '诱发' },
-  { value: 'MOVED', label: '移动' },
   { value: 'BATTLE', label: '战斗' },
   { value: 'CONFRONTATION', label: '对抗' },
   { value: 'SYSTEM', label: '系统' }

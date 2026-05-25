@@ -49,6 +49,37 @@ export function addBattleLog(gameState: GameState, input: BattleLogInput) {
   gameState.logs.push(createBattleLogEntry(gameState, input));
 }
 
+export function addCardAddedToHandBattleLog(
+  gameState: GameState,
+  input: {
+    playerUid: string;
+    card: Card;
+    sourceCard?: Card | null;
+    actorUid?: string;
+    fromZone?: TriggerLocation;
+    isEffect?: boolean;
+  }
+) {
+  const player = gameState.players?.[input.playerUid];
+  const actorUid = input.actorUid || input.playerUid;
+  const actor = gameState.players?.[actorUid];
+  const sourceText = input.sourceCard?.fullName ? ` 因 [${input.sourceCard.fullName}]` : '';
+
+  addBattleLog(gameState, {
+    category: 'EFFECT_ACTIVATED',
+    actorUid,
+    actorName: actor?.displayName,
+    sourceCard: input.sourceCard ? cardToBattleLogRef(gameState, input.sourceCard, actorUid) : undefined,
+    targets: [cardToBattleLogRef(gameState, input.card, input.playerUid, 'HAND')!],
+    text: `[加入手牌] ${player?.displayName || '玩家'}${sourceText} 将 [${input.card.fullName}] 加入手牌。`,
+    metadata: {
+      sourceZone: input.fromZone,
+      targetZone: 'HAND',
+      isEffect: !!input.isEffect
+    }
+  });
+}
+
 export function normalizeBattleLogEntry(log: string | BattleLogEntry, gameState: Pick<GameState, 'turnCount' | 'phase'>, index = 0): BattleLogEntry {
   if (isBattleLogEntry(log)) {
     return {

@@ -2,8 +2,8 @@ import { GameState, PlayerState, Card, Deck, TriggerLocation, CardEffect, StackI
 import { EventEngine } from '../src/services/EventEngine';
 import { AtomicEffectExecutor } from '../src/services/AtomicEffectExecutor';
 import { clearBattlefieldState, shouldClearBattlefieldStateOnMove } from '../src/lib/cardState';
-import { getCardIdentity, getLocationLabel } from '../src/lib/utils';
-import { addBattleLog, cardToBattleLogRef, describeBattleLogTarget } from '../src/lib/battleLog';
+import { getCardIdentity } from '../src/lib/utils';
+import { addBattleLog, addCardAddedToHandBattleLog, cardToBattleLogRef, describeBattleLogTarget } from '../src/lib/battleLog';
 import { SERVER_CARD_LIBRARY } from './card_loader';
 import { GameService } from '../src/services/gameService';
 import { grantedTotemReviveFromGrave, isAlchemyCard, isOpponentAcAtMost, isProtectedGraveCardFromOpponentEffect, standardizeChoiceOptions } from '../src/scripts/BaseUtil';
@@ -1827,15 +1827,21 @@ export const ServerGameService = {
       skipLeftFieldEvent: clearsBattlefieldState
     });
 
-    if (sourceZone !== targetZone && !options?.suppressLog) {
-      addBattleLog(gameState, {
-        category: ['UNIT', 'ITEM'].includes(sourceZone) && ['GRAVE', 'EXILE', 'HAND', 'DECK'].includes(targetZone) ? 'MOVED' : 'MOVED',
-        actorUid: options?.effectSourcePlayerUid || sourcePlayerId,
-        actorName: gameState.players[options?.effectSourcePlayerUid || sourcePlayerId]?.displayName,
-        sourceCard: options?.effectSourceCardId ? cardToBattleLogRef(gameState, ServerGameService.findCardById(gameState, options.effectSourceCardId), options.effectSourcePlayerUid) : undefined,
-        targets: [cardToBattleLogRef(gameState, card, targetPlayerId, targetZone)!],
-        text: `[移动] ${sourcePlayer.displayName} 的 [${card.fullName}] 从 ${sourcePlayer.displayName}的${getLocationLabel(sourceZone)} 移动到 ${targetPlayer.displayName}的${getLocationLabel(targetZone)}。`,
-        metadata: { sourceZone, targetZone, isEffect: !!options?.isEffect }
+    if (
+      sourceZone !== targetZone &&
+      !options?.suppressLog &&
+      options?.isEffect &&
+      targetZone === 'HAND'
+    ) {
+      addCardAddedToHandBattleLog(gameState, {
+        playerUid: targetPlayerId,
+        actorUid: options.effectSourcePlayerUid || sourcePlayerId,
+        card,
+        sourceCard: options.effectSourceCardId
+          ? ServerGameService.findCardById(gameState, options.effectSourceCardId)
+          : undefined,
+        fromZone: sourceZone,
+        isEffect: true
       });
     }
 

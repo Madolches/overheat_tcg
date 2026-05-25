@@ -3,6 +3,7 @@ import { GameService } from './gameService';
 import { EventEngine } from './EventEngine';
 import { clearBattlefieldState, shouldClearBattlefieldStateOnMove } from '../lib/cardState';
 import { getCardIdentity } from '../lib/utils';
+import { addCardAddedToHandBattleLog } from '../lib/battleLog';
 
 const isAlchemySourceCard = (card?: Card | null) =>
   !!card &&
@@ -1522,6 +1523,17 @@ export class AtomicEffectExecutor {
       });
     } else {
       this.dispatchMovementEvents(gameState, playerUid, card, fromZone, toZone, isEffect, options);
+    }
+
+    if (fromZone !== toZone && isEffect && toZone === 'HAND') {
+      addCardAddedToHandBattleLog(gameState, {
+        playerUid: toPlayerUid,
+        actorUid: options?.effectSourcePlayerUid || playerUid,
+        card,
+        sourceCard: options?.effectSourceCardId ? this.findCardById(gameState, options.effectSourceCardId) : undefined,
+        fromZone,
+        isEffect: true
+      });
     }
 
     if (graveToDeckReplacementControllerUid) {
