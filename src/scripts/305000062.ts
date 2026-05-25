@@ -84,7 +84,7 @@ const cardEffects: CardEffect[] = [{
 const card: Card = {
   id: '305000062',
   fullName: '永生石',
-  specialName: '',
+  specialName: '永生石',
   type: 'ITEM',
   color: 'YELLOW',
   gamecardId: null as any,

@@ -2,6 +2,7 @@ import { Card, CardEffect } from '../types/game';
 import {
   AtomicEffectExecutor,
   canPutCardOntoBattlefieldByEffect,
+  collectHighAlchemyMaterialColors,
   createSelectCardQuery,
   moveCard,
   putCardOntoField
@@ -17,6 +18,21 @@ const deckCandidates = (playerState: any) =>
     canPutCardOntoBattlefieldByEffect(playerState, card)
   );
 
+const deckCandidatesForMaterials = (playerState: any, selectedMaterials: Card[]) => {
+  const highAlchemyContext = {
+    highAlchemyMaterialColors: collectHighAlchemyMaterialColors(selectedMaterials),
+    highAlchemyMaterialCount: selectedMaterials.length,
+  };
+  return playerState.deck.filter((card: Card) =>
+    !card.godMark &&
+    (card.type === 'UNIT' || card.type === 'ITEM') &&
+    canPutCardOntoBattlefieldByEffect(playerState, card, highAlchemyContext)
+  );
+};
+
+const possibleDeckCandidates = (playerState: any) =>
+  deckCandidatesForMaterials(playerState, ownFieldCards(playerState));
+
 const effect_205000103_high_alchemy: CardEffect = {
   id: '205000103_high_alchemy',
   type: 'ACTIVATE',
@@ -28,7 +44,7 @@ const effect_205000103_high_alchemy: CardEffect = {
     playerState.isTurn &&
     gameState.phase === 'MAIN' &&
     ownFieldCards(playerState).length >= 2 &&
-    deckCandidates(playerState).length > 0,
+    possibleDeckCandidates(playerState).length > 0,
   execute: async (instance, gameState, playerState) => {
     const field = ownFieldCards(playerState);
     createSelectCardQuery(
@@ -44,14 +60,15 @@ const effect_205000103_high_alchemy: CardEffect = {
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'SEND_FIELD') {
-      selections.forEach(cardId => {
-        const target = AtomicEffectExecutor.findCardById(gameState, cardId);
-        const ownerUid = target ? AtomicEffectExecutor.findCardOwnerKey(gameState, target.gamecardId) : undefined;
-        if (target && ownerUid === playerState.uid && (target.cardlocation === 'UNIT' || target.cardlocation === 'ITEM')) {
-          moveCard(gameState, playerState.uid, target, 'GRAVE', instance);
-        }
-      });
-      const candidates = deckCandidates(playerState);
+      const selectedMaterials = selections
+        .map(cardId => AtomicEffectExecutor.findCardById(gameState, cardId))
+        .filter((target: Card | undefined): target is Card => {
+          const ownerUid = target ? AtomicEffectExecutor.findCardOwnerKey(gameState, target.gamecardId) : undefined;
+          return !!target && ownerUid === playerState.uid && (target.cardlocation === 'UNIT' || target.cardlocation === 'ITEM');
+        });
+      selectedMaterials.forEach(target => moveCard(gameState, playerState.uid, target, 'GRAVE', instance));
+      const materialColors = collectHighAlchemyMaterialColors(selectedMaterials);
+      const candidates = deckCandidatesForMaterials(playerState, selectedMaterials);
       if (candidates.length === 0) return;
       createSelectCardQuery(
         gameState,
@@ -61,7 +78,13 @@ const effect_205000103_high_alchemy: CardEffect = {
         '从你的卡组选择1张非神蚀卡放置到战场。',
         1,
         1,
-        { sourceCardId: instance.gamecardId, effectId: '205000103_high_alchemy', step: 'PUT_CARD' },
+        {
+          sourceCardId: instance.gamecardId,
+          effectId: '205000103_high_alchemy',
+          step: 'PUT_CARD',
+          materialColors,
+          materialCount: selectedMaterials.length,
+        },
         () => 'DECK'
       );
       return;
@@ -69,8 +92,13 @@ const effect_205000103_high_alchemy: CardEffect = {
 
     if (context?.step !== 'PUT_CARD') return;
     const selected = AtomicEffectExecutor.findCardById(gameState, selections[0]);
-    if (!selected || selected.cardlocation !== 'DECK' || selected.godMark) return;
-    const moved = putCardOntoField(gameState, playerState.uid, selected, instance);
+    const highAlchemyContext = {
+      highAlchemyMaterialColors: context.materialColors || [],
+      highAlchemyMaterialCount: Number(context.materialCount || 0),
+    };
+    if (!selected || selected.cardlocation !== 'DECK' || selected.godMark ||
+      !canPutCardOntoBattlefieldByEffect(playerState, selected, highAlchemyContext)) return;
+    const moved = putCardOntoField(gameState, playerState.uid, selected, instance, highAlchemyContext);
     if (!moved) return;
   }
 };

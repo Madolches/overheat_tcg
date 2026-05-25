@@ -2,6 +2,7 @@ import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import {
   canPutUnitOntoBattlefield,
+  collectHighAlchemyMaterialColors,
   createSelectCardQuery,
   ensureData,
   exhaustCost,
@@ -20,6 +21,20 @@ const costCards = (playerState: any, instance: Card) => [
 
 const deckTargets = (playerState: any) =>
   playerState.deck.filter((card: Card) => isNonGodUnit(card) && canPutUnitOntoBattlefield(playerState, card));
+
+const deckTargetsForMaterials = (playerState: any, selectedMaterials: Card[]) => {
+  const highAlchemyContext = {
+    highAlchemyMaterialColors: collectHighAlchemyMaterialColors(selectedMaterials),
+    highAlchemyMaterialCount: selectedMaterials.length,
+  };
+  return playerState.deck.filter((card: Card) =>
+    isNonGodUnit(card) &&
+    canPutUnitOntoBattlefield(playerState, card, highAlchemyContext)
+  );
+};
+
+const possibleDeckTargets = (playerState: any, instance: Card) =>
+  deckTargetsForMaterials(playerState, costCards(playerState, instance));
 
 const markHighAlchemy = (gameState: any, target: Card, source: Card, materialColors: string[]) => {
   const data = ensureData(target);
@@ -42,7 +57,7 @@ const cardEffects: CardEffect[] = [{
     gameState.phase === 'MAIN' &&
     !instance.isExhausted &&
     costCards(playerState, instance).length >= 3 &&
-    deckTargets(playerState).length > 0,
+    possibleDeckTargets(playerState, instance).length > 0,
   cost: exhaustCost,
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
@@ -65,17 +80,25 @@ const cardEffects: CardEffect[] = [{
           !!card && costCards(playerState, instance).some(candidate => candidate.gamecardId === card.gamecardId)
         );
       if (selected.length < 3) return;
-      const materialColors = selected.map(card => card.color);
+      const materialColors = collectHighAlchemyMaterialColors(selected);
       selected.forEach(card => moveCardAsCost(gameState, playerState.uid, card, 'GRAVE', instance));
+      const candidates = deckTargetsForMaterials(playerState, selected);
+      if (candidates.length === 0) return;
       createSelectCardQuery(
         gameState,
         playerState.uid,
-        deckTargets(playerState),
+        candidates,
         '选择炼金单位',
         '选择卡组中的1张非神蚀单位放置到战场。',
         1,
         1,
-        { sourceCardId: instance.gamecardId, effectId: '105110404_high_alchemy_put_unit', step: 'PUT_UNIT', materialColors },
+        {
+          sourceCardId: instance.gamecardId,
+          effectId: '105110404_high_alchemy_put_unit',
+          step: 'PUT_UNIT',
+          materialColors,
+          materialCount: selected.length,
+        },
         () => 'DECK'
       );
       return;
@@ -83,9 +106,14 @@ const cardEffects: CardEffect[] = [{
 
     if (context?.step !== 'PUT_UNIT') return;
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
-    if (!target || !deckTargets(playerState).some(card => card.gamecardId === target.gamecardId)) return;
+    const highAlchemyContext = {
+      highAlchemyMaterialColors: context.materialColors || [],
+      highAlchemyMaterialCount: Number(context.materialCount || 0),
+    };
+    if (!target || target.cardlocation !== 'DECK' || !isNonGodUnit(target) ||
+      !canPutUnitOntoBattlefield(playerState, target, highAlchemyContext)) return;
     const targetId = target.gamecardId;
-    if (!putUnitOntoField(gameState, playerState.uid, target, instance)) return;
+    if (!putUnitOntoField(gameState, playerState.uid, target, instance, highAlchemyContext)) return;
     const moved = AtomicEffectExecutor.findCardById(gameState, targetId);
     if (moved) markHighAlchemy(gameState, moved, instance, context.materialColors || []);
     await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'SHUFFLE_DECK' }, instance);

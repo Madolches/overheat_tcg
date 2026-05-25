@@ -3,6 +3,7 @@ import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 export { AtomicEffectExecutor };
 import { EventEngine } from '../services/EventEngine';
 import { getCardWealthValue, getPlayerWealthCount } from '../lib/wealth';
+import { HighAlchemyEntryContext, satisfiesHighAlchemyEntryRestriction } from '../lib/highAlchemy';
 
 const VIRTUAL_GOD_MARK_IDS = new Set(['105000472', '105000473']);
 
@@ -676,7 +677,14 @@ export const moveCard = (
   card: Card,
   toZone: TriggerLocation,
   sourceCard?: Card,
-  options?: { insertAtBottom?: boolean; faceDown?: boolean; toPlayerUid?: string; targetIndex?: number }
+  options?: {
+    insertAtBottom?: boolean;
+    faceDown?: boolean;
+    toPlayerUid?: string;
+    targetIndex?: number;
+    highAlchemyMaterialColors?: string[];
+    highAlchemyMaterialCount?: number;
+  }
 ) => {
   const targetPlayerUid = options?.toPlayerUid || ownerUid;
   if (sourceCard && isUnaffectedByCardEffect(gameState, card, sourceCard, options?.toPlayerUid ? ownerUidOf(gameState, sourceCard) : undefined)) {
@@ -694,6 +702,8 @@ export const moveCard = (
       insertAtBottom: options?.insertAtBottom,
       faceDown: options?.faceDown,
       targetIndex: options?.targetIndex,
+      highAlchemyMaterialColors: options?.highAlchemyMaterialColors,
+      highAlchemyMaterialCount: options?.highAlchemyMaterialCount,
       effectSourcePlayerUid: (sourceCard ? AtomicEffectExecutor.findCardOwnerKey(gameState, sourceCard.gamecardId) : ownerUid) || ownerUid,
       effectSourceCardId: sourceCard?.gamecardId
     }
@@ -773,10 +783,38 @@ export const findUnitOnBattlefield = (gameState: GameState, gamecardId?: string)
   return getBattlefieldUnits(gameState).find(card => card.gamecardId === gamecardId);
 };
 
-export const canPutUnitOntoBattlefield = (player: PlayerState, card: Card) =>
+export type PutOntoBattlefieldContext = HighAlchemyEntryContext;
+
+export const highAlchemyMaterialColorsOf = (card: Card) => {
+  const colors = new Set<string>();
+  if (card.color && card.color !== 'NONE') colors.add(card.color);
+
+  [
+    ...(((card as any).temporaryExtraColors || []) as string[]),
+    ...(((card as any).persistentExtraColors || []) as string[]),
+  ]
+    .filter(color => typeof color === 'string' && color !== 'NONE')
+    .forEach(color => colors.add(color));
+
+  if ((card.id === '105000384' || card.id === '305000062') && (card.cardlocation === 'UNIT' || card.cardlocation === 'ITEM')) {
+    ['RED', 'WHITE', 'YELLOW', 'BLUE', 'GREEN'].forEach(color => colors.add(color));
+  }
+
+  return Array.from(colors);
+};
+
+export const collectHighAlchemyMaterialColors = (cards: Card[]) =>
+  Array.from(new Set(cards.flatMap(card => highAlchemyMaterialColorsOf(card))));
+
+export const canPutUnitOntoBattlefield = (
+  player: PlayerState,
+  card: Card,
+  context?: PutOntoBattlefieldContext
+) =>
   card.type === 'UNIT' &&
   player.unitZone.some(slot => slot === null) &&
-  (!card.specialName || !player.unitZone.some(unit => unit?.specialName === card.specialName));
+  (!card.specialName || !player.unitZone.some(unit => unit?.specialName === card.specialName)) &&
+  satisfiesHighAlchemyEntryRestriction(card, context);
 
 export const canPutItemOntoBattlefield = (player: PlayerState, card: Card) =>
   card.type === 'ITEM' &&
@@ -824,7 +862,11 @@ export const isNonGodAccessLe3UnitOrItem = (card: Card) =>
   (card.type === 'UNIT' || card.type === 'ITEM') &&
   (card.acValue || 0) <= 3;
 
-export const canPutCardOntoBattlefieldByEffect = (playerState: PlayerState, card: Card) => {
+export const canPutCardOntoBattlefieldByEffect = (
+  playerState: PlayerState,
+  card: Card,
+  context?: PutOntoBattlefieldContext
+) => {
   if (playerState.factionLock && card.faction !== playerState.factionLock) {
     return false;
   }
@@ -851,6 +893,10 @@ export const canPutCardOntoBattlefieldByEffect = (playerState: PlayerState, card
           return false;
         }
       }
+    }
+
+    if (!satisfiesHighAlchemyEntryRestriction(card, context)) {
+      return false;
     }
   }
 
@@ -1228,12 +1274,21 @@ export const putUnitOntoField = (
   ownerUid: string,
   card: Card,
   source: Card,
-  options?: { exhausted?: boolean; toPlayerUid?: string }
+  options?: {
+    exhausted?: boolean;
+    toPlayerUid?: string;
+    highAlchemyMaterialColors?: string[];
+    highAlchemyMaterialCount?: number;
+  }
 ) => {
   const toPlayerUid = options?.toPlayerUid || ownerUid;
-  if (!canPutUnitOntoBattlefield(gameState.players[toPlayerUid], card)) return false;
+  if (!canPutUnitOntoBattlefield(gameState.players[toPlayerUid], card, options)) return false;
   const fromZone = card.cardlocation;
-  moveCard(gameState, ownerUid, card, 'UNIT', source, { toPlayerUid });
+  moveCard(gameState, ownerUid, card, 'UNIT', source, {
+    toPlayerUid,
+    highAlchemyMaterialColors: options?.highAlchemyMaterialColors,
+    highAlchemyMaterialCount: options?.highAlchemyMaterialCount,
+  });
   const moved = AtomicEffectExecutor.findCardById(gameState, card.gamecardId);
   if (moved) {
     moved.isExhausted = !!options?.exhausted || (moved as any).data?.placedByOwnEffectForcedExhaustedTurn === gameState.turnCount;
@@ -1273,7 +1328,12 @@ export const putCardOntoField = (
   ownerUid: string,
   card: Card,
   source: Card,
-  options?: { exhausted?: boolean; toPlayerUid?: string }
+  options?: {
+    exhausted?: boolean;
+    toPlayerUid?: string;
+    highAlchemyMaterialColors?: string[];
+    highAlchemyMaterialCount?: number;
+  }
 ) => {
   if (card.type === 'UNIT') return putUnitOntoField(gameState, ownerUid, card, source, options);
   if (card.type === 'ITEM' || card.isEquip) return putItemOntoField(gameState, ownerUid, card, source, options);

@@ -59,7 +59,7 @@ import bt08Y10 from '../src/scripts/305110083';
 import bt08Y11 from '../src/scripts/105110409';
 import bt04R07 from '../src/scripts/102060433';
 import bt04R09 from '../src/scripts/202060130';
-import { destroyByEffect, ensureData, moveCard, moveCardAsCost, wealthCount } from '../src/scripts/BaseUtil';
+import { canPutUnitOntoBattlefield, destroyByEffect, ensureData, moveCard, moveCardAsCost, wealthCount } from '../src/scripts/BaseUtil';
 
 type ScenarioResult = {
   name: string;
@@ -1853,15 +1853,16 @@ async function testYellowHighAlchemyPlacements(): Promise<ScenarioResult> {
   const rainbow = cloneScriptCard(bt08Y09 as Card, 'PLAY');
   const fieldMaterial = testCard({ id: 'Y09_FIELD', fullName: 'Y09 Field', type: 'UNIT', color: 'WHITE', godMark: false, cardlocation: 'UNIT' });
   const deckGod = testCard({ id: 'Y09_GOD', fullName: 'Y09 God', type: 'UNIT', color: 'GREEN', godMark: true, cardlocation: 'DECK' });
+  const fieldMaterialB = testCard({ id: 'Y09_FIELD_B', fullName: 'Y09 Field B', type: 'UNIT', color: 'YELLOW', godMark: false, cardlocation: 'UNIT' });
   const crow = cloneScriptCard(bt08Y07 as Card, 'DECK');
   const stateB = game({
     deck: [deckGod, crow],
     playZone: [rainbow],
-    unitZone: [fieldMaterial, null, null, null, null, null],
+    unitZone: [fieldMaterial, fieldMaterialB, null, null, null, null],
     erosionBack: deckCards(2, 'Y09_BACK', 'YELLOW').map(card => ({ ...card, cardlocation: 'EROSION_BACK' as any })),
   });
   await rainbow.effects?.[0]?.execute?.(rainbow, stateB, stateB.players.BOT);
-  await answerPendingQuery(stateB, 'BOT', [fieldMaterial.gamecardId, deckGod.gamecardId]);
+  await answerPendingQuery(stateB, 'BOT', [fieldMaterial.gamecardId, fieldMaterialB.gamecardId, deckGod.gamecardId]);
   await answerPendingQuery(stateB, 'BOT', [crow.gamecardId]);
   const y09Placed = stateB.players.BOT.unitZone.some((unit: Card | null) =>
     unit?.gamecardId === crow.gamecardId &&
@@ -1869,11 +1870,71 @@ async function testYellowHighAlchemyPlacements(): Promise<ScenarioResult> {
     (unit as any).data?.highAlchemyMaterialColors?.includes('GREEN')
   );
   const materialsSent = stateB.players.BOT.grave.some((card: Card) => card.gamecardId === fieldMaterial.gamecardId) &&
+    stateB.players.BOT.grave.some((card: Card) => card.gamecardId === fieldMaterialB.gamecardId) &&
     stateB.players.BOT.grave.some((card: Card) => card.gamecardId === deckGod.gamecardId);
 
   return y03Placed && y09Placed && materialsSent
     ? pass(name, `y03=${y03Placed}, y09=${y09Placed}, materials=${materialsSent}`)
     : fail(name, `y03=${y03Placed}, y09=${y09Placed}, materials=${materialsSent}`);
+}
+
+async function testYellowHighAlchemyPhantomBeastEntryRestriction(): Promise<ScenarioResult> {
+  const name = 'BT08-Y05/Y06/Y07 phantom beasts require matching 3-card High Alchemy';
+  const kodeHand = cloneScriptCard(bt08Y05 as Card, 'HAND');
+  const directState = game({
+    hand: [kodeHand],
+    unitZone: [
+      testCard({ id: 'DIRECT_YELLOW_A', color: 'YELLOW', cardlocation: 'UNIT' }),
+      testCard({ id: 'DIRECT_RED_A', color: 'RED', cardlocation: 'UNIT' }),
+      testCard({ id: 'DIRECT_RED_B', color: 'RED', cardlocation: 'UNIT' }),
+      testCard({ id: 'DIRECT_RED_C', color: 'RED', cardlocation: 'UNIT' }),
+      null,
+      null,
+    ],
+  });
+  const directBlocked = !ServerGameService.canPlayCard(directState, directState.players.BOT, kodeHand).canPlay;
+  const noContextBlocked = !canPutUnitOntoBattlefield(directState.players.BOT, kodeHand);
+
+  const cecilia = cloneScriptCard(bt08Y03 as Card, 'UNIT');
+  const redA = testCard({ id: 'Y03_RESTRICT_RED_A', color: 'RED', cardlocation: 'HAND' });
+  const redB = testCard({ id: 'Y03_RESTRICT_RED_B', color: 'RED', cardlocation: 'HAND' });
+  const redC = testCard({ id: 'Y03_RESTRICT_RED_C', color: 'RED', cardlocation: 'HAND' });
+  const kode = cloneScriptCard(bt08Y05 as Card, 'DECK');
+  const bahamut = cloneScriptCard(bt08Y06 as Card, 'DECK');
+  const stateA = game({
+    hand: [redA, redB, redC],
+    deck: [kode, bahamut],
+    unitZone: [cecilia, null, null, null, null, null],
+  });
+  await activateAndResolveByOpponentPass(stateA, 'BOT', cecilia, 0);
+  await answerPendingQuery(stateA, 'BOT', [redA.gamecardId, redB.gamecardId, redC.gamecardId]);
+  const y03Options = (stateA.pendingQuery?.options || []).map((option: any) => option.card.gamecardId);
+  const redGateOnly = y03Options.includes(kode.gamecardId) && !y03Options.includes(bahamut.gamecardId);
+  await answerPendingQuery(stateA, 'BOT', [kode.gamecardId]);
+  const kodePlaced = stateA.players.BOT.unitZone.some((unit: Card | null) =>
+    unit?.gamecardId === kode.gamecardId &&
+    (unit as any).data?.highAlchemyMaterialColors?.includes('RED') &&
+    (unit as any).data?.enteredFromDeckByAlchemySourceCardId === cecilia.gamecardId
+  );
+
+  const rainbow = cloneScriptCard(bt08Y09 as Card, 'PLAY');
+  const fieldMaterial = testCard({ id: 'Y09_RESTRICT_FIELD', fullName: 'Y09 Field', type: 'UNIT', color: 'WHITE', godMark: false, cardlocation: 'UNIT' });
+  const deckGod = testCard({ id: 'Y09_RESTRICT_GOD', fullName: 'Y09 God', type: 'UNIT', color: 'GREEN', godMark: true, cardlocation: 'DECK' });
+  const crow = cloneScriptCard(bt08Y07 as Card, 'DECK');
+  const stateB = game({
+    deck: [deckGod, crow],
+    playZone: [rainbow],
+    unitZone: [fieldMaterial, null, null, null, null, null],
+    erosionBack: deckCards(2, 'Y09_RESTRICT_BACK', 'YELLOW').map(card => ({ ...card, cardlocation: 'EROSION_BACK' as any })),
+  });
+  await rainbow.effects?.[0]?.execute?.(rainbow, stateB, stateB.players.BOT);
+  await answerPendingQuery(stateB, 'BOT', [fieldMaterial.gamecardId, deckGod.gamecardId]);
+  const twoMaterialOptions = (stateB.pendingQuery?.options || []).map((option: any) => option.card.gamecardId);
+  const twoMaterialsBlocked = !twoMaterialOptions.includes(crow.gamecardId);
+
+  return directBlocked && noContextBlocked && redGateOnly && kodePlaced && twoMaterialsBlocked
+    ? pass(name, `direct=${directBlocked}/${noContextBlocked}, redGate=${redGateOnly}, placed=${kodePlaced}, two=${twoMaterialsBlocked}`)
+    : fail(name, `direct=${directBlocked}/${noContextBlocked}, redGate=${redGateOnly}, placed=${kodePlaced}, two=${twoMaterialsBlocked}`);
 }
 
 async function testYellowPhantomBeastContinuous(): Promise<ScenarioResult> {
@@ -2035,6 +2096,7 @@ const scenarios: { name: string; run: ScenarioRun }[] = [
   { name: 'BT08-B10/B11 Sword Immortal search, boost, hand entry, and equipment bonus', run: testBlueSwordImmortalPackage },
   { name: 'BT08-Y01/Y02/Y08 face-down exile and Feijing delayed return', run: testYellowFaceDownExileAndFeijingReturn },
   { name: 'BT08-Y03/Y09 high alchemy places deck units and records materials', run: testYellowHighAlchemyPlacements },
+  { name: 'BT08-Y05/Y06/Y07 phantom beasts require matching 3-card High Alchemy', run: testYellowHighAlchemyPhantomBeastEntryRestriction },
   { name: 'BT08-Y05/Y06/Y07 phantom beast continuous effects', run: testYellowPhantomBeastContinuous },
   { name: 'BT08-Y04/Y10/Y11 puppet designer, blueprint recruit, and Dominic transform', run: testYellowPuppetDesignerBlueprintAndDominic },
 ];

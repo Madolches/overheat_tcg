@@ -2,6 +2,7 @@ import { GameState, PlayerState, Card, Deck, TriggerLocation, CardEffect, StackI
 import { EventEngine } from '../src/services/EventEngine';
 import { AtomicEffectExecutor } from '../src/services/AtomicEffectExecutor';
 import { clearBattlefieldState, shouldClearBattlefieldStateOnMove } from '../src/lib/cardState';
+import { satisfiesHighAlchemyEntryRestriction } from '../src/lib/highAlchemy';
 import { getCardIdentity } from '../src/lib/utils';
 import { addBattleLog, addCardAddedToHandBattleLog, cardToBattleLogRef, describeBattleLogTarget } from '../src/lib/battleLog';
 import { SERVER_CARD_LIBRARY } from './card_loader';
@@ -1509,6 +1510,8 @@ export const ServerGameService = {
       effectSourcePlayerUid?: string;
       effectSourceCardId?: string;
       suppressLog?: boolean;
+      highAlchemyMaterialColors?: string[];
+      highAlchemyMaterialCount?: number;
     }
   ): boolean {
     const sourcePlayer = gameState.players[sourcePlayerId];
@@ -1535,6 +1538,14 @@ export const ServerGameService = {
     const index = sourceArray.findIndex(c => c && (c.gamecardId === cardId || c.id === cardId));
     if (index !== -1) {
       card = sourceArray[index];
+      if (
+        targetZone === 'UNIT' &&
+        card.type === 'UNIT' &&
+        !satisfiesHighAlchemyEntryRestriction(card, options)
+      ) {
+        gameState.logs.push(`[系统] [${card.fullName}] 只能通过满足素材颜色与数量的《高位炼金》效果进入战场。`);
+        return false;
+      }
       if (options?.isEffect && options.effectSourceCardId) {
         const sourceCard = ServerGameService.findCardById(gameState, options.effectSourceCardId);
         if (isProtectedGraveCardFromOpponentEffect(gameState, card, sourceCard, options.effectSourcePlayerUid)) {
@@ -1901,6 +1912,9 @@ export const ServerGameService = {
       }
       if (card.specialName && player.unitZone.some(c => c?.specialName === card.specialName)) {
         return { canPlay: false, reason: '单位区已有同名专用卡' };
+      }
+      if (!satisfiesHighAlchemyEntryRestriction(card)) {
+        return { canPlay: false, reason: '这张卡只能通过满足素材颜色与数量的《高位炼金》效果进入战场' };
       }
     } else if (card.type === 'ITEM') {
       if (card.specialName && player.itemZone.some(c => c?.specialName === card.specialName)) {
