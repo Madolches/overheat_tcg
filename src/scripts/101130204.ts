@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, addContinuousDamage, addContinuousPower, addInfluence, createSelectCardQuery, getOpponentUid, moveCard, ownUnits } from './BaseUtil';
+import { AtomicEffectExecutor, addContinuousDamage, addContinuousKeyword, addContinuousPower, createSelectCardQuery, getOpponentUid, moveCard, ownUnits } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
   id: '101130204_enter_bottom',
@@ -46,8 +46,8 @@ const cardEffects: CardEffect[] = [{
     ownUnits(gameState.players[ownerUid]).filter(unit => !unit.godMark).forEach(unit => {
       addContinuousDamage(unit, instance, 1);
       addContinuousPower(unit, instance, 500);
-      unit.isHeroic = true;
-      addInfluence(unit, instance, '获得【英勇】');
+      if (unit.baseHeroic === undefined) unit.baseHeroic = !!unit.isHeroic;
+      addContinuousKeyword(unit, instance, 'heroic');
     });
   }
 }];

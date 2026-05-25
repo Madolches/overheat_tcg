@@ -24,10 +24,9 @@ const effect_105000285_non_battle_grave: CardEffect = {
   type: 'TRIGGER',
   triggerEvent: 'CARD_LEFT_ZONE',
   isMandatory: false,
-  triggerLocation: ['GRAVE'],
+  triggerLocation: ['UNIT', 'GRAVE'],
   description: '【诱】战场上的这个单位由于战斗破坏以外的方式送入墓地时：检视卡组顶3张，可将其中1张红色或蓝色卡公开并加入手牌，其余原样放回并洗切。',
   condition: (gameState, playerState, instance, event) =>
-    instance.cardlocation === 'GRAVE' &&
     wasSentToGraveByNonBattleWay(gameState, instance, event) &&
     getTopDeckCards(playerState, 3).some(isRedOrBlueCard),
   execute: async (instance, gameState, playerState) => {

@@ -18,7 +18,7 @@ const enteredByBlueprintOrOwnEffect = (gameState: any, instance: Card) => {
 
 const revealedFromDeckTop = (instance: Card, event: any) =>
   event?.type === 'REVEAL_DECK' &&
-  event.data?.cards?.[0]?.gamecardId === instance.gamecardId;
+  event.data?.cards?.some((card: Card) => card.gamecardId === instance.gamecardId);
 
 const cardEffects: CardEffect[] = [{
   id: '105000385_blueprint_or_own_entry_boost',

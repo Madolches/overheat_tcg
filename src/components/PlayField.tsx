@@ -786,7 +786,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
         cardMeta={Object.fromEntries(
           viewingZoneDisplayCards.map(card => {
             const isFaceDown = viewingZone?.type === 'erosion' && viewingZoneErosionBackIds.includes(card.gamecardId);
-            const isHiddenExile = viewingZone?.type === 'exile' && card.displayState === 'FRONT_FACEDOWN';
+            const isHiddenExile = viewingZone?.type === 'exile' && !!viewingZone?.isOpponentZone && card.displayState === 'FRONT_FACEDOWN';
             const isHiddenOpponentHand = !isSpectator && viewingZone?.type === 'hand' && viewingZone?.isOpponentZone && !viewingZoneOwner.isHandPublic;
             const costDisplay = viewingZone?.type === 'hand' ? withEffectiveCostInfluence(game, viewingZoneOwner, card) : undefined;
             return [
@@ -806,7 +806,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
               return;
             }
             const isHiddenErosionBack = viewingZone.type === 'erosion' && viewingZoneErosionBackIds.includes(card.gamecardId);
-            const isHiddenExile = viewingZone.type === 'exile' && card.displayState === 'FRONT_FACEDOWN';
+            const isHiddenExile = viewingZone.type === 'exile' && !!viewingZone.isOpponentZone && card.displayState === 'FRONT_FACEDOWN';
             if (isHiddenExile) return;
             const clickZone = viewingZone.type === 'erosion' ? (isHiddenErosionBack ? 'erosion_back' : 'erosion_front') : viewingZone.type;
             const index = viewingZoneCards.findIndex(c => c.gamecardId === card.gamecardId);

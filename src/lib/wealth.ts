@@ -34,7 +34,9 @@ export const getCardWealthValue = (card?: Card | null, context?: WealthContext) 
   if (!card || card.type !== 'UNIT') return 0;
   if (isCardFullySilenced(card, context)) return 0;
 
-  const dataValue = Number((card as any).data?.wealthValue || 0);
+  const dataValue =
+    Number((card as any).data?.wealthValue || 0) +
+    Number((card as any).data?.grantedWealthValue || 0);
   const effectValue = (card.effects || []).reduce(
     (total, effect) => total + getEffectWealthValue(card, effect),
     0

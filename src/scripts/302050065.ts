@@ -32,7 +32,7 @@ const cardEffects: CardEffect[] = [{
 }, {
   id: '302050065_draw_on_promotion',
   type: 'TRIGGER',
-  triggerEvent: 'CARD_ENTERED_ZONE',
+  triggerEvent: ['CARD_ENTERED_ZONE', 'CARD_PLACED_BY_PROMOTION'],
   triggerLocation: ['ITEM'],
   isMandatory: false,
   isGlobal: true,
@@ -42,11 +42,11 @@ const cardEffects: CardEffect[] = [{
     totalErosionCount(playerState) <= 7 &&
     event?.playerUid === playerState.uid &&
     event.data?.targetZone === 'UNIT' &&
-    event.sourceCardId &&
-    (() => {
+    !!event.sourceCardId &&
+    (event.type === 'CARD_PLACED_BY_PROMOTION' || (() => {
       const entered = AtomicEffectExecutor.findCardById(gameState, event.sourceCardId);
       return !!entered && wasPlacedByPromotionThisTurn(gameState, entered);
-    })() &&
+    })()) &&
     playerState.deck.length > 0,
   execute: async (instance, gameState, playerState) => {
     await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'DRAW', value: 1 }, instance);

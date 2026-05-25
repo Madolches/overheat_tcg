@@ -65,6 +65,8 @@ import bt07Y09 from '../src/scripts/305000062';
 import bt07Y10 from '../src/scripts/305000063';
 import bt07Y11 from '../src/scripts/105110386';
 import bt08G05 from '../src/scripts/103000419';
+import bt03R04 from '../src/scripts/102060193';
+import rafa from '../src/scripts/102060244';
 import {
   awakenUnit,
   destroyByEffect,
@@ -674,9 +676,9 @@ async function testYukatiaAllianceProtectionAndDestroy(): Promise<ScenarioResult
   const godTarget = testCard({ id: 'W11_GOD', fullName: 'God Target', type: 'ITEM', godMark: true, cardlocation: 'ITEM' });
   const state = game({
     unitZone: [yukatia, partner, null, null, null, null],
-    erosionFront: [
-      testCard({ id: 'W11_EF_0', cardlocation: 'EROSION_FRONT' }),
-      testCard({ id: 'W11_EF_1', cardlocation: 'EROSION_FRONT' }),
+    erosionBack: [
+      testCard({ id: 'W11_EB_0', cardlocation: 'EROSION_BACK' }),
+      testCard({ id: 'W11_EB_1', cardlocation: 'EROSION_BACK' }),
     ],
   }, {
     itemZone: [target, godTarget],
@@ -701,9 +703,36 @@ async function testYukatiaAllianceProtectionAndDestroy(): Promise<ScenarioResult
     await answerPendingQuery(state, 'BOT', [target.gamecardId]);
   }
   const destroyed = state.players.P1.grave.some((card: Card) => card.gamecardId === target.gamecardId);
-  return protectedUntil !== undefined && destroyed
-    ? pass(name, `protectedUntil=${protectedUntil}, destroyed=${destroyed}`)
-    : fail(name, `protectedUntil=${protectedUntil}, destroyed=${destroyed}`);
+
+  const frontOnlyYukatia = cloneScriptCard(bt07W11 as Card, 'UNIT', { gamecardId: 'W11_FRONT_ONLY' });
+  const frontOnlyPartner = testCard({ id: 'W11_FRONT_PARTNER', fullName: '圣王国 Partner', faction: '圣王国', cardlocation: 'UNIT' });
+  const frontOnlyTarget = testCard({ id: 'W11_FRONT_TARGET', type: 'ITEM', godMark: false, cardlocation: 'ITEM' });
+  const frontOnlyState = game({
+    unitZone: [frontOnlyYukatia, frontOnlyPartner, null, null, null, null],
+    erosionFront: [
+      testCard({ id: 'W11_FRONT_EF_0', cardlocation: 'EROSION_FRONT' }),
+      testCard({ id: 'W11_FRONT_EF_1', cardlocation: 'EROSION_FRONT' }),
+    ],
+  }, {
+    itemZone: [frontOnlyTarget],
+  }, {
+    phase: 'BATTLE_FREE',
+    battleState: {
+      attackers: [frontOnlyYukatia.gamecardId, frontOnlyPartner.gamecardId],
+      isAlliance: true,
+    },
+  });
+  const frontOnlyBlocked = !ServerGameService.checkEffectLimitsAndReqs(
+    frontOnlyState,
+    'BOT',
+    frontOnlyYukatia,
+    frontOnlyYukatia.effects![effectIndex],
+    'UNIT'
+  ).valid;
+
+  return protectedUntil !== undefined && destroyed && frontOnlyBlocked
+    ? pass(name, `protectedUntil=${protectedUntil}, destroyed=${destroyed}, frontOnlyBlocked=${frontOnlyBlocked}`)
+    : fail(name, `protectedUntil=${protectedUntil}, destroyed=${destroyed}, frontOnlyBlocked=${frontOnlyBlocked}`);
 }
 
 async function testEmptyFantasyRecoverAndPreventEffectDamage(): Promise<ScenarioResult> {
@@ -965,7 +994,7 @@ async function testBlueAishaRecoversAfterOpponentExileAndHouseRevives(): Promise
     fullName: 'Wealth Carrier',
     type: 'UNIT',
     cardlocation: 'UNIT',
-    data: { wealthValue: 1 },
+    data: { grantedWealthValue: 1 },
   } as any);
   const reviveTarget = testCard({
     id: 'B09_REVIVE_TARGET',
@@ -1203,15 +1232,42 @@ async function testBlueWealthCoreAndEquipment(): Promise<ScenarioResult> {
   if (state.pendingQuery?.context?.effectId === '304020050_grant_wealth_to_blue_unit') {
     await answerPendingQuery(state, 'BOT', [granted.gamecardId]);
   }
-  const grantedWealth = Number((granted as any).data?.wealthValue || 0) === 1;
+  const grantedWealth = wealthCount(state.players.BOT, state) >= 2;
   EventEngine.recalculateContinuousEffects(state);
-  const kosakoWealth = wealthCount(state.players.BOT) >= 2;
+  const grantedWealthAfterRecalc = wealthCount(state.players.BOT, state) >= 2;
+  const kosakoWealth = wealthCount(state.players.BOT, state) >= 2;
   const kosakoDoesNotBuffSelf = !kosako.isHeroic;
+
+  const freshHouse = cloneScriptCard(bt07B09 as Card, 'ITEM', { gamecardId: 'B09_FRESH_HOUSE' });
+  const freshBlue = testCard({ id: 'B09_FRESH_BLUE', fullName: 'Fresh Blue Unit', type: 'UNIT', color: 'BLUE', cardlocation: 'HAND' });
+  const freshState = game({
+    hand: [freshBlue],
+    itemZone: [freshHouse],
+    erosionFront: [
+      testCard({ id: 'B09_FRESH_EF_0', cardlocation: 'EROSION_FRONT' }),
+      testCard({ id: 'B09_FRESH_EF_1', cardlocation: 'EROSION_FRONT' }),
+      testCard({ id: 'B09_FRESH_EF_2', cardlocation: 'EROSION_FRONT' }),
+    ],
+  });
+  ServerGameService.moveCard(freshState, 'BOT', 'HAND', 'BOT', 'UNIT', freshBlue.gamecardId, {
+    isEffect: true,
+    effectSourcePlayerUid: 'BOT',
+    effectSourceCardId: freshHouse.gamecardId
+  });
+  await confirmTrigger(freshState, 'BOT');
+  const freshOptions = (freshState.pendingQuery?.options || []).map((option: any) => option.card?.gamecardId || option.id);
+  const freshCanSelectEnteredUnit = freshState.pendingQuery?.context?.effectId === '304020050_grant_wealth_to_blue_unit' &&
+    freshOptions.includes(freshBlue.gamecardId);
+  if (freshCanSelectEnteredUnit) {
+    await answerPendingQuery(freshState, 'BOT', [freshBlue.gamecardId]);
+  }
+  EventEngine.recalculateContinuousEffects(freshState);
+  const freshGrantedWealth = wealthCount(freshState.players.BOT, freshState) >= 1;
 
   const lowErosionKosako = cloneScriptCard(bt07B11 as Card, 'UNIT', { gamecardId: 'B11_LOW_EROSION', baseHeroic: false, isHeroic: false });
   const lowErosionAlly = testCard({ id: 'B11_LOW_ALLY', type: 'UNIT', godMark: false, cardlocation: 'UNIT' });
   const lowErosionWealth = testCard({ id: 'B11_LOW_WEALTH', type: 'UNIT', cardlocation: 'UNIT' } as Partial<Card> & { data: any });
-  (lowErosionWealth as any).data = { wealthValue: 2 };
+  (lowErosionWealth as any).data = { grantedWealthValue: 2 };
   const lowErosionState = game({
     unitZone: [lowErosionKosako, lowErosionAlly, lowErosionWealth, null, null, null],
     erosionFront: [
@@ -1267,9 +1323,9 @@ async function testBlueWealthCoreAndEquipment(): Promise<ScenarioResult> {
   await confirmTrigger(kosakoState, 'BOT');
   const putKosako = kosakoState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === discardedKosako.gamecardId);
 
-  return grantedWealth && kosakoWealth && kosakoDoesNotBuffSelf && lowErosionNoBuff && equipped && targetDamage === 2 && noBlueNoTrigger && putKosako
-    ? pass(name, `grantedWealth=${grantedWealth}, equipped=${equipped}, damage=${targetDamage}, noBlueNoTrigger=${noBlueNoTrigger}, putKosako=${putKosako}`)
-    : fail(name, `grantedWealth=${grantedWealth}, kosakoWealth=${kosakoWealth}, selfHeroic=${kosako.isHeroic}, lowErosionNoBuff=${lowErosionNoBuff}, equipped=${equipped}, damage=${targetDamage}, noBlueNoTrigger=${noBlueNoTrigger}, putKosako=${putKosako}`);
+  return grantedWealth && grantedWealthAfterRecalc && freshCanSelectEnteredUnit && freshGrantedWealth && kosakoWealth && kosakoDoesNotBuffSelf && lowErosionNoBuff && equipped && targetDamage === 2 && noBlueNoTrigger && putKosako
+    ? pass(name, `grantedWealth=${grantedWealth}, freshSelect=${freshCanSelectEnteredUnit}, equipped=${equipped}, damage=${targetDamage}, noBlueNoTrigger=${noBlueNoTrigger}, putKosako=${putKosako}`)
+    : fail(name, `grantedWealth=${grantedWealth}, afterRecalc=${grantedWealthAfterRecalc}, freshSelect=${freshCanSelectEnteredUnit}, freshWealth=${freshGrantedWealth}, kosakoWealth=${kosakoWealth}, selfHeroic=${kosako.isHeroic}, lowErosionNoBuff=${lowErosionNoBuff}, equipped=${equipped}, damage=${targetDamage}, noBlueNoTrigger=${noBlueNoTrigger}, putKosako=${putKosako}`);
 }
 
 async function testHolyEightActivatesRequireGoddessMode(): Promise<ScenarioResult> {
@@ -1686,12 +1742,14 @@ async function testRedBatBladeItemAndTamiThresholds(): Promise<ScenarioResult> {
   const itemDrew = bladeState.players.BOT.hand.length === 1;
   const bladeCounted = totalUnitsSentFromFieldToGraveThisTurn(bladeState) >= 1;
 
+  const rafaUnit = cloneScriptCard(rafa as Card, 'UNIT');
   const tami = cloneScriptCard(bt07R11 as Card, 'UNIT');
   const rafa = cloneScriptCard(bt05R07 as Card, 'UNIT');
   const ally = testCard({ id: 'R11_ALLY', fullName: 'Tami Ally', color: 'RED', cardlocation: 'UNIT', power: 1000, basePower: 1000 });
   const tamiTarget = testCard({ id: 'R11_TARGET', fullName: 'Tami Target', cardlocation: 'UNIT' });
   const tamiState = game({
     unitZone: [tami, rafa, ally, null, null, null],
+    unitZone: [tami, ally, rafaUnit, null, null, null],
   }, {
     unitZone: [tamiTarget, null, null, null, null, null],
   });
@@ -1700,6 +1758,9 @@ async function testRedBatBladeItemAndTamiThresholds(): Promise<ScenarioResult> {
   const tamiThresholds =
     tami.power === 4500 &&
     rafa.power === 4500 &&
+    ally.power === 2500 &&
+    rafaUnit.power === 4500 &&
+    tami.power === 4500 &&
     ally.power === 2500 &&
     !!tami.isrush &&
     !!tami.isHeroic &&
@@ -1816,6 +1877,34 @@ async function testNormalBattleDestroyDoesNotCountAsInterruptedBattle(): Promise
   return defenderDestroyed && returnedMain && exhaustedAttacker && noInterruptedLog
     ? pass(name, `destroyed=${defenderDestroyed}, phase=${state.phase}, exhausted=${exhaustedAttacker}`)
     : fail(name, `destroyed=${defenderDestroyed}, phase=${state.phase}, battle=${!!state.battleState}, exhausted=${exhaustedAttacker}, interruptedLog=${!noInterruptedLog}`);
+function testThunderHighPowerRushThresholds(): ScenarioResult {
+  const name = 'BT03-R04/BT07-R04 thunder rush thresholds';
+  const flyer = cloneScriptCard(bt03R04 as Card, 'UNIT');
+  const warrior = cloneScriptCard(bt07R04 as Card, 'UNIT');
+  const lowState = game({
+    unitZone: [flyer, warrior, null, null, null, null],
+  });
+  EventEngine.recalculateContinuousEffects(lowState);
+  const lowOk =
+    !flyer.isrush &&
+    flyer.damage === flyer.baseDamage &&
+    !warrior.isrush &&
+    warrior.damage === warrior.baseDamage;
+
+  flyer.temporaryPowerBuff = 2000;
+  warrior.temporaryPowerBuff = 1500;
+  EventEngine.recalculateContinuousEffects(lowState);
+  const highOk =
+    flyer.power === 3500 &&
+    !!flyer.isrush &&
+    flyer.damage === (flyer.baseDamage || 0) + 1 &&
+    warrior.power === 3500 &&
+    !!warrior.isrush &&
+    warrior.damage === (warrior.baseDamage || 0) + 1;
+
+  return lowOk && highOk
+    ? pass(name, `low=${lowOk}, high=${highOk}`)
+    : fail(name, `flyer=${flyer.power}/${flyer.damage}/${flyer.isrush}, warrior=${warrior.power}/${warrior.damage}/${warrior.isrush}, low=${lowOk}, high=${highOk}`);
 }
 
 async function testRedAsuraSacrificeAndHiyeOrder(): Promise<ScenarioResult> {
@@ -1968,6 +2057,7 @@ async function testYellowPainterStephanieAndSteelPuppet(): Promise<ScenarioResul
     erosionBack: [
       testCard({ id: 'Y03_BACK_1', cardlocation: 'EROSION_BACK' }),
       testCard({ id: 'Y03_BACK_2', cardlocation: 'EROSION_BACK' }),
+      testCard({ id: 'Y03_BACK_3', cardlocation: 'EROSION_BACK' }),
     ],
   });
   const stephanieIndex = stephanie.effects?.findIndex(effect => effect.id === '105110383_creation_scar_put_top_blueprint_or_puppet') ?? -1;
@@ -1983,16 +2073,20 @@ async function testYellowPainterStephanieAndSteelPuppet(): Promise<ScenarioResul
   const stephanieLow = cloneScriptCard(bt07Y03 as Card, 'UNIT', { gamecardId: 'Y03_LOW' });
   const stephanieLowState = game({
     unitZone: [stephanieLow, null, null, null, null, null],
-    erosionBack: [testCard({ id: 'Y03_LOW_BACK', cardlocation: 'EROSION_BACK' })],
+    erosionBack: [
+      testCard({ id: 'Y03_LOW_BACK_1', cardlocation: 'EROSION_BACK' }),
+      testCard({ id: 'Y03_LOW_BACK_2', cardlocation: 'EROSION_BACK' }),
+    ],
   });
   EventEngine.recalculateContinuousEffects(stephanieLowState);
-  const stephanieNeedsScar2 = stephanieLow.power === 2500 && stephanieLow.damage === 2 && !stephanieLow.isHeroic;
+  const stephanieNeedsScar3 = stephanieLow.power === 2500 && stephanieLow.damage === 2 && !stephanieLow.isHeroic;
 
   const revealedSteel = cloneScriptCard(bt07Y05 as Card, 'DECK', { gamecardId: 'Y05_REVEALED_TOP' });
+  const revealTop = testCard({ id: 'Y05_REVEAL_TOP', cardlocation: 'DECK' });
   const revealState = game({
-    deck: [testCard({ id: 'Y05_BOTTOM', cardlocation: 'DECK' }), revealedSteel],
+    deck: [testCard({ id: 'Y05_BOTTOM', cardlocation: 'DECK' }), revealedSteel, revealTop],
   });
-  revealDeckCards(revealState, 'BOT', 1, revealedSteel);
+  revealDeckCards(revealState, 'BOT', 2, revealedSteel);
   await confirmTrigger(revealState, 'BOT');
   EventEngine.recalculateContinuousEffects(revealState);
   const selfPutSteel = revealState.players.BOT.unitZone.some((unit: Card | null) =>
@@ -2001,9 +2095,9 @@ async function testYellowPainterStephanieAndSteelPuppet(): Promise<ScenarioResul
     !!unit.isHeroic
   );
 
-  return searchedBlueprint && stephanieBuffed && stephaniePutPuppet && stephanieNeedsScar2 && selfPutSteel
-    ? pass(name, `search=${searchedBlueprint}, stephanie=${stephanieBuffed}/${stephaniePutPuppet}/${stephanieNeedsScar2}, steel=${selfPutSteel}`)
-    : fail(name, `search=${searchedBlueprint}, stephanie=${stephanieBuffed}/${stephaniePutPuppet}/${stephanieNeedsScar2}, steel=${selfPutSteel}`);
+  return searchedBlueprint && stephanieBuffed && stephaniePutPuppet && stephanieNeedsScar3 && selfPutSteel
+    ? pass(name, `search=${searchedBlueprint}, stephanie=${stephanieBuffed}/${stephaniePutPuppet}/${stephanieNeedsScar3}, steel=${selfPutSteel}`)
+    : fail(name, `search=${searchedBlueprint}, stephanie=${stephanieBuffed}/${stephaniePutPuppet}/${stephanieNeedsScar3}, steel=${selfPutSteel}`);
 }
 
 async function testYellowGuardRawStoneAndStories(): Promise<ScenarioResult> {
@@ -2060,6 +2154,7 @@ async function testYellowGuardRawStoneAndStories(): Promise<ScenarioResult> {
     rawState.players.BOT.hand.some((card: Card) => card.gamecardId === immortalStone.gamecardId);
 
   const party = cloneScriptCard(bt07Y06 as Card, 'PLAY');
+  const staleParty = { ...party, cardlocation: 'HAND' as const };
   const partyTarget = testCard({ id: 'Y06_TARGET', type: 'UNIT', godMark: false, cardlocation: 'UNIT' });
   const partyState = game({
     playZone: [party],
@@ -2088,7 +2183,7 @@ async function testYellowGuardRawStoneAndStories(): Promise<ScenarioResult> {
     noScarParty.effects![0],
     'PLAY'
   ).valid;
-  await party.effects?.[0]?.execute?.(party, partyState, partyState.players.BOT);
+  await staleParty.effects?.[0]?.execute?.(staleParty, partyState, partyState.players.BOT);
   if (partyState.pendingQuery?.context?.effectId === '205000111_puppet_party') {
     await answerPendingQuery(partyState, 'BOT', [partyTarget.gamecardId]);
   }
@@ -2275,6 +2370,7 @@ const scenarios: ScenarioRun[] = [
   testRedBatBladeItemAndTamiThresholds,
   testSoulDevourTriggersThunderLeaderAndClearsInterruptedBattle,
   testNormalBattleDestroyDoesNotCountAsInterruptedBattle,
+  testThunderHighPowerRushThresholds,
   testRedAsuraSacrificeAndHiyeOrder,
   testYellowPainterStephanieAndSteelPuppet,
   testYellowGuardRawStoneAndStories,

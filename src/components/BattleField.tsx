@@ -3444,7 +3444,7 @@ export const BattleField: React.FC = () => {
               const card = o.card!;
               const zoneLabel = o.zoneLabel || o.source;
               const sourceZone = String(o.source || card.cardlocation || '').toUpperCase();
-              const isHiddenExile = sourceZone === 'EXILE' && card.displayState === 'FRONT_FACEDOWN';
+              const isHiddenExile = sourceZone === 'EXILE' && card.displayState === 'FRONT_FACEDOWN' && o.isMine === false;
               const isHiddenErosionBack =
                 sourceZone === 'EROSION_BACK' ||
                 zoneLabel === 'EROSION_BACK' ||

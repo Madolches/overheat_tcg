@@ -50,6 +50,7 @@ const card: Card = {
   displayState: 'FRONT_UPRIGHT',
   isExhausted: false,
   isrush: false,
+  baseIsrush: false,
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,

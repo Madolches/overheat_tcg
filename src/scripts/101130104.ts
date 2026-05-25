@@ -21,10 +21,7 @@ const cardEffects: CardEffect[] = [{
     description: '0~3：给予对手战斗伤害时，将墓地2张卡放到卡组底。',
     condition: (gameState, playerState, instance, event) =>
       event?.playerUid !== playerState.uid &&
-      (
-        event.data?.attackerIds?.includes(instance.gamecardId) ||
-        gameState.battleState?.attackers?.includes(instance.gamecardId)
-      ) &&
+      event.data?.attackerIds?.includes(instance.gamecardId) &&
       playerState.grave.length > 0,
     execute: async (instance, gameState, playerState) => {
       const count = Math.min(2, playerState.grave.length);
