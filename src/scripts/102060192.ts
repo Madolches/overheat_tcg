@@ -5,6 +5,7 @@ const highPowerRush: CardEffect = {
   id: '102060192_high_power',
   type: 'CONTINUOUS',
   triggerLocation: ['UNIT'],
+  continuousPriority: -100,
   description: '力量3500以上时，伤害+1并获得【速攻】。',
   condition: (_gameState, _playerState, instance) => (instance.power || 0) >= 3500,
   applyContinuous: (_gameState, instance) => {

@@ -63,9 +63,12 @@ import bt07Y09 from '../src/scripts/305000062';
 import bt07Y10 from '../src/scripts/305000063';
 import bt07Y11 from '../src/scripts/105110386';
 import bt08G05 from '../src/scripts/103000419';
+import bt03R03 from '../src/scripts/102060192';
 import bt03R04 from '../src/scripts/102060193';
+import bt03R07 from '../src/scripts/102060196';
 import rafa from '../src/scripts/102060244';
 import {
+  addContinuousPower,
   awakenUnit,
   destroyByEffect,
   moveCardAsCost,
@@ -1791,9 +1794,47 @@ function testThunderHighPowerRushThresholds(): ScenarioResult {
     !!warrior.isrush &&
     warrior.damage === (warrior.baseDamage || 0) + 1;
 
-  return lowOk && highOk
-    ? pass(name, `low=${lowOk}, high=${highOk}`)
-    : fail(name, `flyer=${flyer.power}/${flyer.damage}/${flyer.isrush}, warrior=${warrior.power}/${warrior.damage}/${warrior.isrush}, low=${lowOk}, high=${highOk}`);
+  const commander = cloneScriptCard(bt03R03 as Card, 'UNIT', { gamecardId: 'R_THRESHOLD_COMMANDER' });
+  const auraFlyer = cloneScriptCard(bt03R04 as Card, 'UNIT', { gamecardId: 'R_THRESHOLD_FLYER' });
+  const empress = cloneScriptCard(bt03R07 as Card, 'UNIT', { gamecardId: 'R_THRESHOLD_EMPRESS' });
+  const auraWarrior = cloneScriptCard(bt07R04 as Card, 'UNIT', { gamecardId: 'R_THRESHOLD_WARRIOR' });
+  const booster = testCard({
+    id: 'R_THRESHOLD_BOOSTER',
+    fullName: 'Threshold Booster',
+    cardlocation: 'UNIT',
+    effects: [{
+      id: 'R_THRESHOLD_BOOSTER_POWER',
+      type: 'CONTINUOUS',
+      triggerLocation: ['UNIT'],
+      applyContinuous: (state: any, source: Card) => {
+        state.players.BOT.unitZone
+          .filter((unit: Card | null): unit is Card => !!unit && unit.gamecardId !== source.gamecardId)
+          .forEach((unit: Card) => addContinuousPower(unit, source, 2000));
+      }
+    } as any]
+  });
+  const continuousState = game({
+    unitZone: [commander, auraFlyer, empress, auraWarrior, booster, null],
+  });
+  EventEngine.recalculateContinuousEffects(continuousState);
+  const continuousOk =
+    commander.power === 4000 &&
+    !!commander.isrush &&
+    commander.damage === (commander.baseDamage || 0) + 1 &&
+    auraFlyer.power === 3500 &&
+    !!auraFlyer.isrush &&
+    auraFlyer.damage === (auraFlyer.baseDamage || 0) + 1 &&
+    empress.power === 5000 &&
+    !!empress.isrush &&
+    !!empress.isAnnihilation &&
+    !!empress.isShenyi &&
+    auraWarrior.power === 4000 &&
+    !!auraWarrior.isrush &&
+    auraWarrior.damage === (auraWarrior.baseDamage || 0) + 1;
+
+  return lowOk && highOk && continuousOk
+    ? pass(name, `low=${lowOk}, high=${highOk}, continuous=${continuousOk}`)
+    : fail(name, `flyer=${flyer.power}/${flyer.damage}/${flyer.isrush}, warrior=${warrior.power}/${warrior.damage}/${warrior.isrush}, continuous=${commander.power}/${commander.damage}/${commander.isrush};${auraFlyer.power}/${auraFlyer.damage}/${auraFlyer.isrush};${empress.power}/${empress.isrush}/${empress.isAnnihilation}/${empress.isShenyi};${auraWarrior.power}/${auraWarrior.damage}/${auraWarrior.isrush}, low=${lowOk}, high=${highOk}, continuousOk=${continuousOk}`);
 }
 
 async function testRedAsuraSacrificeAndHiyeOrder(): Promise<ScenarioResult> {
