@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, addTempDamage, addTempPower, createSelectCardQuery, ensureData, ownUnits } from './BaseUtil';
+import { AtomicEffectExecutor, addTempDamage, addTempPowerUntilEndOfTurn, createSelectCardQuery, ensureData, ownUnits } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
   id: '102060433_power_search',
@@ -53,7 +53,7 @@ const cardEffects: CardEffect[] = [{
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (target?.cardlocation !== 'UNIT') return;
     addTempDamage(target, instance, 1);
-    addTempPower(target, instance, 1000);
+    addTempPowerUntilEndOfTurn(target, instance, 1000, gameState);
   }
 }];
 

@@ -1017,9 +1017,36 @@ async function testThunderLeaderPowerSearch(): Promise<ScenarioResult> {
   }
   const searched = state.players.BOT.hand.some((card: Card) => card.gamecardId === thunder.gamecardId);
 
-  return triggered && searched
-    ? pass(name, `triggered=${triggered}, searched=${searched}`)
-    : fail(name, `triggered=${triggered}, searched=${searched}, pending=${state.pendingQuery?.context?.effectId || 'none'}`);
+  const continuousLeader = cloneScriptCard(bt04R07 as Card, 'UNIT', {
+    gamecardId: 'CONTINUOUS_THUNDER_LEADER',
+    power: 2500,
+    basePower: 2500,
+  });
+  const tami = cloneScriptCard(bt07R11 as Card, 'UNIT', { gamecardId: 'CONTINUOUS_TAMI' });
+  const continuousThunder = testCard({
+    id: 'THUNDER_CONTINUOUS_SEARCH',
+    fullName: 'Thunder Continuous Search',
+    type: 'UNIT',
+    faction: continuousLeader.faction,
+    cardlocation: 'DECK',
+  });
+  const continuousState = game({
+    deck: [continuousThunder],
+    unitZone: [continuousLeader, tami, null, null, null, null],
+  });
+  (continuousState as any)[`unitsSentFromFieldToGraveTurn_${continuousState.turnCount}_global`] = 1;
+
+  EventEngine.recalculateContinuousEffects(continuousState);
+  await confirmTrigger(continuousState, 'BOT');
+  const continuousTriggered = continuousState.pendingQuery?.context?.effectId === '102060433_power_search';
+  if (continuousTriggered) {
+    await answerPendingQuery(continuousState, 'BOT', [continuousThunder.gamecardId]);
+  }
+  const continuousSearched = continuousState.players.BOT.hand.some((card: Card) => card.gamecardId === continuousThunder.gamecardId);
+
+  return triggered && searched && continuousTriggered && continuousSearched
+    ? pass(name, `triggered=${triggered}, searched=${searched}, continuous=${continuousTriggered}/${continuousSearched}`)
+    : fail(name, `triggered=${triggered}, searched=${searched}, continuous=${continuousTriggered}/${continuousSearched}, pending=${continuousState.pendingQuery?.context?.effectId || state.pendingQuery?.context?.effectId || 'none'}`);
 }
 
 function testThunderWarriorRushAfterTamiBoost(): ScenarioResult {

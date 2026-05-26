@@ -5,8 +5,7 @@ import {
   exhaustCost,
   getOpponentUid,
   getTopDeckCards,
-  moveCard,
-  moveCardAsCost
+  moveCard
 } from './BaseUtil';
 
 const opponentGraveTargets = (gameState: any, playerUid: string) =>
@@ -28,6 +27,7 @@ const cardEffects: CardEffect[] = [{
   type: 'TRIGGER',
   triggerLocation: ['ITEM'],
   triggerEvent: 'CARD_ENTERED_ZONE',
+  isMandatory: true,
   description: '这张卡进入战场时，将卡组顶1张卡背面放逐。',
   condition: (_gameState, playerState, instance, event) =>
     instance.cardlocation === 'ITEM' &&
@@ -41,7 +41,7 @@ const cardEffects: CardEffect[] = [{
   id: '305000063_analyze_same_name',
   type: 'ACTIVATE',
   triggerLocation: ['ITEM'],
-  erosionBackLimit: [2, 5],
+  erosionTotalLimit: [2, 5],
   cost: exhaustCost,
   description: '2~5：你的主要阶段，选择对手墓地1张卡并横置这张卡：将卡组顶1张卡背面放逐。之后对手将卡组或手牌中1张同名卡送入墓地。',
   condition: (gameState, playerState, instance) =>

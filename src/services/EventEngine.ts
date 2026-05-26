@@ -231,6 +231,17 @@ export class EventEngine {
       gameState.battleState.defensePowerRestriction = 0;
     }
 
+    const powerBeforeRecalculation = new Map<string, { power: number; ownerUid: string }>();
+    Object.values(gameState.players).forEach(player => {
+      player.unitZone.forEach(card => {
+        if (!card) return;
+        powerBeforeRecalculation.set(card.gamecardId, {
+          power: card.power || 0,
+          ownerUid: player.uid
+        });
+      });
+    });
+
     // 1. Reset all cards to base stats
     const resetCards = (player: PlayerState) => {
       const allCards = [
@@ -782,6 +793,31 @@ export class EventEngine {
           card.influencingEffects.push({
             sourceCardName: (card as any).data.forcePowerToZeroSourceName || '效果',
             description: '力量变为0'
+          });
+        }
+      });
+    });
+
+    Object.values(gameState.players).forEach(player => {
+      player.unitZone.forEach(card => {
+        if (!card) return;
+        const previous = powerBeforeRecalculation.get(card.gamecardId);
+        if (!previous) return;
+
+        const currentPower = card.power || 0;
+        if (previous.power !== currentPower) {
+          this.dispatchEvent(gameState, {
+            type: 'CARD_POWER_CHANGED',
+            playerUid: previous.ownerUid,
+            sourceCard: card,
+            sourceCardId: card.gamecardId,
+            targetCardId: card.gamecardId,
+            data: {
+              previousPower: previous.power,
+              currentPower,
+              delta: currentPower - previous.power,
+              continuousRecalculation: true
+            }
           });
         }
       });

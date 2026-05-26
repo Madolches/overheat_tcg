@@ -2479,15 +2479,24 @@ async function testYellowFortressBlueprintAnalysisAndImmortalStone(): Promise<Sc
   const analysisState = game({
     itemZone: [analysis],
     deck: [analysisSecond, analysisTop],
+    erosionFront: [
+      testCard({ id: 'Y10_FRONT_1', cardlocation: 'EROSION_FRONT', displayState: 'FRONT_UPRIGHT' }),
+    ],
     erosionBack: [
       testCard({ id: 'Y10_BACK_1', cardlocation: 'EROSION_BACK' }),
-      testCard({ id: 'Y10_BACK_2', cardlocation: 'EROSION_BACK' }),
     ],
   }, {
     grave: [graveTarget],
     hand: [sameHand],
   });
   const analysisIndex = analysis.effects?.findIndex(effect => effect.id === '305000063_analyze_same_name') ?? -1;
+  const analysisCanActivateAtTotalTwo = GameService.checkEffectLimitsAndReqs(
+    analysisState,
+    'BOT',
+    analysis,
+    analysis.effects![analysisIndex],
+    'ITEM'
+  ).valid;
   await analysis.effects?.[analysisIndex]?.cost?.(analysisState, analysisState.players.BOT, analysis);
   await analysis.effects?.[analysisIndex]?.execute?.(analysis, analysisState, analysisState.players.BOT);
   if (analysisState.pendingQuery?.context?.step === 'TARGET') {
@@ -2497,13 +2506,34 @@ async function testYellowFortressBlueprintAnalysisAndImmortalStone(): Promise<Sc
     await answerPendingQuery(analysisState, 'P1', [sameHand.gamecardId]);
   }
   const analysisResolved = analysis.isExhausted &&
+    analysisCanActivateAtTotalTwo &&
     analysisState.players.BOT.exile.some((card: Card) => card.gamecardId === analysisTop.gamecardId && card.displayState === 'FRONT_FACEDOWN') &&
     analysisState.players.BOT.exile.some((card: Card) => card.gamecardId === analysisSecond.gamecardId && card.displayState === 'FRONT_FACEDOWN') &&
     analysisState.players.P1.grave.some((card: Card) => card.gamecardId === sameHand.gamecardId);
 
-  return blueprintResolved && defenseNeedsScar4 && stoneResolved && analysisResolved
-    ? pass(name, `blueprint=${blueprintResolved}/${defenseNeedsScar4}, stone=${stoneResolved}, analysis=${analysisResolved}`)
-    : fail(name, `blueprint=${blueprintResolved}/${defenseNeedsScar4}, stone=${stoneResolved}, analysis=${analysisResolved}`);
+  const enterAnalysis = cloneScriptCard(bt07Y10 as Card, 'ITEM');
+  const enterTop = testCard({ id: 'Y10_ENTER_TOP', cardlocation: 'DECK' });
+  const enterSecond = testCard({ id: 'Y10_ENTER_SECOND', cardlocation: 'DECK' });
+  const enterState = game({
+    itemZone: [enterAnalysis],
+    deck: [enterSecond, enterTop],
+  });
+  EventEngine.dispatchEvent(enterState, {
+    type: 'CARD_ENTERED_ZONE',
+    sourceCard: enterAnalysis,
+    sourceCardId: enterAnalysis.gamecardId,
+    playerUid: 'BOT',
+    data: { zone: 'ITEM' }
+  });
+  await ServerGameService.checkTriggeredEffects(enterState);
+  const enterMandatoryResolved =
+    enterState.pendingQuery?.callbackKey !== 'TRIGGER_CHOICE' &&
+    enterState.players.BOT.exile.some((card: Card) => card.gamecardId === enterTop.gamecardId && card.displayState === 'FRONT_FACEDOWN') &&
+    enterState.players.BOT.exile.some((card: Card) => card.gamecardId === enterSecond.gamecardId && card.displayState === 'FRONT_FACEDOWN');
+
+  return blueprintResolved && defenseNeedsScar4 && stoneResolved && analysisResolved && enterMandatoryResolved
+    ? pass(name, `blueprint=${blueprintResolved}/${defenseNeedsScar4}, stone=${stoneResolved}, analysis=${analysisResolved}, enterMandatory=${enterMandatoryResolved}`)
+    : fail(name, `blueprint=${blueprintResolved}/${defenseNeedsScar4}, stone=${stoneResolved}, analysis=${analysisResolved}, enterMandatory=${enterMandatoryResolved}`);
 }
 
 const scenarios: ScenarioRun[] = [
