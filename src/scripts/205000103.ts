@@ -18,9 +18,13 @@ const deckCandidates = (playerState: any) =>
     canPutCardOntoBattlefieldByEffect(playerState, card)
   );
 
-const deckCandidatesForMaterials = (playerState: any, selectedMaterials: Card[]) => {
+const deckCandidatesForMaterials = (
+  playerState: any,
+  selectedMaterials: Card[],
+  materialColors = collectHighAlchemyMaterialColors(selectedMaterials)
+) => {
   const highAlchemyContext = {
-    highAlchemyMaterialColors: collectHighAlchemyMaterialColors(selectedMaterials),
+    highAlchemyMaterialColors: materialColors,
     highAlchemyMaterialCount: selectedMaterials.length,
   };
   return playerState.deck.filter((card: Card) =>
@@ -66,9 +70,9 @@ const effect_205000103_high_alchemy: CardEffect = {
           const ownerUid = target ? AtomicEffectExecutor.findCardOwnerKey(gameState, target.gamecardId) : undefined;
           return !!target && ownerUid === playerState.uid && (target.cardlocation === 'UNIT' || target.cardlocation === 'ITEM');
         });
-      selectedMaterials.forEach(target => moveCard(gameState, playerState.uid, target, 'GRAVE', instance));
       const materialColors = collectHighAlchemyMaterialColors(selectedMaterials);
-      const candidates = deckCandidatesForMaterials(playerState, selectedMaterials);
+      selectedMaterials.forEach(target => moveCard(gameState, playerState.uid, target, 'GRAVE', instance));
+      const candidates = deckCandidatesForMaterials(playerState, selectedMaterials, materialColors);
       if (candidates.length === 0) return;
       createSelectCardQuery(
         gameState,

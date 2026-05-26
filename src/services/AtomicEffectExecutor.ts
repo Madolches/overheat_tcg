@@ -1438,8 +1438,15 @@ export class AtomicEffectExecutor {
     ) {
       const sourceCard = this.findCardById(gameState, options.effectSourceCardId);
       if (isAlchemySourceCard(sourceCard)) {
+        (card as any).data = (card as any).data || {};
         (card as any).data.enteredFromDeckByAlchemyTurn = gameState.turnCount;
         (card as any).data.enteredFromDeckByAlchemySourceCardId = sourceCard.gamecardId;
+        if (Array.isArray(options.highAlchemyMaterialColors)) {
+          (card as any).data.highAlchemyMaterialColors = Array.from(new Set(options.highAlchemyMaterialColors));
+        }
+        if (options.highAlchemyMaterialCount !== undefined) {
+          (card as any).data.highAlchemyMaterialCount = options.highAlchemyMaterialCount;
+        }
       }
     }
 

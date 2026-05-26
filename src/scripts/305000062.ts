@@ -1,14 +1,11 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import {
-  addTemporaryColor,
   createSelectCardQuery,
   isAlchemyCard,
   moveCard,
   wasSentFromFieldToGraveByAlchemyEffect
 } from './BaseUtil';
-
-const allColors = ['WHITE', 'BLUE', 'GREEN', 'RED', 'YELLOW'];
 
 const alchemyGraveCards = (playerState: any) =>
   playerState.grave.filter((card: Card) => isAlchemyCard(card));
@@ -28,9 +25,7 @@ const cardEffects: CardEffect[] = [{
   type: 'CONTINUOUS',
   triggerLocation: ['ITEM'],
   description: '卡名含有《炼金》的卡的效果将战场上的这张卡送入墓地时，这张卡视作具备所有颜色。',
-  applyContinuous: (_gameState, instance) => {
-    allColors.forEach(color => addTemporaryColor(instance, color));
-  }
+  applyContinuous: () => {}
 }, {
   id: '305000062_alchemy_grave_bottom_draw_exile',
   type: 'TRIGGER',

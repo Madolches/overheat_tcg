@@ -7,7 +7,7 @@ import {
   ensureData,
   exhaustCost,
   isNonGodUnit,
-  moveCardAsCost,
+  moveCard,
   putUnitOntoField
 } from './BaseUtil';
 
@@ -22,14 +22,28 @@ const costCards = (playerState: any, instance: Card) => [
 const deckTargets = (playerState: any) =>
   playerState.deck.filter((card: Card) => isNonGodUnit(card) && canPutUnitOntoBattlefield(playerState, card));
 
-const deckTargetsForMaterials = (playerState: any, selectedMaterials: Card[]) => {
+const playerAfterSendingMaterials = (playerState: any, selectedMaterials: Card[]) => {
+  const sentUnitIds = new Set(selectedMaterials
+    .filter(card => card.cardlocation === 'UNIT')
+    .map(card => card.gamecardId));
+  if (sentUnitIds.size === 0) return playerState;
+  return {
+    ...playerState,
+    unitZone: playerState.unitZone.map((unit: Card | null) =>
+      unit && sentUnitIds.has(unit.gamecardId) ? null : unit
+    ),
+  };
+};
+
+const deckTargetsForMaterials = (playerState: any, selectedMaterials: Card[], materialColors = collectHighAlchemyMaterialColors(selectedMaterials)) => {
   const highAlchemyContext = {
-    highAlchemyMaterialColors: collectHighAlchemyMaterialColors(selectedMaterials),
+    highAlchemyMaterialColors: materialColors,
     highAlchemyMaterialCount: selectedMaterials.length,
   };
+  const targetPlayerState = playerAfterSendingMaterials(playerState, selectedMaterials);
   return playerState.deck.filter((card: Card) =>
     isNonGodUnit(card) &&
-    canPutUnitOntoBattlefield(playerState, card, highAlchemyContext)
+    canPutUnitOntoBattlefield(targetPlayerState, card, highAlchemyContext)
   );
 };
 
@@ -78,11 +92,11 @@ const cardEffects: CardEffect[] = [{
         .map(id => AtomicEffectExecutor.findCardById(gameState, id))
         .filter((card: Card | undefined): card is Card =>
           !!card && costCards(playerState, instance).some(candidate => candidate.gamecardId === card.gamecardId)
-        );
+      );
       if (selected.length < 3) return;
       const materialColors = collectHighAlchemyMaterialColors(selected);
-      selected.forEach(card => moveCardAsCost(gameState, playerState.uid, card, 'GRAVE', instance));
-      const candidates = deckTargetsForMaterials(playerState, selected);
+      selected.forEach(card => moveCard(gameState, playerState.uid, card, 'GRAVE', instance));
+      const candidates = deckTargetsForMaterials(playerState, selected, materialColors);
       if (candidates.length === 0) return;
       createSelectCardQuery(
         gameState,

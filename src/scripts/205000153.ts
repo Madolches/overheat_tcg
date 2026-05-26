@@ -33,9 +33,13 @@ const deckTargets = (playerState: any) =>
     canPutUnitOntoBattlefield(playerState, card)
   );
 
-const deckTargetsForMaterials = (playerState: any, selectedMaterials: Card[]) => {
+const deckTargetsForMaterials = (
+  playerState: any,
+  selectedMaterials: Card[],
+  materialColors = collectHighAlchemyMaterialColors(selectedMaterials)
+) => {
   const highAlchemyContext = {
-    highAlchemyMaterialColors: collectHighAlchemyMaterialColors(selectedMaterials),
+    highAlchemyMaterialColors: materialColors,
     highAlchemyMaterialCount: selectedMaterials.length,
   };
   const rawTargets = [
@@ -93,7 +97,7 @@ const cardEffects: CardEffect[] = [story('205000153_rainbow_high_alchemy', 'åˆ›ç
       if (selected.length < 2) return;
       const materialColors = collectHighAlchemyMaterialColors(selected);
       selected.forEach(card => moveCard(gameState, playerState.uid, card, 'GRAVE', instance));
-      const candidates = deckTargetsForMaterials(playerState, selected);
+      const candidates = deckTargetsForMaterials(playerState, selected, materialColors);
       if (candidates.length === 0) return;
       createSelectCardQuery(
         gameState,

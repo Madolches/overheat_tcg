@@ -57,6 +57,9 @@ import bt08Y08 from '../src/scripts/205000152';
 import bt08Y09 from '../src/scripts/205000153';
 import bt08Y10 from '../src/scripts/305110083';
 import bt08Y11 from '../src/scripts/105110409';
+import bt07Y04 from '../src/scripts/105000384';
+import bt07Y09 from '../src/scripts/305000062';
+import highAlchemy from '../src/scripts/205000103';
 import bt04R07 from '../src/scripts/102060433';
 import bt04R09 from '../src/scripts/202060130';
 import bt05R07 from '../src/scripts/102060244';
@@ -1880,6 +1883,56 @@ async function testYellowHighAlchemyPlacements(): Promise<ScenarioResult> {
     (unit as any).data?.enteredFromDeckByAlchemySourceCardId === cecilia.gamecardId &&
     (unit as any).data?.highAlchemyMaterialColors?.includes('RED')
   );
+  const triggerCecilia = cloneScriptCard(bt08Y03 as Card, 'UNIT', { gamecardId: 'Y03_TRIGGER_CECILIA' });
+  const rawStoneMaterial = cloneScriptCard(bt07Y04 as Card, 'UNIT');
+  const triggerWhite = testCard({ id: 'Y03_TRIGGER_WHITE', fullName: 'Y03 Trigger White', color: 'WHITE', cardlocation: 'HAND' });
+  const triggerGreen = testCard({ id: 'Y03_TRIGGER_GREEN', fullName: 'Y03 Trigger Green', color: 'GREEN', cardlocation: 'HAND' });
+  const triggerTarget = testCard({ id: 'Y03_TRIGGER_TARGET', fullName: 'Y03 Trigger Target', type: 'UNIT', color: 'RED', godMark: false, cardlocation: 'DECK' });
+  const searchedStone = cloneScriptCard(bt07Y09 as Card, 'DECK', { gamecardId: 'Y03_SEARCHED_STONE' });
+  const payUnitA = testCard({ id: 'Y03_TRIGGER_PAY_A', fullName: 'Y03 Trigger Pay A', color: 'YELLOW', cardlocation: 'UNIT' });
+  const payUnitB = testCard({ id: 'Y03_TRIGGER_PAY_B', fullName: 'Y03 Trigger Pay B', color: 'YELLOW', cardlocation: 'UNIT' });
+  const triggerState = game({
+    hand: [triggerWhite, triggerGreen],
+    deck: [triggerTarget, searchedStone],
+    unitZone: [triggerCecilia, rawStoneMaterial, payUnitA, payUnitB, null, null],
+  });
+  await activateAndResolveByOpponentPass(triggerState, 'BOT', triggerCecilia, 0);
+  await answerPendingQuery(triggerState, 'BOT', [rawStoneMaterial.gamecardId, triggerWhite.gamecardId, triggerGreen.gamecardId]);
+  await answerPendingQuery(triggerState, 'BOT', [triggerTarget.gamecardId]);
+  await confirmAllTriggers(triggerState, 'BOT');
+  if (triggerState.pendingQuery?.type === 'SELECT_PAYMENT') {
+    await answerPendingQuery(triggerState, 'BOT', [JSON.stringify({ exhaustUnitIds: [payUnitA.gamecardId, payUnitB.gamecardId] })]);
+  }
+  if (triggerState.pendingQuery?.context?.effectId === '105000384_effect_grave_search_immortal_stone') {
+    await answerPendingQuery(triggerState, 'BOT', [searchedStone.gamecardId]);
+  }
+  const rawStoneTriggered = triggerState.players.BOT.hand.some((card: Card) => card.gamecardId === searchedStone.gamecardId);
+
+  const fullCecilia = cloneScriptCard(bt08Y03 as Card, 'UNIT');
+  const fullFieldA = testCard({ id: 'Y03_FULL_FIELD_A', fullName: 'Y03 Full Field A', color: 'RED', cardlocation: 'UNIT' });
+  const fullFieldB = testCard({ id: 'Y03_FULL_FIELD_B', fullName: 'Y03 Full Field B', color: 'WHITE', cardlocation: 'UNIT' });
+  const fullFieldC = testCard({ id: 'Y03_FULL_FIELD_C', fullName: 'Y03 Full Field C', color: 'GREEN', cardlocation: 'UNIT' });
+  const fullFieldD = testCard({ id: 'Y03_FULL_FIELD_D', fullName: 'Y03 Full Field D', color: 'BLUE', cardlocation: 'UNIT' });
+  const fullFieldE = testCard({ id: 'Y03_FULL_FIELD_E', fullName: 'Y03 Full Field E', color: 'YELLOW', cardlocation: 'UNIT' });
+  const fullTarget = testCard({ id: 'Y03_FULL_TARGET', fullName: 'Y03 Full Target', type: 'UNIT', color: 'RED', godMark: false, cardlocation: 'DECK' });
+  const fullState = game({
+    deck: [fullTarget],
+    unitZone: [fullCecilia, fullFieldA, fullFieldB, fullFieldC, fullFieldD, fullFieldE],
+  });
+  const fullCanActivate = ServerGameService.checkEffectLimitsAndReqs(
+    fullState,
+    'BOT',
+    fullCecilia,
+    fullCecilia.effects![0],
+    'UNIT'
+  ).valid;
+  await activateAndResolveByOpponentPass(fullState, 'BOT', fullCecilia, 0);
+  await answerPendingQuery(fullState, 'BOT', [fullFieldA.gamecardId, fullFieldB.gamecardId, fullFieldC.gamecardId]);
+  await answerPendingQuery(fullState, 'BOT', [fullTarget.gamecardId]);
+  const fullFieldPlaced = fullState.players.BOT.unitZone.some((unit: Card | null) =>
+    unit?.gamecardId === fullTarget.gamecardId &&
+    (unit as any).data?.enteredFromDeckByAlchemySourceCardId === fullCecilia.gamecardId
+  );
 
   const rainbow = cloneScriptCard(bt08Y09 as Card, 'PLAY');
   const fieldMaterial = testCard({ id: 'Y09_FIELD', fullName: 'Y09 Field', type: 'UNIT', color: 'WHITE', godMark: false, cardlocation: 'UNIT' });
@@ -1904,9 +1957,9 @@ async function testYellowHighAlchemyPlacements(): Promise<ScenarioResult> {
     stateB.players.BOT.grave.some((card: Card) => card.gamecardId === fieldMaterialB.gamecardId) &&
     stateB.players.BOT.grave.some((card: Card) => card.gamecardId === deckGod.gamecardId);
 
-  return y03Placed && y09Placed && materialsSent
-    ? pass(name, `y03=${y03Placed}, y09=${y09Placed}, materials=${materialsSent}`)
-    : fail(name, `y03=${y03Placed}, y09=${y09Placed}, materials=${materialsSent}`);
+  return y03Placed && rawStoneTriggered && fullCanActivate && fullFieldPlaced && y09Placed && materialsSent
+    ? pass(name, `y03=${y03Placed}, rawTrigger=${rawStoneTriggered}, full=${fullCanActivate}/${fullFieldPlaced}, y09=${y09Placed}, materials=${materialsSent}`)
+    : fail(name, `y03=${y03Placed}, rawTrigger=${rawStoneTriggered}, full=${fullCanActivate}/${fullFieldPlaced}, y09=${y09Placed}, materials=${materialsSent}`);
 }
 
 async function testYellowHighAlchemyPhantomBeastEntryRestriction(): Promise<ScenarioResult> {
@@ -1963,9 +2016,48 @@ async function testYellowHighAlchemyPhantomBeastEntryRestriction(): Promise<Scen
   const twoMaterialOptions = (stateB.pendingQuery?.options || []).map((option: any) => option.card.gamecardId);
   const twoMaterialsBlocked = !twoMaterialOptions.includes(crow.gamecardId);
 
-  return directBlocked && noContextBlocked && redGateOnly && kodePlaced && twoMaterialsBlocked
-    ? pass(name, `direct=${directBlocked}/${noContextBlocked}, redGate=${redGateOnly}, placed=${kodePlaced}, two=${twoMaterialsBlocked}`)
-    : fail(name, `direct=${directBlocked}/${noContextBlocked}, redGate=${redGateOnly}, placed=${kodePlaced}, two=${twoMaterialsBlocked}`);
+  const highAlchemyStory = cloneScriptCard(highAlchemy as Card, 'PLAY');
+  const immortalStone = cloneScriptCard(bt07Y09 as Card, 'ITEM');
+  const yellowA = testCard({ id: 'Y09_STONE_YELLOW_A', color: 'YELLOW', cardlocation: 'UNIT' });
+  const yellowB = testCard({ id: 'Y09_STONE_YELLOW_B', color: 'YELLOW', cardlocation: 'ITEM', type: 'ITEM' });
+  const stoneKode = cloneScriptCard(bt08Y05 as Card, 'DECK', { gamecardId: 'Y09_STONE_KODE' });
+  const stoneCrow = cloneScriptCard(bt08Y07 as Card, 'DECK', { gamecardId: 'Y09_STONE_CROW' });
+  const stoneState = game({
+    deck: [stoneKode, stoneCrow],
+    playZone: [highAlchemyStory],
+    unitZone: [yellowA, null, null, null, null, null],
+    itemZone: [immortalStone, yellowB],
+  });
+  await highAlchemyStory.effects?.[0]?.execute?.(highAlchemyStory, stoneState, stoneState.players.BOT);
+  await answerPendingQuery(stoneState, 'BOT', [immortalStone.gamecardId, yellowA.gamecardId, yellowB.gamecardId]);
+  const stoneOptions = (stoneState.pendingQuery?.options || []).map((option: any) => option.card.gamecardId);
+  const stoneOpensAllColors = stoneOptions.includes(stoneKode.gamecardId) && stoneOptions.includes(stoneCrow.gamecardId);
+  await answerPendingQuery(stoneState, 'BOT', [stoneCrow.gamecardId]);
+  const stoneCrowPlaced = stoneState.players.BOT.unitZone.some((unit: Card | null) =>
+    unit?.gamecardId === stoneCrow.gamecardId &&
+    (unit as any).data?.highAlchemyMaterialColors?.includes('GREEN') &&
+    (unit as any).data?.highAlchemyMaterialColors?.includes('RED')
+  );
+
+  const rawStory = cloneScriptCard(highAlchemy as Card, 'PLAY', { gamecardId: 'RAW_STONE_HIGH_ALCHEMY' });
+  const rawStone = cloneScriptCard(bt07Y04 as Card, 'UNIT');
+  const rawYellowA = testCard({ id: 'Y04_RAW_YELLOW_A', color: 'YELLOW', cardlocation: 'UNIT' });
+  const rawYellowB = testCard({ id: 'Y04_RAW_YELLOW_B', color: 'YELLOW', cardlocation: 'ITEM', type: 'ITEM' });
+  const rawKode = cloneScriptCard(bt08Y05 as Card, 'DECK', { gamecardId: 'Y04_RAW_KODE' });
+  const rawState = game({
+    deck: [rawKode],
+    playZone: [rawStory],
+    unitZone: [rawStone, rawYellowA, null, null, null, null],
+    itemZone: [rawYellowB],
+  });
+  await rawStory.effects?.[0]?.execute?.(rawStory, rawState, rawState.players.BOT);
+  await answerPendingQuery(rawState, 'BOT', [rawStone.gamecardId, rawYellowA.gamecardId, rawYellowB.gamecardId]);
+  const rawOptions = (rawState.pendingQuery?.options || []).map((option: any) => option.card.gamecardId);
+  const rawOpensRed = rawOptions.includes(rawKode.gamecardId);
+
+  return directBlocked && noContextBlocked && redGateOnly && kodePlaced && twoMaterialsBlocked && stoneOpensAllColors && stoneCrowPlaced && rawOpensRed
+    ? pass(name, `direct=${directBlocked}/${noContextBlocked}, redGate=${redGateOnly}, placed=${kodePlaced}, two=${twoMaterialsBlocked}, stone=${stoneOpensAllColors}/${stoneCrowPlaced}, raw=${rawOpensRed}`)
+    : fail(name, `direct=${directBlocked}/${noContextBlocked}, redGate=${redGateOnly}, placed=${kodePlaced}, two=${twoMaterialsBlocked}, stone=${stoneOpensAllColors}/${stoneCrowPlaced}, raw=${rawOpensRed}`);
 }
 
 async function testYellowPhantomBeastContinuous(): Promise<ScenarioResult> {
