@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Card, PlayerState, StackItem, GameState, GAME_TIMEOUTS } from '../types/game';
+import { Card, PlayerOngoingEffect, PlayerState, StackItem, GameState } from '../types/game';
 import { CardComponent } from './Card';
 import { StandardPopup } from './StandardPopup';
 import { KeywordBadges } from './KeywordBadges';
-import { ArrowDown, Shield, Sword, Zap, Trash2, Flag, BookOpen, Layers, AlertTriangle, Search, Play, X, LogOut, Coins } from 'lucide-react';
+import { ArrowDown, Shield, Sword, Zap, Flag, BookOpen, Play, X, LogOut, Coins, Sparkles } from 'lucide-react';
 import { cn, getCardImageUrl } from '../lib/utils';
 import { getPlayerWealthCount } from '../lib/wealth';
+import { getPlayerOngoingEffects } from '../lib/playerOngoingEffects';
 
 interface PlayFieldProps {
   player: PlayerState;
@@ -227,24 +228,93 @@ const HandZoneSlot: React.FC<{
   </button>
 );
 
-const WealthCounter: React.FC<{
+const OngoingEffectButton: React.FC<{
   value: number;
+  effectCount: number;
   isOpponent?: boolean;
-}> = ({ value, isOpponent }) => (
-  <div
-    className={cn(
-      "flex min-w-[48px] items-center justify-center gap-1 rounded-full border px-2 py-1 shadow-inner md:min-w-[58px] md:px-3",
-      value > 0
-        ? "border-amber-300/40 bg-amber-400/15 text-amber-200 shadow-amber-500/10"
-        : "border-white/5 bg-white/5 text-white/35",
-      isOpponent && "md:flex-row-reverse"
-    )}
-    title={isOpponent ? '对方财富指示物' : '我方财富指示物'}
-  >
-    <Coins className={cn("h-3.5 w-3.5 md:h-4 md:w-4", value > 0 ? "text-amber-300" : "text-white/35")} />
-    <span className="text-sm font-black italic tabular-nums md:text-base">{value}</span>
-  </div>
-);
+  onClick?: () => void;
+}> = ({ value, effectCount, isOpponent, onClick }) => {
+  const isActive = value > 0 || effectCount > 0;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex min-w-[64px] items-center justify-center gap-1 rounded-full border px-2 py-1 shadow-inner transition-all md:min-w-[76px] md:px-3",
+        isActive
+          ? "border-amber-300/45 bg-amber-400/15 text-amber-100 shadow-amber-500/10 hover:border-amber-200/70 hover:bg-amber-400/25"
+          : "border-white/5 bg-white/5 text-white/35 hover:border-white/15 hover:text-white/55",
+        isOpponent && "md:flex-row-reverse"
+      )}
+      title={isOpponent ? '查看对方持续效果' : '查看我方持续效果'}
+    >
+      <Coins className={cn("h-3.5 w-3.5 md:h-4 md:w-4", value > 0 ? "text-amber-300" : "text-white/35")} />
+      <span className="text-sm font-black italic tabular-nums md:text-base">{value}</span>
+      <span className="h-4 w-px bg-white/15" />
+      <Sparkles className={cn("h-3.5 w-3.5 md:h-4 md:w-4", effectCount > 0 ? "text-sky-300" : "text-white/35")} />
+      <span className="text-sm font-black italic tabular-nums md:text-base">{effectCount}</span>
+    </button>
+  );
+};
+
+const EFFECT_CATEGORY_LABELS: Record<PlayerOngoingEffect['category'], string> = {
+  CONTINUOUS: '永续效果',
+  TEMPORARY: '临时持续影响',
+  WEALTH: '财富来源'
+};
+
+const EFFECT_CATEGORY_STYLES: Record<PlayerOngoingEffect['category'], string> = {
+  CONTINUOUS: 'border-sky-300/30 bg-sky-400/10 text-sky-100',
+  TEMPORARY: 'border-rose-300/30 bg-rose-400/10 text-rose-100',
+  WEALTH: 'border-amber-300/30 bg-amber-400/10 text-amber-100'
+};
+
+const OngoingEffectsPanel: React.FC<{
+  effects: PlayerOngoingEffect[];
+}> = ({ effects }) => {
+  const grouped = (['CONTINUOUS', 'TEMPORARY', 'WEALTH'] as const).map(category => ({
+    category,
+    effects: effects.filter(effect => effect.category === category)
+  }));
+
+  if (effects.length === 0) {
+    return (
+      <div className="flex min-h-[180px] items-center justify-center rounded-2xl border border-white/10 bg-black/25 px-6 text-center text-sm font-bold text-white/45">
+        当前没有对该玩家生效的全局永续、临时持续影响或财富来源。
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-4 md:gap-5">
+      {grouped.map(group => group.effects.length > 0 && (
+        <section key={group.category} className="rounded-2xl border border-white/10 bg-black/25 p-4 md:p-5">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-black tracking-widest text-white/80">{EFFECT_CATEGORY_LABELS[group.category]}</h3>
+            <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-black tabular-nums text-white/55">
+              {group.effects.length}
+            </span>
+          </div>
+          <div className="grid gap-2.5">
+            {group.effects.map(effect => (
+              <div
+                key={effect.id}
+                className={cn(
+                  "rounded-xl border px-3 py-2.5 shadow-inner",
+                  EFFECT_CATEGORY_STYLES[effect.category]
+                )}
+              >
+                <div className="text-xs font-black text-white/90">{effect.sourceCardName}</div>
+                <div className="mt-1 text-xs font-bold leading-relaxed text-white/70">{effect.description}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+};
 
 const withEffectiveCostInfluence = (gameState: GameState | undefined, player: PlayerState | undefined, card: Card) => {
   if (!player) return { effectiveAcValue: card.acValue ?? 0, card };
@@ -314,6 +384,8 @@ const PlayerHalf: React.FC<{
   player: PlayerState;
   isOpponent?: boolean;
   wealthValue?: number;
+  ongoingEffects?: PlayerOngoingEffect[];
+  onOpenOngoingEffects?: (player: PlayerState, isOpponent?: boolean) => void;
   onCardClick?: (card: Card, zone: string, index?: number, e?: React.MouseEvent) => void;
   onPreviewCard?: (card: Card) => void;
   onHoverCard?: (card: Card | null) => void;
@@ -329,9 +401,10 @@ const PlayerHalf: React.FC<{
   setViewingZone?: (zone: { title: string, type: string, isOpponentZone?: boolean } | null) => void;
   highlightedCardIds?: Set<string>;
   isSpectator?: boolean;
-}> = ({ player, isOpponent, wealthValue = 0, onCardClick, onPreviewCard, onHoverCard, onPlayCard, paymentSelection, pendingPlayCard, selectedAttackers, selectedDefender, game, allianceInitiator, cardBackUrl, viewingZone, setViewingZone, highlightedCardIds, isSpectator }) => {
+}> = ({ player, isOpponent, wealthValue = 0, ongoingEffects = [], onOpenOngoingEffects, onCardClick, onPreviewCard, onHoverCard, onPlayCard, paymentSelection, pendingPlayCard, selectedAttackers, selectedDefender, game, allianceInitiator, cardBackUrl, viewingZone, setViewingZone, highlightedCardIds, isSpectator }) => {
   if (!player) return null;
   const getCardCostDisplay = (card: Card) => withEffectiveCostInfluence(game, player, card);
+  const ongoingEffectCount = ongoingEffects.filter(effect => effect.category !== 'WEALTH').length;
   const unitZoneOffsetClass = ""; // Removed horizontal offset to prevent blocking exile area
   const getMobileErosionCount = (playerState: PlayerState): number | string => {
     const frontCount = playerState.erosionFront?.filter(Boolean).length || 0;
@@ -401,8 +474,12 @@ const PlayerHalf: React.FC<{
               isHighlighted={highlightedCardIds?.has((player.itemZone?.filter(Boolean).slice(-1)[0] as Card | undefined)?.gamecardId || '')}
               displayMode="erosion_item"
             />
-            <div className="pointer-events-none flex justify-center">
-              <WealthCounter value={wealthValue} />
+            <div className="flex justify-center">
+              <OngoingEffectButton
+                value={wealthValue}
+                effectCount={ongoingEffectCount}
+                onClick={() => onOpenOngoingEffects?.(player, isOpponent)}
+              />
             </div>
             <CardSlot
               card={player.erosionFront?.filter(Boolean).slice(-1)[0] || player.erosionBack?.filter(Boolean).slice(-1)[0] || null}
@@ -686,8 +763,13 @@ const PlayerHalf: React.FC<{
               isOpponent={isOpponent}
               displayMode="erosion_item"
             />
-            <div className={cn("pointer-events-none flex justify-center", isOpponent && "rotate-180")}>
-              <WealthCounter value={wealthValue} isOpponent={isOpponent} />
+            <div className={cn("flex justify-center", isOpponent && "rotate-180")}>
+              <OngoingEffectButton
+                value={wealthValue}
+                effectCount={ongoingEffectCount}
+                isOpponent={isOpponent}
+                onClick={() => onOpenOngoingEffects?.(player, isOpponent)}
+              />
             </div>
           </>
         ) : (
@@ -732,6 +814,10 @@ export const PlayField: React.FC<PlayFieldProps> = ({
 }) => {
   const [hoveredCard, setHoveredCard] = useState<Card | null>(null);
   const [isDesktop, setIsDesktop] = useState<boolean>(() => typeof window !== 'undefined' ? window.innerWidth >= 1024 : false);
+  const [ongoingEffectsPopup, setOngoingEffectsPopup] = useState<{
+    title: string;
+    effects: PlayerOngoingEffect[];
+  } | null>(null);
 
   useEffect(() => {
     const onResize = () => setIsDesktop(window.innerWidth >= 1024);
@@ -745,6 +831,16 @@ export const PlayField: React.FC<PlayFieldProps> = ({
   const wealthContext = { turnCount: game.turnCount };
   const playerWealth = getPlayerWealthCount(player, wealthContext);
   const opponentWealth = getPlayerWealthCount(opponent, wealthContext);
+  const playerOngoingEffects = getPlayerOngoingEffects(game, player.uid);
+  const opponentOngoingEffects = getPlayerOngoingEffects(game, opponent.uid);
+  const openOngoingEffects = (targetPlayer: PlayerState, isOpponentTarget?: boolean) => {
+    setOngoingEffectsPopup({
+      title: isSpectator
+        ? `${isOpponentTarget ? '玩家2' : '玩家1'}持续效果`
+        : isOpponentTarget ? '对方持续效果' : '我方持续效果',
+      effects: targetPlayer.uid === opponent.uid ? opponentOngoingEffects : playerOngoingEffects
+    });
+  };
   const phaseLabel =
     game.phase === 'COUNTERING' ? '对抗' :
       game.phase === 'MAIN' ? '主要' :
@@ -818,6 +914,55 @@ export const PlayField: React.FC<PlayFieldProps> = ({
         cardBackUrl={cardBackUrl}
         highlightedIds={Array.from(highlightedCardIds || [])}
       />
+      <AnimatePresence>
+        {ongoingEffectsPopup && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 p-4 backdrop-blur-xl md:p-8"
+            onClick={() => setOngoingEffectsPopup(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.94, opacity: 0, y: 18 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.94, opacity: 0, y: 18 }}
+              className="relative flex max-h-[90vh] w-full max-w-[28rem] flex-col overflow-hidden rounded-3xl border border-white/10 bg-zinc-900/95 shadow-2xl"
+              onClick={event => event.stopPropagation()}
+            >
+              <div className="border-b border-white/5 px-6 py-5 text-center">
+                <button
+                  type="button"
+                  onClick={() => setOngoingEffectsPopup(null)}
+                  className="absolute right-4 top-4 rounded-full p-2 text-white/50 transition-all hover:bg-white/10 hover:text-white"
+                  title="关闭"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+                <div className="flex items-center justify-center gap-2">
+                  <Sparkles className="h-5 w-5 text-[#f27d26]" />
+                  <h2 className="text-xl font-black italic tracking-tight text-white">{ongoingEffectsPopup.title}</h2>
+                </div>
+                <p className="mt-2 text-xs font-bold leading-relaxed tracking-widest text-white/45">
+                  当前对该玩家生效的玩家级持续效果与财富来源
+                </p>
+              </div>
+              <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
+                <OngoingEffectsPanel effects={ongoingEffectsPopup.effects} />
+              </div>
+              <div className="border-t border-white/5 bg-black/20 p-4 text-center">
+                <button
+                  type="button"
+                  onClick={() => setOngoingEffectsPopup(null)}
+                  className="rounded-xl border border-white/10 bg-zinc-800 px-8 py-3 text-sm font-black italic tracking-widest text-white transition-all hover:bg-zinc-700"
+                >
+                  关闭
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       {isDesktop && hoveredCard && (
         <div className="pointer-events-none absolute right-4 top-4 z-[120] hidden w-[300px] rounded-2xl border border-white/10 bg-black/75 p-3 shadow-2xl backdrop-blur-md lg:block">
           <div className="overflow-hidden rounded-xl border border-white/10 bg-black/40">
@@ -848,6 +993,8 @@ export const PlayField: React.FC<PlayFieldProps> = ({
           player={opponent}
           isOpponent
           wealthValue={opponentWealth}
+          ongoingEffects={opponentOngoingEffects}
+          onOpenOngoingEffects={openOngoingEffects}
           onCardClick={onCardClick}
           onPreviewCard={onPreviewCard}
           onHoverCard={setHoveredCard}
@@ -1028,6 +1175,8 @@ export const PlayField: React.FC<PlayFieldProps> = ({
         <PlayerHalf
           player={player}
           wealthValue={playerWealth}
+          ongoingEffects={playerOngoingEffects}
+          onOpenOngoingEffects={openOngoingEffects}
           onCardClick={onCardClick}
           onPreviewCard={onPreviewCard}
           onHoverCard={setHoveredCard}

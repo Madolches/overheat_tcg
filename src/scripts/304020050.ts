@@ -107,6 +107,7 @@ const cardEffects: CardEffect[] = [{
     const data = ensureData(target);
     data.grantedWealthValue = Math.max(Number(data.grantedWealthValue || 0), 1);
     data.grantedWealthSourceName = instance.fullName;
+    data.grantedWealthSourceCardId = instance.gamecardId;
     gameState.logs.push(`[${instance.fullName}] 使 [${target.fullName}] 获得财富1。`);
   }
 }, {

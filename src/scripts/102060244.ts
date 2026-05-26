@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { addInfluence, addTempDamage, addTempPowerUntilEndOfTurn, ensureData, isFaction, ownUnits, ownerUidOf } from './BaseUtil';
+import { addTempDamage, addTempPowerUntilEndOfTurn, ensureData, isFaction, ownUnits, ownerUidOf } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
   id: '102060244_power_bonus',
@@ -14,7 +14,6 @@ const cardEffects: CardEffect[] = [{
       const data = ensureData(unit);
       data.powerIncreaseBonus = Number(data.powerIncreaseBonus || 0) + 500;
       data.powerIncreaseBonusSourceName = instance.fullName;
-      addInfluence(unit, instance, '力量上升的卡效果额外+500');
     });
   }
 }, {

@@ -276,6 +276,9 @@ export interface CardEffect {
   targetSpec?: EffectTargetSpec;
   content?: string; // Description of the effect: Move, Draw, Add Power, etc.
   description: string; // Human readable text
+  playerEffectScope?: 'SELF' | 'OPPONENT' | 'BOTH' | 'NONE';
+  playerEffectDescription?: string;
+  hideFromCardInfluence?: boolean;
   wealthValue?: number;
   substitutionFilter?: CardFilter; // Filter for units this card can substitute/protect
   substitutionAction?: 'DESTROY_SELF' | 'SEND_SELF_TO_GRAVE' | 'EXHAUST_SELF';
@@ -288,6 +291,15 @@ export interface CardEffect {
   selfHandCostDiscount?: boolean; // If true, this card modifies its own effective play cost while in hand
   erosionKeepReplacement?: boolean; // If true, allows keeping a card during erosion phase that would be moved to grave
   limitGodmarkCount?: number; // New: Limit on the number of Godmark units on the field
+}
+
+export interface PlayerOngoingEffect {
+  id: string;
+  affectedPlayerUid: string;
+  sourceCardName: string;
+  sourceCardId?: string;
+  description: string;
+  category: 'CONTINUOUS' | 'TEMPORARY' | 'WEALTH';
 }
 
 export type Rarity = 'C' | 'U' | 'R' | 'SR' | 'UR' | 'SER' | 'PR';

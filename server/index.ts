@@ -3368,7 +3368,10 @@ function serializeCatalogCard(card: Card, includeEffects: boolean): Card {
                 type: effect.type,
                 description: effect.description,
                 content: effect.content,
-                wealthValue: effect.wealthValue
+                wealthValue: effect.wealthValue,
+                playerEffectScope: effect.playerEffectScope,
+                playerEffectDescription: effect.playerEffectDescription,
+                hideFromCardInfluence: effect.hideFromCardInfluence
             }))
             : undefined,
         imageUrl: card.imageUrl,

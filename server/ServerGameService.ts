@@ -943,7 +943,10 @@ export const ServerGameService = {
           resolve: originalEffect.resolve,
           applyContinuous: originalEffect.applyContinuous,
           removeContinuous: originalEffect.removeContinuous,
-          wealthValue: originalEffect.wealthValue ?? runtimeEffect?.wealthValue
+          wealthValue: originalEffect.wealthValue ?? runtimeEffect?.wealthValue,
+          playerEffectScope: originalEffect.playerEffectScope ?? runtimeEffect?.playerEffectScope,
+          playerEffectDescription: originalEffect.playerEffectDescription ?? runtimeEffect?.playerEffectDescription,
+          hideFromCardInfluence: originalEffect.hideFromCardInfluence ?? runtimeEffect?.hideFromCardInfluence
         };
       });
     }

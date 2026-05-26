@@ -30,6 +30,16 @@ const getEffectWealthValue = (card: Card, effect: CardEffect) => {
   return parseWealthFromText(effect.description);
 };
 
+export interface WealthSource {
+  id: string;
+  sourceCardName: string;
+  sourceCardId?: string;
+  targetCardName?: string;
+  targetCardId?: string;
+  value: number;
+  description: string;
+}
+
 export const getCardWealthValue = (card?: Card | null, context?: WealthContext) => {
   if (!card || card.type !== 'UNIT') return 0;
   if (isCardFullySilenced(card, context)) return 0;
@@ -47,3 +57,56 @@ export const getCardWealthValue = (card?: Card | null, context?: WealthContext) 
 
 export const getPlayerWealthCount = (player?: PlayerState | null, context?: WealthContext) =>
   (player?.unitZone || []).reduce((total, unit) => total + getCardWealthValue(unit, context), 0);
+
+export const getCardWealthSources = (card?: Card | null, context?: WealthContext): WealthSource[] => {
+  if (!card || card.type !== 'UNIT') return [];
+  if (isCardFullySilenced(card, context)) return [];
+
+  const data = (card as any).data || {};
+  const sources: WealthSource[] = [];
+  const dataValue = Number(data.wealthValue || 0);
+  const grantedValue = Number(data.grantedWealthValue || 0);
+
+  if (dataValue > 0) {
+    sources.push({
+      id: `${card.gamecardId}:data-wealth`,
+      sourceCardName: data.wealthSourceName || card.fullName,
+      sourceCardId: data.wealthSourceCardId || card.gamecardId,
+      targetCardName: card.fullName,
+      targetCardId: card.gamecardId,
+      value: dataValue,
+      description: `财富${dataValue}`
+    });
+  }
+
+  if (grantedValue > 0) {
+    sources.push({
+      id: `${card.gamecardId}:granted-wealth:${data.grantedWealthSourceCardId || data.grantedWealthSourceName || 'effect'}`,
+      sourceCardName: data.grantedWealthSourceName || card.fullName,
+      sourceCardId: data.grantedWealthSourceCardId,
+      targetCardName: card.fullName,
+      targetCardId: card.gamecardId,
+      value: grantedValue,
+      description: `${card.fullName} 获得财富${grantedValue}`
+    });
+  }
+
+  (card.effects || []).forEach(effect => {
+    const value = getEffectWealthValue(card, effect);
+    if (value <= 0) return;
+    sources.push({
+      id: `${card.gamecardId}:${effect.id || effect.description}:wealth`,
+      sourceCardName: card.fullName,
+      sourceCardId: card.gamecardId,
+      targetCardName: card.fullName,
+      targetCardId: card.gamecardId,
+      value,
+      description: effect.description || `财富${value}`
+    });
+  });
+
+  return sources;
+};
+
+export const getPlayerWealthSources = (player?: PlayerState | null, context?: WealthContext) =>
+  (player?.unitZone || []).flatMap(unit => getCardWealthSources(unit, context));
