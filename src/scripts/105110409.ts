@@ -34,6 +34,27 @@ const cardEffects: CardEffect[] = [{
     totalErosionCount(playerState) <= 5 &&
     handCosts(playerState, instance).length > 0 &&
     transformTargets(playerState).length > 0,
+  cost: async (gameState, playerState, instance) => {
+    const candidates = handCosts(playerState, instance);
+    if (candidates.length === 0) return false;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      candidates,
+      '选择舍弃手牌',
+      '选择1张手牌舍弃。',
+      1,
+      1,
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '105110409_transform_to_magical_doll',
+        costType: 'DISCARD_HAND_COST',
+        discardCostAmount: 1
+      },
+      () => 'HAND'
+    );
+    return true;
+  },
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,
@@ -47,25 +68,35 @@ const cardEffects: CardEffect[] = [{
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    title: '选择魔导人偶对象',
+    description: '选择你战场上的1个《魔导人偶》以外的非神蚀单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      transformTargets(playerState).map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'TARGET') {
       const target = transformTargets(playerState).find(unit => unit.gamecardId === selections[0]);
       if (!target) return;
-      createSelectCardQuery(
-        gameState,
-        playerState.uid,
-        handCosts(playerState, instance),
-        '选择舍弃手牌',
-        '选择1张手牌舍弃。',
-        1,
-        1,
-        { sourceCardId: instance.gamecardId, effectId: '105110409_transform_to_magical_doll', step: 'DISCARD', targetId: target.gamecardId },
-        () => 'HAND'
-      );
+      silenceAllNonKeywordEffectsPermanently(target, instance);
+      target.basePower = 3500;
+      target.power = 3500;
+      target.baseDamage = 3;
+      target.damage = 3;
+      const data = ensureData(target);
+      data.extraNameContainsMagicalDollBy = instance.fullName;
+      data.extraNameContainsMagicalDollSourceCardId = instance.gamecardId;
+      addInfluence(target, instance, '卡名也视为《魔导人偶》，力量3500，伤害3');
       return;
     }
 
     if (context?.step !== 'DISCARD') return;
+    // Legacy fallback for stack entries created before targetSpec/cost separation.
     const target = transformTargets(playerState).find(unit => unit.gamecardId === context.targetId);
     const discard = handCosts(playerState, instance).find((card: Card) => card.gamecardId === selections[0]);
     if (!target || !discard) return;

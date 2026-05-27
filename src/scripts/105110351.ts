@@ -85,6 +85,23 @@ const effect_105110351_destroy_boost: CardEffect = {
       { sourceCardId: instance.gamecardId, effectId: '105110351_destroy_boost', step: 'DESTROY_COST' }
     );
   },
+  targetSpec: {
+    title: '选择破坏费用',
+    description: '选择你的战场上的1张道具卡或具有【菲晶】的单位破坏。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT', 'ITEM'],
+    controller: 'SELF',
+    step: 'DESTROY_COST',
+    getCandidates: (_gameState, playerState, instance) =>
+      playerState.unitZone.concat(playerState.itemZone)
+        .filter((card): card is Card =>
+          !!card &&
+          card.gamecardId !== instance.gamecardId &&
+          (card.cardlocation === 'ITEM' || isFeijingUnit(card))
+        )
+        .map(card => ({ card, source: card.cardlocation as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step !== 'DESTROY_COST') return;
     const target = AtomicEffectExecutor.findCardById(gameState, selections[0]);

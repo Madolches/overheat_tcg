@@ -21,6 +21,17 @@ const cardEffects: CardEffect[] = [story('201000121_ready_on_opponent_attack', '
     gameState.phase === 'COUNTERING' &&
     gameState.counterStack?.some((item: any) => item.type === 'ATTACK' && item.ownerUid !== playerState.uid && !item.isNegated) &&
     ownNonGodUnits(playerState).length > 0,
+  targetSpec: {
+    title: '选择重置单位',
+    description: '选择你战场上的1个非神蚀单位，将其重置。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      ownNonGodUnits(playerState).map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = ownNonGodUnits(playerState).find(unit => unit.gamecardId === selections[0]);
     if (target) readyByEffect(gameState, target, instance);

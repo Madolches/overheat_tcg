@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { createPlayerSelectQuery, createSelectCardQuery, damagePlayerByEffect, getOpponentUid, isFeijingCard, moveCardAsCost } from './BaseUtil';
+import { createSelectCardQuery, damagePlayerByEffect, getOpponentUid, isFeijingCard, moveCard, moveCardAsCost } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
   id: '302000044_burn',
@@ -17,13 +17,19 @@ const cardEffects: CardEffect[] = [{
     return true;
   },
   execute: async (instance, gameState, playerState) => {
-    createPlayerSelectQuery(
+    const owner = playerState;
+    const feijingHands = owner.hand.filter(isFeijingCard);
+    if (feijingHands.length === 0) return;
+    createSelectCardQuery(
       gameState,
-      playerState.uid,
-      '选择对手',
-      '选择1名对手。',
-      { sourceCardId: instance.gamecardId, effectId: '302000044_burn', step: 'PLAYER', ownerUid: playerState.uid },
-      { includeSelf: false, includeOpponent: true }
+      owner.uid,
+      feijingHands,
+      '选择舍弃菲晶',
+      '选择手牌中的最多2张具有【菲晶】的卡舍弃。每舍弃1张，给予对手2点伤害。',
+      0,
+      Math.min(2, feijingHands.length),
+      { sourceCardId: instance.gamecardId, effectId: '302000044_burn', step: 'DISCARD', ownerUid: owner.uid, targetUid: getOpponentUid(gameState, owner.uid) },
+      () => 'HAND'
     );
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
@@ -48,7 +54,10 @@ const cardEffects: CardEffect[] = [{
     const owner = gameState.players[ownerUid];
     selections.forEach(id => {
       const hand = owner.hand.find(card => card.gamecardId === id);
-      if (hand) moveCardAsCost(gameState, ownerUid, hand, 'GRAVE', instance);
+      if (hand) {
+        moveCard(gameState, ownerUid, hand, 'GRAVE', instance);
+        gameState.logs.push(`[${instance.fullName}] 舍弃了 [${hand.fullName}]。`);
+      }
     });
     const targetUid = context.targetUid || getOpponentUid(gameState, ownerUid);
     if (selections.length > 0) await damagePlayerByEffect(gameState, ownerUid, targetUid, selections.length * 2, instance);

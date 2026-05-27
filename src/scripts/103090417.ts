@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { canActivateDefaultTiming, createSelectCardQuery, destroyByEffect, isNonGodUnit, moveCardAsCost, ownUnits } from './BaseUtil';
+import { canActivateDefaultTiming, createSelectCardQuery, destroyByEffect, isNonGodUnit, moveCard, ownUnits } from './BaseUtil';
 
 const SERNOBU = '瑟诺布';
 const CONDUCTOR = '银乐协奏师';
@@ -40,7 +40,34 @@ const cardEffects: CardEffect[] = [{
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    title: '选择破坏目标',
+    description: '选择战场上的1个非神蚀单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    step: 'TARGET',
+    getCandidates: gameState =>
+      nonGodUnitTargets(gameState).map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.declaredTargets?.length && context?.step === 'TARGET') {
+      const targetId = selections[0];
+      createSelectCardQuery(
+        gameState,
+        playerState.uid,
+        costUnits(playerState, instance),
+        '选择送墓单位',
+        '选择你战场上2个《银乐协奏师》以外的<瑟诺布>单位送入墓地。',
+        2,
+        2,
+        { sourceCardId: instance.gamecardId, effectId: '103090417_sacrifice_sernobu_destroy', step: 'SERNOBU_SEND', targetId },
+        () => 'UNIT'
+      );
+      return;
+    }
+
     if (context?.step === 'TARGET') {
       const target = nonGodUnitTargets(gameState).find(unit => unit.gamecardId === selections[0]);
       if (!target) return;
@@ -57,13 +84,17 @@ const cardEffects: CardEffect[] = [{
       );
       return;
     }
-    if (context?.step !== 'COST') return;
+    if (context?.step !== 'COST' && context?.step !== 'SERNOBU_SEND') return;
+    // This selection is after the colon, so it is effect movement rather than cost.
     const selectedCosts = selections
       .map(id => costUnits(playerState, instance).find(unit => unit.gamecardId === id))
       .filter((unit): unit is Card => !!unit)
       .slice(0, 2);
     if (selectedCosts.length < 2) return;
-    selectedCosts.forEach(unit => moveCardAsCost(gameState, playerState.uid, unit, 'GRAVE', instance));
+    selectedCosts.forEach(unit => {
+      moveCard(gameState, playerState.uid, unit, 'GRAVE', instance);
+      gameState.logs.push(`[${instance.fullName}] 将 [${unit.fullName}] 送入墓地。`);
+    });
     const target = nonGodUnitTargets(gameState).find(unit => unit.gamecardId === context.targetId);
     if (target) destroyByEffect(gameState, target, instance);
   }

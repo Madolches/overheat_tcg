@@ -16,6 +16,19 @@ const cardEffects: CardEffect[] = [story('201000086_destroy_recover', '选择战
   );
 }, {
   condition: gameState => allCardsOnField(gameState).some(card => card.type === 'ITEM' && !card.godMark),
+  targetSpec: {
+    title: '选择道具卡',
+    description: '选择战场上的1张非神蚀道具卡破坏。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['ITEM'],
+    controller: 'ANY',
+    step: 'TARGET',
+    getCandidates: gameState =>
+      allCardsOnField(gameState)
+        .filter(card => card.type === 'ITEM' && !card.godMark)
+        .map(card => ({ card, source: card.cardlocation as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'DESTROY_CARD', targetFilter: { gamecardId: selections[0] } }, instance);
     moveRandomGraveToDeckBottom(gameState, playerState.uid, 2, instance);

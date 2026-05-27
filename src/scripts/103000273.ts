@@ -41,6 +41,25 @@ const hasWhiteBlueExhaustCost = (playerState: any) => {
     candidates.length >= 2;
 };
 
+const createWhiteBlueExhaustCostQuery = (gameState: any, playerState: any, instance: Card) => {
+  const candidates = ownFieldCards(playerState).filter(canExhaustForWhiteBlueCost);
+  createSelectCardQuery(
+    gameState,
+    playerState.uid,
+    candidates,
+    '选择横置费用',
+    '选择你战场上的白色、蓝色卡各1张横置。',
+    2,
+    2,
+    {
+      sourceCardId: instance.gamecardId,
+      effectId: '103000273_ready_victoria',
+      costType: '103000273_WHITE_BLUE_EXHAUST'
+    },
+    card => card.cardlocation as any
+  );
+};
+
 const payWhiteBlueExhaustCost = (gameState: any, playerState: any, selections: string[]) => {
   const selected = selections
     .map(id => ownFieldCards(playerState).find(card => card.gamecardId === id))
@@ -103,6 +122,11 @@ const effect_103000273_ready_victoria: CardEffect = {
     instance.cardlocation === 'UNIT' &&
     ownUnits(playerState).some(isVictoriaUnit) &&
     hasWhiteBlueExhaustCost(playerState),
+  cost: async (gameState, playerState, instance) => {
+    if (!hasWhiteBlueExhaustCost(playerState)) return false;
+    createWhiteBlueExhaustCostQuery(gameState, playerState, instance);
+    return true;
+  },
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,
@@ -116,26 +140,37 @@ const effect_103000273_ready_victoria: CardEffect = {
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    title: '选择维多利亚单位',
+    description: '选择你的1个「维多利亚」单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      ownUnits(playerState)
+        .filter(isVictoriaUnit)
+        .map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.costType === '103000273_WHITE_BLUE_EXHAUST') {
+      if (!payWhiteBlueExhaustCost(gameState, playerState, selections)) {
+        context.cancelActivation = true;
+      }
+      return;
+    }
+
     if (context?.step === 'TARGET') {
       const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
       if (!target || target.cardlocation !== 'UNIT' || !isVictoriaUnit(target)) return;
-      const candidates = ownFieldCards(playerState).filter(canExhaustForWhiteBlueCost);
-      createSelectCardQuery(
-        gameState,
-        playerState.uid,
-        candidates,
-        '选择横置费用',
-        '选择你战场上的白色、蓝色卡各1张横置。',
-        2,
-        2,
-        { sourceCardId: instance.gamecardId, effectId: '103000273_ready_victoria', step: 'COST', targetId: target.gamecardId },
-        card => card.cardlocation as any
-      );
+      readyByEffect(gameState, target, instance);
+      addTempPower(target, instance, 1000);
       return;
     }
 
     if (context?.step !== 'COST') return;
+    // Legacy fallback for saves or stack entries created before targetSpec/cost separation.
     const target = context.targetId ? AtomicEffectExecutor.findCardById(gameState, context.targetId) : undefined;
     if (!target || target.cardlocation !== 'UNIT' || !isVictoriaUnit(target)) return;
     if (!payWhiteBlueExhaustCost(gameState, playerState, selections)) return;

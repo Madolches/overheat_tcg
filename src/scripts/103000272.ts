@@ -120,6 +120,17 @@ const effect_103000272_grave_color: CardEffect = {
       () => 'GRAVE'
     );
   },
+  targetSpec: {
+    title: '选择放逐单位',
+    description: '选择你的墓地中的1张非神蚀单位卡放逐。此单位本回合也具备那张卡的颜色。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      nonGodUnitCardsInGrave(playerState).map(card => ({ card, source: 'GRAVE' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const selected = selections[0]
       ? playerState.grave.find(card => card.gamecardId === selections[0] && card.type === 'UNIT' && !card.godMark)

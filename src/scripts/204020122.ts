@@ -9,6 +9,40 @@ const canRecoverMill = (gameState: any, playerState: any) =>
   playerState.grave.length >= 3 &&
   gameState.players[getOpponentUid(gameState, playerState.uid)].deck.length >= 3;
 
+const discardTwoHands = (gameState: any, playerState: any, instance: Card, selections: string[]) => {
+  const discards = selections
+    .map(id => playerState.hand.find((card: Card) => card.gamecardId === id))
+    .filter((card: Card | undefined): card is Card => !!card);
+  if (discards.length !== 2) return false;
+  discards.forEach(card => {
+    AtomicEffectExecutor.moveCard(gameState, playerState.uid, 'HAND', playerState.uid, 'GRAVE', card.gamecardId, false, {
+      effectSourcePlayerUid: playerState.uid,
+      effectSourceCardId: instance.gamecardId
+    });
+  });
+  return true;
+};
+
+const createDiscardTwoHandQuery = (gameState: any, playerState: any, instance: Card) => {
+  if (playerState.hand.length < 2) return false;
+  createSelectCardQuery(
+    gameState,
+    playerState.uid,
+    playerState.hand,
+    '选择舍弃手牌',
+    '选择2张手牌舍弃，之后恢复3并将对手卡组顶3张送入墓地。',
+    2,
+    2,
+    {
+      sourceCardId: instance.gamecardId,
+      effectId: '204020122_money_dream_modes',
+      step: 'DISCARD'
+    },
+    () => 'HAND'
+  );
+  return true;
+};
+
 const cardEffects: CardEffect[] = [story('204020122_money_dream_modes', '同名1回合1次，你的回合中，财富3以上，选择1项：抽到4张；或舍弃2张手牌，恢复3并将对手卡组顶3张送墓。', async (instance, gameState, playerState) => {
   const options = [
     {
@@ -47,32 +81,13 @@ const cardEffects: CardEffect[] = [story('204020122_money_dream_modes', '同名1
         return;
       }
       if (selections[0] !== 'RECOVER_MILL' || !canRecoverMill(gameState, playerState)) return;
-      createSelectCardQuery(
-        gameState,
-        playerState.uid,
-        playerState.hand,
-        '选择舍弃手牌',
-        '选择2张手牌舍弃，之后恢复3并将对手卡组顶3张送入墓地。',
-        2,
-        2,
-        { sourceCardId: instance.gamecardId, effectId: '204020122_money_dream_modes', step: 'DISCARD' },
-        () => 'HAND'
-      );
+      createDiscardTwoHandQuery(gameState, playerState, instance);
       return;
     }
 
     if (context?.step !== 'DISCARD') return;
-    const discards = selections
-      .map(id => playerState.hand.find((card: Card) => card.gamecardId === id))
-      .filter((card: Card | undefined): card is Card => !!card);
-    if (discards.length !== 2) return;
     const recoverCount = Math.min(3, playerState.grave.length);
-    discards.forEach(card => {
-      AtomicEffectExecutor.moveCard(gameState, playerState.uid, 'HAND', playerState.uid, 'GRAVE', card.gamecardId, false, {
-        effectSourcePlayerUid: playerState.uid,
-        effectSourceCardId: instance.gamecardId
-      });
-    });
+    if (!discardTwoHands(gameState, playerState, instance, selections)) return;
     moveRandomGraveToDeckBottom(gameState, playerState.uid, recoverCount, instance);
     millTop(gameState, getOpponentUid(gameState, playerState.uid), 3, instance);
   }

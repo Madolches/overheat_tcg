@@ -68,7 +68,42 @@ const cardEffects: CardEffect[] = [{
       { sourceCardId: instance.gamecardId, effectId: '101140397_shingi_sacrifice_modes', step: 'MODE' }
     );
   },
+  targetSpec: {
+    modeTitle: '选择效果',
+    modeDescription: '选择1项效果并指定对象。',
+    modeOptions: [{
+      id: 'GOD',
+      label: '放逐1张神蚀卡',
+      title: '选择神蚀卡',
+      description: '选择对手战场上的1张神蚀卡放逐。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT', 'ITEM'],
+      controller: 'OPPONENT',
+      step: 'GOD',
+      condition: (gameState, playerState) => opponentGodTargets(gameState, playerState.uid).length > 0,
+      getCandidates: (gameState, playerState) =>
+        opponentGodTargets(gameState, playerState.uid).map(card => ({ card, source: card.cardlocation as any }))
+    }, {
+      id: 'NON_GOD',
+      label: '放逐最多2张非神蚀卡',
+      title: '选择非神蚀卡',
+      description: '选择对手战场上的最多2张非神蚀卡放逐。',
+      minSelections: 0,
+      maxSelections: 2,
+      zones: ['UNIT', 'ITEM'],
+      controller: 'OPPONENT',
+      step: 'NON_GOD',
+      condition: (gameState, playerState) => opponentNonGodTargets(gameState, playerState.uid).length > 0,
+      getCandidates: (gameState, playerState) =>
+        opponentNonGodTargets(gameState, playerState.uid).map(card => ({ card, source: card.cardlocation as any }))
+    }]
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.declaredTargets?.length) {
+      await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'DRAW', value: 1 }, instance);
+    }
+
     if (context?.step === 'MODE') {
       const mode = selections[0];
       if (mode === 'GOD') {

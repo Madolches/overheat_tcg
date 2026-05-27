@@ -32,6 +32,17 @@ const cardEffects: CardEffect[] = [{
       () => 'GRAVE'
     );
   },
+  targetSpec: {
+    title: '选择蓝图卡',
+    description: '选择你墓地中的1张卡名含有《蓝图》的卡背面放逐。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      blueprintGraveCards(playerState).map(card => ({ card, source: 'GRAVE' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (!target || !blueprintGraveCards(playerState).some(card => card.gamecardId === target.gamecardId)) return;

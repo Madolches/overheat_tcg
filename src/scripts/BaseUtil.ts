@@ -278,6 +278,17 @@ export const resonanceEffect = (id: string): CardEffect => ({
       () => 'GRAVE'
     );
   },
+  targetSpec: {
+    title: '选择共鸣放逐',
+    description: '选择你的墓地中的1张卡，将其放逐。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    step: 'RESONANCE',
+    getCandidates: (_gameState, playerState) =>
+      playerState.grave.map(card => ({ card, source: 'GRAVE' as TriggerLocation }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step !== 'RESONANCE') return;
     const target = playerState.grave.find(card => card.gamecardId === selections[0]);
@@ -315,6 +326,19 @@ export const awakenEffect = (id: string): CardEffect => ({
       { sourceCardId: instance.gamecardId, effectId: id, step: 'AWAKEN' },
       () => 'UNIT'
     );
+  },
+  targetSpec: {
+    title: '选择唤醒单位',
+    description: '选择你的战场上的1个单位，本回合中力量+1000。回合结束时，将其放置到你的卡组底。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'AWAKEN',
+    getCandidates: (_gameState, playerState) =>
+      playerState.unitZone
+        .filter((unit): unit is Card => !!unit)
+        .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step !== 'AWAKEN') return;

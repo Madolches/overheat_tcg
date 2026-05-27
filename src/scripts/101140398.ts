@@ -58,6 +58,17 @@ const cardEffects: CardEffect[] = [{
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    title: '选择放逐单位',
+    description: '选择战场上的1个非神蚀单位，将其放逐。回合结束时，将其放置到战场上。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    step: 'TARGET',
+    getCandidates: gameState =>
+      nonGodUnitTargets(gameState).map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     const targetOwnerUid = target ? ownerUidOf(gameState, target) : undefined;

@@ -33,6 +33,27 @@ const cardEffects: CardEffect[] = [{
     canActivateDefaultTiming(gameState, playerState) &&
     redDiscardCosts(playerState, instance).length > 0 &&
     ownNonGodUnits(playerState).length > 0,
+  cost: async (gameState, playerState, instance) => {
+    const candidates = redDiscardCosts(playerState, instance);
+    if (candidates.length === 0) return false;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      candidates,
+      '选择舍弃费用',
+      '选择这张卡以外的1张红色手牌舍弃。',
+      1,
+      1,
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '102050392_hand_grant_attack_units',
+        costType: 'DISCARD_HAND_COST',
+        discardCostAmount: 1
+      },
+      () => 'HAND'
+    );
+    return true;
+  },
   execute: async (instance, gameState, playerState) => {
     gameState.logs.push(`[${instance.fullName}] revealed itself from hand.`);
     createSelectCardQuery(
@@ -47,24 +68,26 @@ const cardEffects: CardEffect[] = [{
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    title: '选择赋予攻击单位能力的单位',
+    description: '选择你的1个非神蚀单位，本回合中可以攻击对手单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      ownNonGodUnits(playerState).map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'TARGET') {
       const target = ownNonGodUnits(playerState).find(unit => unit.gamecardId === selections[0]);
       if (!target) return;
-      createSelectCardQuery(
-        gameState,
-        playerState.uid,
-        redDiscardCosts(playerState, instance),
-        '选择舍弃费用',
-        '选择这张卡以外的1张红色手牌舍弃。',
-        1,
-        1,
-        { sourceCardId: instance.gamecardId, effectId: '102050392_hand_grant_attack_units', step: 'DISCARD', targetId: target.gamecardId },
-        () => 'HAND'
-      );
+      grantAttackAnyThisTurn(target, instance, gameState);
       return;
     }
     if (context?.step !== 'DISCARD') return;
+    // Legacy fallback for stack entries created before targetSpec/cost separation.
     const discard = redDiscardCosts(playerState, instance).find((card: Card) => card.gamecardId === selections[0]);
     const target = context?.targetId ? AtomicEffectExecutor.findCardById(gameState, context.targetId) : undefined;
     if (!discard || !target || target.cardlocation !== 'UNIT' || target.godMark) return;

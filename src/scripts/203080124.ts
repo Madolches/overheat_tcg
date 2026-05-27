@@ -22,8 +22,22 @@ const awakenDeckUnits = (playerState: any) =>
     canPutUnitOntoBattlefield(playerState, card)
   );
 
+const awakenDeckUnitsAfterTopMill = (playerState: any) => {
+  const topMillIds = new Set(playerState.deck.slice(-3).map((card: Card) => card.gamecardId));
+  return awakenDeckUnits(playerState).filter((card: Card) => !topMillIds.has(card.gamecardId));
+};
+
+const canPayRitualMillCost = (playerState: any) => playerState.deck.length >= 3;
+
+const millRitualCost = (gameState: any, playerState: any, instance: Card) => {
+  millTop(gameState, playerState.uid, 3, instance);
+  return true;
+};
+
 const cardEffects: CardEffect[] = [story('203080124_ritual_or_awaken', '同名1回合1次：将卡组顶3张送入墓地，选择放置1张具有唤醒的单位或执行唤醒。', async (instance, gameState, playerState) => {
-  millTop(gameState, playerState.uid, Math.min(3, playerState.deck.length), instance);
+  if (!(instance as any).data?.ritualMilledByCost) {
+    millRitualCost(gameState, playerState, instance);
+  }
   const options = [];
   if (awakenDeckUnits(playerState).length > 0) options.push({ value: 'PUT_AWAKEN', label: '放置具有唤醒的单位' });
   if (ownUnits(playerState).length > 0) options.push({ value: 'AWAKEN', label: '唤醒己方单位' });
@@ -38,18 +52,64 @@ const cardEffects: CardEffect[] = [story('203080124_ritual_or_awaken', '同名1�
 }, {
   limitCount: 1,
   limitNameType: true,
+  targetSpec: {
+    preselect: false,
+    modeOptions: [{
+      id: 'PUT_AWAKEN',
+      label: '放置具有唤醒的单位',
+      title: '选择唤醒单位',
+      description: '选择卡组中1张具有唤醒的单位卡放置到战场。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['DECK'],
+      controller: 'SELF',
+      step: 'PUT_AWAKEN',
+      condition: (_gameState, playerState) => awakenDeckUnitsAfterTopMill(playerState).length > 0,
+      getCandidates: (_gameState, playerState) =>
+        awakenDeckUnitsAfterTopMill(playerState).map(card => ({ card, source: 'DECK' as any }))
+    }, {
+      id: 'AWAKEN',
+      label: '唤醒己方单位',
+      title: '选择唤醒单位',
+      description: '选择你的战场上的1个单位，本回合力量+1000，回合结束时放置到卡组底。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'SELF',
+      step: 'AWAKEN',
+      condition: (_gameState, playerState) => ownUnits(playerState).length > 0,
+      getCandidates: (_gameState, playerState) =>
+        ownUnits(playerState).map(card => ({ card, source: 'UNIT' as any }))
+    }]
+  },
   condition: (gameState, playerState) =>
     canActivateDefaultTiming(gameState, playerState) &&
-    playerState.deck.length >= 3 &&
-    (awakenDeckUnits(playerState).length > 0 || ownUnits(playerState).length > 0),
+    canPayRitualMillCost(playerState) &&
+    (awakenDeckUnitsAfterTopMill(playerState).length > 0 || ownUnits(playerState).length > 0),
+  cost: async (gameState, playerState, instance) => {
+    if (!canPayRitualMillCost(playerState)) return false;
+    (instance as any).data = {
+      ...((instance as any).data || {}),
+      ritualMilledByCost: true
+    };
+    millRitualCost(gameState, playerState, instance);
+    return true;
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step === 'MODE' && !(instance as any).data?.ritualMilledByCost) {
+      millRitualCost(gameState, playerState, instance);
+    }
+
     if (context?.step === 'MODE') {
       const mode = selections[0];
       if (mode === 'PUT_AWAKEN') {
+        delete (instance as any).data?.ritualMilledByCost;
+        const candidates = awakenDeckUnits(playerState);
+        if (candidates.length === 0) return;
         createSelectCardQuery(
           gameState,
           playerState.uid,
-          awakenDeckUnits(playerState),
+          candidates,
           '选择唤醒单位',
           '选择卡组中1张具有唤醒的单位卡放置到战场。',
           1,
@@ -58,6 +118,7 @@ const cardEffects: CardEffect[] = [story('203080124_ritual_or_awaken', '同名1�
           () => 'DECK'
         );
       } else if (mode === 'AWAKEN') {
+        delete (instance as any).data?.ritualMilledByCost;
         createSelectCardQuery(
           gameState,
           playerState.uid,

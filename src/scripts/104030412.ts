@@ -40,6 +40,17 @@ const cardEffects: CardEffect[] = [{
       card => card.cardlocation as any
     );
   },
+  targetSpec: {
+    title: '选择返回手牌目标',
+    description: '选择战场上的1个ACCESS值3以下的非神蚀单位返回持有者手牌。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    step: 'TARGET',
+    getCandidates: gameState =>
+      bounceTargets(gameState).map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (!target || !bounceTargets(gameState).some(unit => unit.gamecardId === target.gamecardId)) return;

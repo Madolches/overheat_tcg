@@ -64,6 +64,18 @@ const cardEffects: CardEffect[] = [{
       () => 'GRAVE'
     );
   },
+  targetSpec: {
+    title: '选择分析对象',
+    description: '选择对手墓地中的1张卡。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['GRAVE'],
+    controller: 'OPPONENT',
+    step: 'TARGET',
+    getCandidates: (gameState, playerState) =>
+      opponentGraveTargets(gameState, playerState.uid)
+        .map(card => ({ card, source: 'GRAVE' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'TARGET') {
       const opponentUid = getOpponentUid(gameState, playerState.uid);

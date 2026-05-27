@@ -33,6 +33,17 @@ const cardEffects: CardEffect[] = [story(
     condition: (gameState, playerState) =>
       allCardsOnField(gameState).length > 0 &&
       playerState.deck.length >= 5,
+    targetSpec: {
+      title: '选择宴会目标',
+      description: '选择战场上的1张卡。公开卡组顶5张，若其中有神蚀卡则破坏目标。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT', 'ITEM'],
+      controller: 'ANY',
+      step: 'TARGET',
+      getCandidates: gameState =>
+        allCardsOnField(gameState).map(card => ({ card, source: card.cardlocation as any }))
+    },
     onQueryResolve: async (instance, gameState, playerState, selections, context) => {
       if (context?.step !== 'TARGET') return;
       const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;

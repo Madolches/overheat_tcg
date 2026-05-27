@@ -50,6 +50,27 @@ const sacrificeYellowOrBlueNonGodUnit = (gameState: any, playerState: any, insta
   return true;
 };
 
+const yellowOrBlueNonGodUnitCost: CardEffect['cost'] = async (gameState, playerState, instance) => {
+  const candidates = ownUnits(playerState).filter(isYellowOrBlueNonGodUnit);
+  if (candidates.length === 0) return false;
+  createSelectCardQuery(
+    gameState,
+    playerState.uid,
+    candidates,
+    '选择送入墓地的单位',
+    '选择你的战场上的1个黄色或蓝色非神蚀单位送入墓地。',
+    1,
+    1,
+    {
+      sourceCardId: instance.gamecardId,
+      effectId: '102050276_main_damage',
+      costType: '102050276_SAC_YELLOW_BLUE'
+    },
+    () => 'UNIT'
+  );
+  return true;
+};
+
 const effect_102050276_irodori_enter: CardEffect = {
   id: '102050276_irodori_enter',
   type: 'ACTIVATE',
@@ -132,7 +153,10 @@ const effect_102050276_main_damage: CardEffect = {
     playerState.isTurn &&
     gameState.phase === 'MAIN' &&
     ownUnits(playerState).some(isYellowOrBlueNonGodUnit),
+  cost: yellowOrBlueNonGodUnitCost,
   execute: async (instance, gameState, playerState) => {
+    await damagePlayerByEffect(gameState, playerState.uid, getOpponentUid(gameState, playerState.uid), 2, instance);
+    return;
     createSelectCardQuery(
       gameState,
       playerState.uid,
@@ -146,7 +170,15 @@ const effect_102050276_main_damage: CardEffect = {
     );
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.costType === '102050276_SAC_YELLOW_BLUE') {
+      if (!sacrificeYellowOrBlueNonGodUnit(gameState, playerState, instance, selections)) {
+        context.cancelActivation = true;
+      }
+      return;
+    }
+
     if (context?.step === 'SAC') {
+      // Legacy fallback for stack entries created before cost separation.
       if (!sacrificeYellowOrBlueNonGodUnit(gameState, playerState, instance, selections)) return;
       createPlayerSelectQuery(
         gameState,

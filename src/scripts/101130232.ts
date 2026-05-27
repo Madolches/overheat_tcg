@@ -31,7 +31,46 @@ const cardEffects: CardEffect[] = [{
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    targetGroups: [{
+      title: '选择我方菲晶单位',
+      description: '选择你的1个具有【菲晶】的单位。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'SELF',
+      step: 'OWN',
+      getCandidates: (_gameState, playerState) =>
+        ownUnits(playerState)
+          .filter(isFeijingUnit)
+          .map(card => ({ card, source: 'UNIT' as any }))
+    }, {
+      title: '选择对手单位',
+      description: '选择对手的1个非神蚀单位。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'OPPONENT',
+      step: 'OPPONENT',
+      getCandidates: (gameState, playerState) => {
+        const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
+        return ownUnits(opponent)
+          .filter(isNonGodUnit)
+          .map(card => ({ card, source: 'UNIT' as any }));
+      }
+    }]
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.declaredTargets?.length) {
+      const ownTargetId = context.declaredTargets.find((target: any) => target.step === 'OWN')?.gamecardId;
+      const opponentTargetId = context.declaredTargets.find((target: any) => target.step === 'OPPONENT')?.gamecardId;
+      const ownTarget = ownTargetId ? AtomicEffectExecutor.findCardById(gameState, ownTargetId) : undefined;
+      const opponentTarget = opponentTargetId ? AtomicEffectExecutor.findCardById(gameState, opponentTargetId) : undefined;
+      if (ownTarget) exileByEffect(gameState, ownTarget, instance);
+      if (opponentTarget) exileByEffect(gameState, opponentTarget, instance);
+      return;
+    }
+
     if (context?.step === 'OWN') {
       const ownTarget = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
       if (!ownTarget) return;

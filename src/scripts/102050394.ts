@@ -63,6 +63,37 @@ const cardEffects: CardEffect[] = [{
       { sourceCardId: instance.gamecardId, effectId: '102050394_promotion_destroy_modes', step: 'MODE' }
     );
   },
+  targetSpec: {
+    modeTitle: '选择效果',
+    modeDescription: '选择1项效果并指定对象。',
+    modeOptions: [{
+      id: 'NON_GOD',
+      label: '破坏最多2张非神蚀卡',
+      title: '选择非神蚀卡',
+      description: '选择战场上最多2张非神蚀卡破坏。',
+      minSelections: 0,
+      maxSelections: 2,
+      zones: ['UNIT', 'ITEM'],
+      controller: 'ANY',
+      step: 'NON_GOD',
+      condition: gameState => nonGodTargets(gameState).length > 0,
+      getCandidates: gameState =>
+        nonGodTargets(gameState).map(card => ({ card, source: card.cardlocation as any }))
+    }, {
+      id: 'GOD',
+      label: '破坏1张神蚀卡',
+      title: '选择神蚀卡',
+      description: '选择战场上1张神蚀卡破坏。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT', 'ITEM'],
+      controller: 'ANY',
+      step: 'GOD',
+      condition: (gameState, playerState) => totalErosionCount(playerState) >= 3 && godTargets(gameState).length > 0,
+      getCandidates: gameState =>
+        godTargets(gameState).map(card => ({ card, source: card.cardlocation as any }))
+    }]
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'MODE') {
       const mode = selections[0];

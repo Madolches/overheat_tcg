@@ -66,6 +66,17 @@ const cardEffects: CardEffect[] = [{
       () => 'ITEM'
     );
   },
+  targetSpec: {
+    title: '选择破坏道具',
+    description: '选择你的战场上的1张道具卡破坏。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['ITEM'],
+    controller: 'SELF',
+    step: 'ITEM',
+    getCandidates: (_gameState, playerState) =>
+      ownItems(playerState).map(card => ({ card, source: 'ITEM' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'ITEM') {
       const item = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
