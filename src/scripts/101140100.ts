@@ -12,7 +12,7 @@ const cardEffects: CardEffect[] = [{
     id: '101140100_blink',
     type: 'TRIGGER',
     triggerEvent: 'CARD_ENTERED_ZONE',
-  isMandatory: false,
+    isMandatory: true,
     triggerLocation: ['UNIT'],
     description: '入场时，若你的<女神教会>单位有3个以上，放逐战场上1张其他卡，下一次你的回合结束时返回。',
     condition: (_gameState, playerState, instance, event) => event?.sourceCardId === instance.gamecardId && event.data?.zone === 'UNIT' && ownUnits(playerState).filter(unit => unit.faction === '女神教会').length >= 3,

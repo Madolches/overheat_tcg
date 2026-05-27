@@ -311,6 +311,35 @@ function testEliteWarriorGetsShingiStats(): ScenarioResult {
     : fail(name, `stats=${warrior.power}/${warrior.damage}, heroic=${warrior.isHeroic}`);
 }
 
+async function testEliteWarriorDestroysOpponentCardWhenDestroyed(): Promise<ScenarioResult> {
+  const name = 'BT08-W02 destroys opponent field card when destroyed';
+  const warrior = cloneScriptCard(bt08W02 as Card, 'GRAVE');
+  const target = testCard({ id: 'W02_TARGET', fullName: 'W02 Target', type: 'ITEM', cardlocation: 'ITEM' });
+  const state = game({}, {
+    itemZone: [target],
+  });
+  state.players.BOT.grave.push(warrior);
+
+  EventEngine.dispatchEvent(state, {
+    type: 'CARD_DESTROYED_EFFECT',
+    playerUid: 'BOT',
+    targetCardId: warrior.gamecardId,
+    sourceCard: warrior,
+    sourceCardId: warrior.gamecardId,
+  });
+  await confirmTrigger(state, 'BOT');
+
+  const triggered = state.pendingQuery?.context?.effectId === '101140396_destroy_destroy_opponent_card';
+  if (triggered) {
+    await answerPendingQuery(state, 'BOT', [target.gamecardId]);
+  }
+  const destroyed = state.players.P1.grave.some((card: Card) => card.gamecardId === target.gamecardId);
+
+  return triggered && destroyed
+    ? pass(name, `triggered=${triggered}, destroyed=${destroyed}`)
+    : fail(name, `triggered=${triggered}, destroyed=${destroyed}, pending=${state.pendingQuery?.context?.effectId || 'none'}`);
+}
+
 async function testKuriSacrificesAndExilesTargets(): Promise<ScenarioResult> {
   const name = 'BT08-W03 sacrifices Shingi-entered self to draw and exile targets';
   const kuri = cloneScriptCard(bt08W03 as Card, 'UNIT', {
@@ -2216,6 +2245,7 @@ async function testYellowPuppetDesignerBlueprintAndDominic(): Promise<ScenarioRe
 const scenarios: { name: string; run: ScenarioRun }[] = [
   { name: 'BT08-W01 destroys non-god item after Shingi story cost exile', run: testPrayerDestroysItemAfterShingiCost },
   { name: 'BT08-W02 gains stats and heroic after Shingi effect entry', run: testEliteWarriorGetsShingiStats },
+  { name: 'BT08-W02 destroys opponent field card when destroyed', run: testEliteWarriorDestroysOpponentCardWhenDestroyed },
   { name: 'BT08-W03 sacrifices Shingi-entered self to draw and exile targets', run: testKuriSacrificesAndExilesTargets },
   { name: 'BT08-W04 discards two to exile a non-god unit until turn end', run: testDuluExilesAndReturnsNonGodUnit },
   { name: 'BT08-W05 readies another Holy Kingdom non-god unit after alliance battle', run: testPatrolReadiesHolyKingdomAllianceTarget },

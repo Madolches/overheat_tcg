@@ -21,7 +21,7 @@ const cardEffects: CardEffect[] = [{
     id: '101140098_start',
     type: 'TRIGGER',
     triggerEvent: 'PHASE_CHANGED',
-  isMandatory: false,
+    isMandatory: true,
     triggerLocation: ['UNIT'],
     description: '你的回合开始时，将墓地1张卡放到卡组底。之后将对手卡组顶1张送入墓地。',
     condition: (_gameState, playerState, _instance, event) =>

@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { addContinuousDamage, addContinuousKeyword, addContinuousPower } from './BaseUtil';
+import { addContinuousDamage, addContinuousKeyword, addContinuousPower, createSelectCardQuery, destroyByEffect, getOpponentUid } from './BaseUtil';
 
 const isShingiCard = (card?: Card) =>
   !!card && card.fullName.includes('神仪');
@@ -24,6 +24,41 @@ const cardEffects: CardEffect[] = [{
     addContinuousDamage(instance, instance, 1);
     addContinuousPower(instance, instance, 500);
     addContinuousKeyword(instance, instance, 'heroic');
+  }
+}, {
+  id: '101140396_destroy_destroy_opponent_card',
+  type: 'TRIGGER',
+  triggerLocation: ['GRAVE'],
+  triggerEvent: ['CARD_DESTROYED_BATTLE', 'CARD_DESTROYED_EFFECT'],
+  isMandatory: true,
+  description: '这张卡被破坏时，选择对手战场上的1张卡，将其破坏。',
+  condition: (gameState, playerState, instance, event) => {
+    if (event?.targetCardId !== instance.gamecardId) return false;
+    const opponentUid = getOpponentUid(gameState, playerState.uid);
+    const opponent = gameState.players[opponentUid];
+    return [...opponent.unitZone, ...opponent.itemZone].some(card => !!card);
+  },
+  execute: async (instance, gameState, playerState) => {
+    const opponentUid = getOpponentUid(gameState, playerState.uid);
+    const opponent = gameState.players[opponentUid];
+    const candidates = [...opponent.unitZone, ...opponent.itemZone].filter((card): card is Card => !!card);
+    if (candidates.length === 0) return;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      candidates,
+      '选择破坏目标',
+      '选择对手战场上的1张卡，将其破坏。',
+      1,
+      1,
+      { sourceCardId: instance.gamecardId, effectId: '101140396_destroy_destroy_opponent_card' },
+      card => card.cardlocation as any
+    );
+  },
+  onQueryResolve: async (instance, gameState, _playerState, selections) => {
+    const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
+    if (!target || (target.cardlocation !== 'UNIT' && target.cardlocation !== 'ITEM')) return;
+    destroyByEffect(gameState, target, instance);
   }
 }];
 

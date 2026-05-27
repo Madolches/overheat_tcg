@@ -8,7 +8,7 @@ const effect_105120165_forced_attack: CardEffect = {
   type: 'TRIGGER',
   triggerLocation: ['UNIT'],
   triggerEvent: 'CARD_ENTERED_ZONE',
-  isMandatory: false,
+  isMandatory: true,
   limitCount: 1,
   limitNameType: true,
   description: '若这个单位因炼金效果从卡组进入战场，选择对手1个单位。直到该玩家的下个回合结束时，其能攻击则必须攻击。',

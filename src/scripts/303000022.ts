@@ -5,7 +5,7 @@ const cardEffects: CardEffect[] = [{
   id: '303000022_bind_enter',
   type: 'TRIGGER',
   triggerEvent: 'CARD_ENTERED_ZONE',
-  isMandatory: false,
+  isMandatory: true,
   triggerLocation: ['ITEM'],
   description: '进入战场时，选择战场上1个单位。只要这张卡在战场上，那个单位不能横置，不能宣言攻击和防御。',
   condition: (gameState, _playerState, instance, event) =>
@@ -56,7 +56,7 @@ const cardEffects: CardEffect[] = [{
   id: '303000022_leave_with_target',
   type: 'TRIGGER',
   triggerEvent: 'CARD_LEFT_ZONE',
-  isMandatory: false,
+  isMandatory: true,
   triggerLocation: ['ITEM'],
   isGlobal: true,
   description: '被束缚单位离开战场时，将这张卡送入墓地。',

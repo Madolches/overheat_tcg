@@ -67,6 +67,7 @@ import devotion from '../src/scripts/201100099';
 import prayer from '../src/scripts/201000102';
 import annihilationAngels from '../src/scripts/101130104';
 import tya from '../src/scripts/101130204';
+import silverCrossArmor from '../src/scripts/301130025';
 
 type ScenarioResult = {
   name: string;
@@ -1185,6 +1186,41 @@ async function testBlueSheathAndFuka(): Promise<ScenarioResult> {
   return equipped && drew && topdecked
     ? pass(name, `equipped=${equipped}, drew=${drew}, topdecked=${topdecked}`)
     : fail(name, `equipped=${equipped}, drew=${drew}, topdecked=${topdecked}`);
+}
+
+async function testSilverCrossArmorResetsNonGodEquippedUnit(): Promise<ScenarioResult> {
+  const name = 'BT02 Silver Cross Armor resets non-god equipped unit';
+  const armor = cloneScriptCard(silverCrossArmor as Card, 'ITEM');
+  const target = testCard({
+    id: 'SILVER_CROSS_TARGET',
+    fullName: 'Silver Cross Target',
+    type: 'UNIT',
+    cardlocation: 'UNIT',
+    godMark: false,
+    isExhausted: true,
+  });
+  const state = game({
+    unitZone: [target, null, null, null, null, null],
+    itemZone: [armor],
+  });
+
+  armor.equipTargetId = target.gamecardId;
+  EventEngine.dispatchEvent(state, {
+    type: 'CARD_EQUIPPED',
+    playerUid: 'BOT',
+    sourceCard: armor,
+    sourceCardId: armor.gamecardId,
+    targetCardId: target.gamecardId,
+    data: { itemId: armor.gamecardId, unitId: target.gamecardId },
+  });
+  await ServerGameService.checkTriggeredEffects(state);
+
+  const effect = armor.effects?.find(entry => entry.id === '301130025_reset_equipped');
+  const mandatory = effect?.type === 'TRIGGER' && effect.isMandatory === true;
+
+  return mandatory && target.isExhausted === false
+    ? pass(name, `mandatory=${mandatory}, exhausted=${target.isExhausted}`)
+    : fail(name, `mandatory=${mandatory}, exhausted=${target.isExhausted}, pending=${state.pendingQuery?.context?.effectId || 'none'}`);
 }
 
 async function testGreenResonanceDrawBoostAndSearch(): Promise<ScenarioResult> {
@@ -2948,6 +2984,7 @@ const scenarios: ScenarioRun[] = [
   testBlueUntilNextOwnTurnStartLocksExpireOnOwnStart,
   testBlueCheckLetsOpponentPayOrCounters,
   testBlueSheathAndFuka,
+  testSilverCrossArmorResetsNonGodEquippedUnit,
   testGreenResonanceDrawBoostAndSearch,
   testGreenBirdSalalaAndAccordion,
   testCannotExhaustUnitIsNotAvailableDefender,
