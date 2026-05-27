@@ -1649,6 +1649,19 @@ async function testRedDikaiTrackExplore(): Promise<ScenarioResult> {
   }
   const searched = enterState.players.BOT.hand.some((card: Card) => card.id === bt06R08.id);
 
+  const exploreForLeave = cloneScriptCard(bt06R09 as Card, 'DECK');
+  enterState.players.BOT.deck.push(exploreForLeave);
+  ServerGameService.moveCard(enterState, 'BOT', 'UNIT', 'BOT', 'GRAVE', dikai.gamecardId, {
+    isEffect: true,
+    effectSourcePlayerUid: 'BOT',
+    effectSourceCardId: dikai.gamecardId,
+  });
+  await activateTriggerAndAnswerYes(enterState, 'BOT');
+  if (enterState.pendingQuery?.context?.effectId === '102050363_enter_leave_search_story') {
+    await answerPendingQuery(enterState, 'BOT', [exploreForLeave.gamecardId]);
+  }
+  const searchedOnLeave = enterState.players.BOT.hand.some((card: Card) => card.gamecardId === exploreForLeave.gamecardId);
+
   const trackStory = cloneScriptCard(bt06R08 as Card, 'HAND');
   const redSource = cloneScriptCard(bt06R02 as Card, 'UNIT');
   const enemy = testCard({ id: 'R08_ENEMY', type: 'UNIT', color: 'BLUE', godMark: false, cardlocation: 'UNIT' });
@@ -1700,9 +1713,9 @@ async function testRedDikaiTrackExplore(): Promise<ScenarioResult> {
   const explored = exploreState.players.BOT.unitZone.some((unit: Card | null) => unit?.id === bt06R02.id) &&
     exploreState.players.BOT.exile.some((card: Card) => card.id === bt06R09.id);
 
-  return searched && tracked && explored
-    ? pass(name, `searched=${searched}, tracked=${tracked}, explored=${explored}`)
-    : fail(name, `searched=${searched}, tracked=${tracked}, explored=${explored}`);
+  return searched && searchedOnLeave && tracked && explored
+    ? pass(name, `searched=${searched}, leave=${searchedOnLeave}, tracked=${tracked}, explored=${explored}`)
+    : fail(name, `searched=${searched}, leave=${searchedOnLeave}, tracked=${tracked}, explored=${explored}`);
 }
 
 async function testRedBatsBetisAndGiantBat(): Promise<ScenarioResult> {

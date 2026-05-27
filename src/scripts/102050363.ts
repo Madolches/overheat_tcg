@@ -22,6 +22,7 @@ const cardEffects: CardEffect[] = [{
   id: '102050363_enter_leave_search_story',
   type: 'TRIGGER',
   triggerEvent: ['CARD_ENTERED_ZONE', 'CARD_LEFT_FIELD'],
+  sourceSnapshotOnLeftField: true,
   isMandatory: false,
   triggerLocation: ['UNIT', 'GRAVE', 'EXILE'],
   description: '这张卡进入战场或从战场离开时，可以将卡组或墓地中的1张《追迹》或《探寻》加入手牌。',
@@ -30,7 +31,15 @@ const cardEffects: CardEffect[] = [{
       event.sourceCardId === instance.gamecardId &&
       event.data?.zone === 'UNIT';
     const left = event?.type === 'CARD_LEFT_FIELD' &&
-      event.sourceCardId === instance.gamecardId &&
+      (
+        event.sourceCard === instance ||
+        event.sourceCardId === instance.gamecardId ||
+        event.data?.previousSourceCardId === instance.gamecardId ||
+        (
+          !!event.sourceCard?.runtimeFingerprint &&
+          event.sourceCard.runtimeFingerprint === instance.runtimeFingerprint
+        )
+      ) &&
       event.data?.sourceZone === 'UNIT';
     return (entered || left) && cardsInZones(playerState, ['DECK', 'GRAVE']).some(({ card }) => isTrackOrExplore(card));
   },

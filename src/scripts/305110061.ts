@@ -44,14 +44,18 @@ const cardEffects: CardEffect[] = [{
   condition: (_gameState, playerState, instance) =>
     playerState.isTurn &&
     instance.cardlocation === 'ITEM' &&
-    faceDownExile(playerState).length >= 4 &&
-    fortressCandidates(playerState).length > 0,
+    faceDownExile(playerState).length >= 4,
   execute: async (instance, gameState, playerState) => {
     moveCardAsCost(gameState, playerState.uid, instance, 'GRAVE', instance);
+    [...faceDownExile(playerState)].forEach(card =>
+      moveCard(gameState, playerState.uid, card, 'DECK', instance, { insertAtBottom: true })
+    );
+    const candidates = fortressCandidates(playerState);
+    if (candidates.length === 0) return;
     createSelectCardQuery(
       gameState,
       playerState.uid,
-      fortressCandidates(playerState),
+      candidates,
       '选择学院要塞单位',
       '从你的卡组选择1张<学院要塞>ACCESS4以上单位放置到战场。',
       1,
@@ -73,9 +77,6 @@ const cardEffects: CardEffect[] = [{
         placedByBlueprintSourceCardId: instance.gamecardId
       };
     }
-    [...faceDownExile(playerState)].forEach(card =>
-      moveCard(gameState, playerState.uid, card, 'DECK', instance, { insertAtBottom: true })
-    );
   }
 }];
 

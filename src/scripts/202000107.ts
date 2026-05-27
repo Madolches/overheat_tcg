@@ -160,8 +160,8 @@ const cardEffects: CardEffect[] = [
       !!sacrificedUnitByOpponentUnitEffect(gameState, playerState.uid, event),
     execute: async (instance, gameState, playerState, event) => {
       const source = sacrificedUnitByOpponentUnitEffect(gameState, playerState.uid, event);
-      if (source) destroyByEffect(gameState, source, instance);
-      if (playerState.deck.length >= 2) {
+      const destroyed = !!source && destroyByEffect(gameState, source, instance);
+      if (destroyed && playerState.deck.length >= 2) {
         await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'DRAW', value: 2 }, instance);
       }
       delete (instance as any).data.sacrificeRetaliationTurn;

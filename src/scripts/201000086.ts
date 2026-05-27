@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, allCardsOnField, createSelectCardQuery, moveRandomGraveToDeckBottom, story } from './BaseUtil';
+import { AtomicEffectExecutor, allCardsOnField, createSelectCardQuery, destroyByEffect, moveRandomGraveToDeckBottom, story } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [story('201000086_destroy_recover', '选择战场上的1张非神蚀道具卡破坏。之后恢复2。', async (instance, gameState, playerState) => {
   const targets = allCardsOnField(gameState).filter(card => card.type === 'ITEM' && !card.godMark);
@@ -30,7 +30,8 @@ const cardEffects: CardEffect[] = [story('201000086_destroy_recover', '选择战
         .map(card => ({ card, source: card.cardlocation as any }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
-    await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'DESTROY_CARD', targetFilter: { gamecardId: selections[0] } }, instance);
+    const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
+    if (!target || target.type !== 'ITEM' || target.godMark || !destroyByEffect(gameState, target, instance)) return;
     moveRandomGraveToDeckBottom(gameState, playerState.uid, 2, instance);
   }
 })];

@@ -5,7 +5,7 @@ const cardEffects: CardEffect[] = [story('202000079_destroy_self_damage', '5~7ï¼
   const target = declaredSelections?.[0] ? AtomicEffectExecutor.findCardById(gameState, declaredSelections[0]) : undefined;
   if (!target || target.godMark) return;
   const damage = target.baseDamage ?? target.damage ?? 0;
-  destroyByEffect(gameState, target, instance);
+  if (!destroyByEffect(gameState, target, instance)) return;
   if (damage > 0) await damagePlayerByEffect(gameState, playerState.uid, playerState.uid, damage, instance);
 }, {
   erosionTotalLimit: [5, 7],
@@ -21,7 +21,7 @@ const cardEffects: CardEffect[] = [story('202000079_destroy_self_damage', '5~7ï¼
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (!target || target.godMark) return;
     const damage = target.baseDamage ?? target.damage ?? 0;
-    destroyByEffect(gameState, target, instance);
+    if (!destroyByEffect(gameState, target, instance)) return;
     if (damage > 0) await damagePlayerByEffect(gameState, playerState.uid, playerState.uid, damage, instance);
   }
 })];

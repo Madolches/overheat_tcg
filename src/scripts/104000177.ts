@@ -68,26 +68,27 @@ const trigger_104000177_2: CardEffect = {
   id: '104000177_trigger_2',
   type: 'TRIGGER',
   description: '【诱】这个单位从战场送入墓地时，你可以抽1张卡。',
-  triggerLocation: ['GRAVE'],
-  triggerEvent: ['CARD_LEFT_ZONE', 'CARD_LEFT_FIELD', 'CARD_DESTROYED_BATTLE', 'CARD_DESTROYED_EFFECT'],
+  triggerLocation: ['UNIT', 'GRAVE'],
+  triggerEvent: 'CARD_LEFT_FIELD',
+  sourceSnapshotOnLeftField: true,
   condition: (gameState: GameState, playerState: PlayerState, instance: Card, event?: GameEvent) => {
     if (!event) return instance.cardlocation === 'GRAVE';
 
-    // Verify self-event: matches either sourceCardId, targetCardId, or direct reference
     const isSelf =
+      (event.sourceCard === instance) ||
       (event.sourceCardId === instance.gamecardId) ||
       (event.targetCardId === instance.gamecardId) ||
-      (event.sourceCard === instance);
+      (event.data?.previousSourceCardId === instance.gamecardId) ||
+      (
+        !!event.sourceCard?.runtimeFingerprint &&
+        event.sourceCard.runtimeFingerprint === instance.runtimeFingerprint
+      );
 
     if (!isSelf) return false;
 
-    // Trigger check: Must have moved to Graveyard
-    const isNowInGrave = instance.cardlocation === 'GRAVE';
-
-    // Zone check: If it was a zone-leave event, verify it left the Unit zone
-    const leftUnitZone = event.type !== 'CARD_LEFT_ZONE' || (event.data?.zone === 'UNIT');
-
-    return isNowInGrave && leftUnitZone;
+    return event.type === 'CARD_LEFT_FIELD' &&
+      event.data?.sourceZone === 'UNIT' &&
+      event.data?.targetZone === 'GRAVE';
   },
   execute: (instance: Card, gameState: GameState, playerState: PlayerState) => {
     AtomicEffectExecutor.execute(gameState, playerState.uid, {

@@ -20,9 +20,11 @@ const feijingTargets = (playerState: any) =>
   );
 
 const leftByBattleOrOpponentEffect = (playerUid: string, event: any) =>
-  event?.type === 'CARD_DESTROYED_BATTLE' ||
-  event?.data?.sourcePlayerId && event.data.sourcePlayerId !== playerUid ||
-  event?.data?.effectSourcePlayerUid && event.data.effectSourcePlayerUid !== playerUid;
+  event?.type === 'CARD_LEFT_FIELD' &&
+  (
+    (event.data?.isEffect === false && event.data?.targetZone === 'GRAVE') ||
+    (event.data?.isEffect === true && event.data?.effectSourcePlayerUid && event.data.effectSourcePlayerUid !== playerUid)
+  );
 
 const cardEffects: CardEffect[] = [{
   id: '102000360_enter_discard_put_feijing',
@@ -65,14 +67,24 @@ const cardEffects: CardEffect[] = [{
 }, {
   id: '102000360_leave_destroy_card',
   type: 'TRIGGER',
-  triggerLocation: ['GRAVE', 'EXILE'],
-  triggerEvent: ['CARD_LEFT_FIELD', 'CARD_DESTROYED_BATTLE', 'CARD_DESTROYED_EFFECT'],
+  triggerLocation: ['UNIT', 'GRAVE', 'EXILE'],
+  triggerEvent: 'CARD_LEFT_FIELD',
+  sourceSnapshotOnLeftField: true,
   isMandatory: true,
   erosionBackLimit: [2, 10],
   description: '创痕2：这张卡由于战斗或对手效果从战场离开时，选择战场上的1张卡破坏。',
   condition: (_gameState, playerState, instance, event) => {
-    const isSelf = event?.sourceCardId === instance.gamecardId || event?.targetCardId === instance.gamecardId;
+    const isSelf =
+      event?.sourceCard === instance ||
+      event?.sourceCardId === instance.gamecardId ||
+      event?.targetCardId === instance.gamecardId ||
+      event?.data?.previousSourceCardId === instance.gamecardId ||
+      (
+        !!event?.sourceCard?.runtimeFingerprint &&
+        event.sourceCard.runtimeFingerprint === instance.runtimeFingerprint
+      );
     return !!isSelf &&
+      event?.data?.sourceZone === 'UNIT' &&
       leftByBattleOrOpponentEffect(playerState.uid, event) &&
       playerState.erosionBack.filter(Boolean).length >= 2;
   },

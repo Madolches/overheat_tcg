@@ -3,10 +3,7 @@ import { addInfluence, allCardsOnField, createSelectCardQuery, damagePlayerByEff
 
 const cardEffects: CardEffect[] = [story('202050034_destroy_god', '创痕2：选择1张神蚀卡破坏。之后给予你1点伤害。女神化时手牌中ACCESS值变为0。', async (instance, gameState, playerState) => {
     const candidates = allCardsOnField(gameState).filter(card => card.godMark);
-    if (candidates.length === 0) {
-      await damagePlayerByEffect(gameState, playerState.uid, playerState.uid, 1, instance);
-      return;
-    }
+    if (candidates.length === 0) return;
     createSelectCardQuery(
       gameState,
       playerState.uid,
@@ -32,7 +29,7 @@ const cardEffects: CardEffect[] = [story('202050034_destroy_god', '创痕2：选
     },
     onQueryResolve: async (instance, gameState, playerState, selections) => {
       const target = allCardsOnField(gameState).find(card => card.gamecardId === selections[0]);
-      if (target) destroyByEffect(gameState, target, instance);
+      if (!target || !destroyByEffect(gameState, target, instance)) return;
       await damagePlayerByEffect(gameState, playerState.uid, playerState.uid, 1, instance);
     }
   }), {

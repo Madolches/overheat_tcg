@@ -5856,6 +5856,18 @@ export const ServerGameService = {
       const preventSource = preventSourceCardId ? ServerGameService.findCardById(gameState, preventSourceCardId) : undefined;
       const sourceName = preventSource?.fullName || (player as any).preventOwnUnitsOpponentEffectDestroySourceName || '破坏防止';
       gameState.logs.push(`[${sourceName}] 防止了 [${unit.fullName}] 将要被对手的卡的效果破坏。`);
+      EventEngine.dispatchEvent(gameState, {
+        type: 'CARD_EFFECT_DESTROY_PREVENTED',
+        sourceCard: preventSource,
+        sourceCardId: preventSourceCardId,
+        targetCardId: gamecardId,
+        playerUid: playerId,
+        data: {
+          preventedCardId: gamecardId,
+          destroySourcePlayerId: sourcePlayerId,
+          destroySourceCardId: gameState.currentProcessingItem?.card?.gamecardId
+        }
+      });
       return false;
     }
 

@@ -30,7 +30,7 @@ const cardEffects: CardEffect[] = [{
  */
 const card: Card = {
   id: '102050428',
-  fullName: '赛丽亚的侍女',
+  fullName: '赛利亚的侍女',
   specialName: '',
   type: 'UNIT',
   color: 'RED',

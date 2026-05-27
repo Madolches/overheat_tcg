@@ -1,11 +1,12 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, canPutItemOntoBattlefield, createSelectCardQuery, getOpponentUid, moveCard, nameContains, ownItems } from './BaseUtil';
+import { AtomicEffectExecutor, canPutItemOntoBattlefield, createSelectCardQuery, destroyByEffect, getOpponentUid, moveCard, nameContains, ownItems } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
   id: '105000229_enter_leave_item',
   type: 'TRIGGER',
   triggerLocation: ['UNIT', 'GRAVE', 'EXILE', 'HAND', 'DECK', 'EROSION_FRONT', 'EROSION_BACK'],
   triggerEvent: ['CARD_ENTERED_ZONE', 'CARD_LEFT_FIELD'],
+  sourceSnapshotOnLeftField: true,
   isMandatory: true,
   limitCount: 1,
   limitNameType: true,
@@ -13,7 +14,15 @@ const cardEffects: CardEffect[] = [{
   condition: (_gameState, playerState, instance, event) => {
     const entered = event?.type === 'CARD_ENTERED_ZONE' && event.sourceCardId === instance.gamecardId && event.data?.zone === 'UNIT';
     const left = event?.type === 'CARD_LEFT_FIELD' &&
-      (event.sourceCardId === instance.gamecardId || event.data?.previousSourceCardId === instance.gamecardId) &&
+      (
+        event.sourceCard === instance ||
+        event.sourceCardId === instance.gamecardId ||
+        event.data?.previousSourceCardId === instance.gamecardId ||
+        (
+          !!event.sourceCard?.runtimeFingerprint &&
+          event.sourceCard.runtimeFingerprint === instance.runtimeFingerprint
+        )
+      ) &&
       event.data?.sourceZone === 'UNIT';
     return (entered || left) &&
       playerState.deck.some(card => card.type === 'ITEM' && card.color === 'YELLOW' && (card.acValue || 0) <= 1 && canPutItemOntoBattlefield(playerState, card));
@@ -80,9 +89,7 @@ const cardEffects: CardEffect[] = [{
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'ITEM') {
       const item = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
-      if (item) {
-        await AtomicEffectExecutor.execute(gameState, context.ownerUid || playerState.uid, { type: 'DESTROY_CARD', targetFilter: { gamecardId: item.gamecardId } }, instance);
-      }
+      if (!item || item.type !== 'ITEM' || !destroyByEffect(gameState, item, instance)) return;
       const opponentUid = getOpponentUid(gameState, context.ownerUid || playerState.uid);
       const opponent = gameState.players[opponentUid];
       if (opponent.hand.length > 0) {
