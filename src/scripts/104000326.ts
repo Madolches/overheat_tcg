@@ -17,6 +17,7 @@ const cardEffects: CardEffect[] = [{
     const moved = playerState.unitZone.find(unit => unit?.gamecardId === instance.gamecardId);
     if (moved) {
       ensureData(moved).diceDrawPutTurn = gameState.turnCount;
+      ensureData(moved).placedByOwnDrawTrigger = true;
       ensureData(moved).diceDrawSourceName = instance.fullName;
       addInfluence(moved, instance, '由于自身抽到展示效果进入战场');
     }
@@ -28,7 +29,7 @@ const cardEffects: CardEffect[] = [{
   triggerLocation: ['UNIT'],
   description: '由于自身诱发能力进入战场时，这个单位伤害+1、力量+500。',
   applyContinuous: (gameState, instance) => {
-    if ((instance as any).data?.diceDrawPutTurn === gameState.turnCount) {
+    if ((instance as any).data?.placedByOwnDrawTrigger) {
       addContinuousDamage(instance, instance, 1);
       addContinuousPower(instance, instance, 500);
     }

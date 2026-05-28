@@ -5,7 +5,7 @@
 
 import { socket } from '../socket';
 import { GameState, Card, CardEffect, TriggerLocation, GameEvent, PlayerState } from '../types/game';
-import { satisfiesHighAlchemyEntryRestriction } from '../lib/highAlchemy';
+import { getEntryRestrictionReason, satisfiesHighAlchemyEntryRestriction } from '../lib/highAlchemy';
 
 const isFullEffectSilencedThisTurn = (gameState: GameState | null, card: Card) =>
   !!gameState &&
@@ -378,7 +378,7 @@ export const GameService = {
         return { canPlay: false, reason: 'A unit with the same special name already exists' };
       }
       if (!satisfiesHighAlchemyEntryRestriction(card)) {
-        return { canPlay: false, reason: 'This card can only enter the field through High Alchemy with the required materials' };
+        return { canPlay: false, reason: getEntryRestrictionReason(card) || 'This card can only enter the field through a specific effect' };
       }
 
       if (card.type === 'UNIT' && card.godMark) {

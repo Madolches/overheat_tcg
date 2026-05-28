@@ -16,7 +16,7 @@ const cardEffects: CardEffect[] = [{
   execute: async (instance, gameState, playerState) => {
     const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
     opponent.unitZone
-      .filter((unit): unit is Card => !!unit && !unit.godMark)
+      .filter((unit): unit is Card => !!unit)
       .forEach(unit => markCannotDefendUntilEndOfTurn(unit, instance, gameState));
     ensureData(instance).cannotBeDefendedSourceName = instance.fullName;
   }

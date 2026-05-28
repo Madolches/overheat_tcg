@@ -87,6 +87,18 @@ const cardEffects: CardEffect[] = [{
   condition: (gameState, _playerState, instance) =>
     wasPlacedByShingi(instance, gameState) &&
     allCardsOnField(gameState).some(card => isNonGodUnit(card)),
+  targetSpec: {
+    title: '选择破坏单位',
+    description: '选择战场上的1个非神蚀单位破坏。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    getCandidates: (gameState) =>
+      allCardsOnField(gameState)
+        .filter(card => isNonGodUnit(card))
+        .map(card => ({ card, source: card.cardlocation as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     const targets = allCardsOnField(gameState).filter(card => isNonGodUnit(card));
     createSelectCardQuery(
@@ -116,7 +128,7 @@ const card: Card = {
   color: 'RED',
   gamecardId: null as any,
   colorReq: { RED: 2 },
-  faction: '忒碧拉之间',
+  faction: '忒碧拉之门',
   acValue: 5,
   power: 3500,
   basePower: 3500,

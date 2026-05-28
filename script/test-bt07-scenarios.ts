@@ -246,34 +246,41 @@ function optionIdByValue(state: any, value: string): string {
 }
 
 async function testPrepWorkerDestroysAfterShingiCostExile(): Promise<ScenarioResult> {
-  const name = 'BT07-W01 prep worker destroys AC2 non-god after Shingi cost exile';
+  const name = 'BT07-W01 prep worker pays 2 to destroy non-god unit after Shingi cost exile';
   const worker = cloneScriptCard(bt07W01 as Card, 'UNIT');
   const shingi = testCard({ id: 'SHINGI_STORY', fullName: '神仪：测试', type: 'STORY', cardlocation: 'PLAY' });
-  const target = testCard({ id: 'AC2_TARGET', fullName: 'AC2 Target', acValue: 2, cardlocation: 'UNIT' });
-  const high = testCard({ id: 'AC3_TARGET', fullName: 'AC3 Target', acValue: 3, cardlocation: 'UNIT' });
+  const payer = testCard({ id: 'W01_PAYER', fullName: 'Payer', acValue: 2, cardlocation: 'UNIT' });
+  const target = testCard({ id: 'AC3_TARGET', fullName: 'AC3 Target', acValue: 3, cardlocation: 'UNIT' });
+  const godTarget = testCard({ id: 'GOD_TARGET', fullName: 'God Target', acValue: 1, godMark: true, cardlocation: 'UNIT' });
   const state = game({
-    unitZone: [worker, null, null, null, null, null],
+    unitZone: [worker, payer, null, null, null, null],
     playZone: [shingi],
   }, {
-    unitZone: [target, high, null, null, null, null],
+    unitZone: [target, godTarget, null, null, null, null],
   });
 
   moveCardAsCost(state, 'BOT', worker, 'EXILE', shingi);
   await confirmTrigger(state, 'BOT');
 
+  if (state.pendingQuery?.type !== 'SELECT_PAYMENT') {
+    return fail(name, `expected payment query, got ${state.pendingQuery?.type || 'none'}`);
+  }
+  await answerPendingQuery(state, 'BOT', [JSON.stringify({ exhaustUnitIds: [payer.gamecardId] })]);
+
   if (state.pendingQuery?.context?.effectId !== '101140374_shingi_cost_destroy') {
     return fail(name, `expected destroy query, got ${state.pendingQuery?.context?.effectId || 'none'}`);
   }
   const optionIds = (state.pendingQuery.options || []).map((option: any) => option.card.gamecardId);
-  if (!optionIds.includes(target.gamecardId) || optionIds.includes(high.gamecardId)) {
+  if (!optionIds.includes(target.gamecardId) || optionIds.includes(godTarget.gamecardId)) {
     return fail(name, `options=${optionIds.join(',')}`);
   }
   await answerPendingQuery(state, 'BOT', [target.gamecardId]);
 
   const destroyed = state.players.P1.grave.some((card: Card) => card.gamecardId === target.gamecardId);
-  return destroyed
-    ? pass(name, `destroyed=${destroyed}, options=${optionIds.length}`)
-    : fail(name, `grave=${state.players.P1.grave.map((card: Card) => card.fullName).join(',')}`);
+  const paid = !!payer.isExhausted;
+  return destroyed && paid
+    ? pass(name, `destroyed=${destroyed}, paid=${paid}, options=${optionIds.length}`)
+    : fail(name, `destroyed=${destroyed}, paid=${paid}, grave=${state.players.P1.grave.map((card: Card) => card.fullName).join(',')}`);
 }
 
 function testTwilightGuardProtectsAlliance(): ScenarioResult {
@@ -1626,6 +1633,7 @@ async function testGreenGrienOrderSanctuaryAndMessenger(): Promise<ScenarioResul
   const awakenPutState = game({
     hand: [grienActive],
     deck: [awakenDeckUnit, awakenTextOnlyUnit],
+    unitZone: [testCard({ id: 'G07_PAY', color: 'GREEN', cardlocation: 'UNIT' }), null, null, null, null, null],
     erosionBack: [testCard({ id: 'G07_BACK', cardlocation: 'EROSION_BACK' })],
   });
   const awakenPutIndex = grienActive.effects?.findIndex(effect => effect.id === '103080317_put_awaken_unit') ?? -1;
@@ -1636,7 +1644,14 @@ async function testGreenGrienOrderSanctuaryAndMessenger(): Promise<ScenarioResul
     grienActive.effects![awakenPutIndex],
     'HAND'
   ).valid;
-  await grienActive.effects?.[awakenPutIndex]?.execute?.(grienActive, awakenPutState, awakenPutState.players.BOT);
+  await ServerGameService.activateEffect(awakenPutState, 'BOT', grienActive.gamecardId, awakenPutIndex);
+  if (awakenPutState.pendingQuery?.type === 'SELECT_PAYMENT') {
+    const payer = awakenPutState.players.BOT.unitZone.find((unit: Card | null) => unit?.id === 'G07_PAY');
+    await answerPendingQuery(awakenPutState, 'BOT', [JSON.stringify({ exhaustUnitIds: payer ? [payer.gamecardId] : [] })]);
+  }
+  if (!awakenPutState.pendingQuery && awakenPutState.phase === 'COUNTERING') {
+    await ServerGameService.passConfrontation(awakenPutState, awakenPutState.priorityPlayerId);
+  }
   const grienAwakenOptions = (awakenPutState.pendingQuery?.options || []).map((option: any) => option.card.gamecardId);
   const grienOnlyTrueAwakenTargets = grienAwakenOptions.includes(awakenDeckUnit.gamecardId) &&
     !grienAwakenOptions.includes(awakenTextOnlyUnit.gamecardId);
@@ -1647,6 +1662,44 @@ async function testGreenGrienOrderSanctuaryAndMessenger(): Promise<ScenarioResul
     grienOnlyTrueAwakenTargets &&
     awakenPutState.players.BOT.grave.some((card: Card) => card.gamecardId === grienActive.gamecardId) &&
     awakenPutState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === awakenDeckUnit.gamecardId);
+
+  const grienFieldActive = cloneScriptCard(bt07G07 as Card, 'UNIT', { gamecardId: 'G07_FIELD_ACTIVE' });
+  const fieldAwakenDeckUnit = cloneScriptCard(bt07G05 as Card, 'DECK', { gamecardId: 'G07_FIELD_AWAKEN_TARGET' });
+  const fieldPayer = testCard({ id: 'G07_FIELD_PAY', color: 'GREEN', cardlocation: 'UNIT' });
+  const grienFullFieldState = game({
+    unitZone: [
+      grienFieldActive,
+      fieldPayer,
+      testCard({ id: 'G07_FILL_A', cardlocation: 'UNIT' }),
+      testCard({ id: 'G07_FILL_B', cardlocation: 'UNIT' }),
+      testCard({ id: 'G07_FILL_C', cardlocation: 'UNIT' }),
+      testCard({ id: 'G07_FILL_D', cardlocation: 'UNIT' }),
+    ],
+    deck: [fieldAwakenDeckUnit, ...deckCards(3, 'G07_FIELD_PAY_DECK', 'GREEN')],
+    erosionBack: [testCard({ id: 'G07_FIELD_BACK', cardlocation: 'EROSION_BACK' })],
+  });
+  const grienFullFieldValid = ServerGameService.checkEffectLimitsAndReqs(
+    grienFullFieldState,
+    'BOT',
+    grienFieldActive,
+    grienFieldActive.effects![awakenPutIndex],
+    'UNIT'
+  ).valid;
+  await ServerGameService.activateEffect(grienFullFieldState, 'BOT', grienFieldActive.gamecardId, awakenPutIndex);
+  if (grienFullFieldState.pendingQuery?.type === 'SELECT_PAYMENT') {
+    await answerPendingQuery(grienFullFieldState, 'BOT', [JSON.stringify({ exhaustUnitIds: [fieldPayer.gamecardId] })]);
+  }
+  if (!grienFullFieldState.pendingQuery && grienFullFieldState.phase === 'COUNTERING') {
+    await ServerGameService.passConfrontation(grienFullFieldState, grienFullFieldState.priorityPlayerId);
+  }
+  const grienFieldAskedTarget = grienFullFieldState.pendingQuery?.context?.effectId === '103080317_put_awaken_unit';
+  if (grienFieldAskedTarget) {
+    await answerPendingQuery(grienFullFieldState, 'BOT', [fieldAwakenDeckUnit.gamecardId]);
+  }
+  const grienFieldCostAndPut = grienFullFieldValid &&
+    fieldPayer.isExhausted &&
+    grienFullFieldState.players.BOT.grave.some((card: Card) => card.gamecardId === grienFieldActive.gamecardId) &&
+    grienFullFieldState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === fieldAwakenDeckUnit.gamecardId);
 
   const order = cloneScriptCard(bt07G09 as Card, 'PLAY');
   const red = testCard({ id: 'G09_RED', color: 'RED', acValue: 3, godMark: false, cardlocation: 'UNIT' });
@@ -1712,9 +1765,9 @@ async function testGreenGrienOrderSanctuaryAndMessenger(): Promise<ScenarioResul
   }
   const messengerRevived = messengerState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === reviveTarget.gamecardId);
 
-  return grienRevived && grienScar1Put && orderDestroyed && orderCountered && sanctuaryProtected && sanctuaryBuffed && messengerRevived
-    ? pass(name, `grien=${grienRevived}/${grienScar1Put}, order=${orderDestroyed}/${orderCountered}, sanctuary=${sanctuaryProtected}/${sanctuaryBuffed}, messenger=${messengerRevived}`)
-    : fail(name, `grien=${grienRevived}/${grienScar1Put}, order=${orderDestroyed}/${orderCountered}, sanctuary=${sanctuaryProtected}/${sanctuaryBuffed}, messenger=${messengerRevived}`);
+  return grienRevived && grienScar1Put && grienFieldCostAndPut && orderDestroyed && orderCountered && sanctuaryProtected && sanctuaryBuffed && messengerRevived
+    ? pass(name, `grien=${grienRevived}/${grienScar1Put}/${grienFieldCostAndPut}, order=${orderDestroyed}/${orderCountered}, sanctuary=${sanctuaryProtected}/${sanctuaryBuffed}, messenger=${messengerRevived}`)
+    : fail(name, `grien=${grienRevived}/${grienScar1Put}/${grienFieldCostAndPut}, order=${orderDestroyed}/${orderCountered}, sanctuary=${sanctuaryProtected}/${sanctuaryBuffed}, messenger=${messengerRevived}`);
 }
 
 async function testRedShieldSoulDevourAndDiscounts(): Promise<ScenarioResult> {
@@ -2261,10 +2314,17 @@ async function testYellowPainterStephanieAndSteelPuppet(): Promise<ScenarioResul
     unit.power === 4000 &&
     !!unit.isHeroic
   );
+  revealState.turnCount = 7;
+  EventEngine.recalculateContinuousEffects(revealState);
+  const selfPutSteelNextTurn = revealState.players.BOT.unitZone.some((unit: Card | null) =>
+    unit?.gamecardId === revealedSteel.gamecardId &&
+    unit.power === 4000 &&
+    !!unit.isHeroic
+  );
 
-  return searchedBlueprint && stephanieBuffed && stephaniePutPuppet && stephanieNeedsScar3 && selfPutSteel
-    ? pass(name, `search=${searchedBlueprint}, stephanie=${stephanieBuffed}/${stephaniePutPuppet}/${stephanieNeedsScar3}, steel=${selfPutSteel}`)
-    : fail(name, `search=${searchedBlueprint}, stephanie=${stephanieBuffed}/${stephaniePutPuppet}/${stephanieNeedsScar3}, steel=${selfPutSteel}`);
+  return searchedBlueprint && stephanieBuffed && stephaniePutPuppet && stephanieNeedsScar3 && selfPutSteel && selfPutSteelNextTurn
+    ? pass(name, `search=${searchedBlueprint}, stephanie=${stephanieBuffed}/${stephaniePutPuppet}/${stephanieNeedsScar3}, steel=${selfPutSteel}/${selfPutSteelNextTurn}`)
+    : fail(name, `search=${searchedBlueprint}, stephanie=${stephanieBuffed}/${stephaniePutPuppet}/${stephanieNeedsScar3}, steel=${selfPutSteel}/${selfPutSteelNextTurn}`);
 }
 
 async function testYellowGuardRawStoneAndStories(): Promise<ScenarioResult> {

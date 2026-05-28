@@ -11,11 +11,10 @@ import {
   putUnitOntoField
 } from './BaseUtil';
 
-const shingiBetisCandidates = (playerState: any, gameState: any) =>
+const shingiBetisCandidates = (playerState: any, _gameState: any) =>
   playerState.unitZone.filter((unit: Card | null): unit is Card =>
     !!unit &&
     unit.specialName === '贝缇丝' &&
-    (unit as any).data?.placedByShingiEffectTurn === gameState.turnCount &&
     (!!(unit as any).data?.placedByShingiEffectSourceCardId || !!(unit as any).data?.placedByShingiEffectSourceName)
   );
 
@@ -24,6 +23,10 @@ const batCandidates = (playerState: any) =>
     isOtherworldBat(card) &&
     canPutUnitOntoBattlefield(playerState, card)
   );
+
+const selfEntryContext = (instance: Card) => ({
+  onlySelfActivateSourceCardId: instance.gamecardId
+});
 
 const cardEffects: CardEffect[] = [{
   id: '102070359_field_protection',
@@ -44,7 +47,7 @@ const cardEffects: CardEffect[] = [{
   description: '将己方场上1个由《神仪》效果放置的「贝缇丝」放逐：将手牌中的这张卡放置到战场。之后，将卡组或墓地中任意数量《异界狂蝠》放置到战场。',
   condition: (gameState, playerState, instance) =>
     instance.cardlocation === 'HAND' &&
-    canPutUnitOntoBattlefield(playerState, instance) &&
+    canPutUnitOntoBattlefield(playerState, instance, selfEntryContext(instance)) &&
     shingiBetisCandidates(playerState, gameState).length > 0,
   execute: async (instance, gameState, playerState) => {
     const candidates = shingiBetisCandidates(playerState, gameState);
@@ -65,7 +68,7 @@ const cardEffects: CardEffect[] = [{
       const betis = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
       if (!betis || !shingiBetisCandidates(playerState, gameState).some(card => card.gamecardId === betis.gamecardId)) return;
       moveCardAsCost(gameState, playerState.uid, betis, 'EXILE', instance);
-      if (!putUnitOntoField(gameState, playerState.uid, instance, instance)) return;
+      if (!putUnitOntoField(gameState, playerState.uid, instance, instance, selfEntryContext(instance))) return;
 
       const candidates = batCandidates(playerState);
       if (candidates.length === 0) return;
@@ -104,7 +107,7 @@ const card: Card = {
   color: 'RED',
   gamecardId: null as any,
   colorReq: { RED: 5 },
-  faction: '忒碧拉之间',
+  faction: '忒碧拉之门',
   acValue: 9,
   power: 4000,
   basePower: 4000,

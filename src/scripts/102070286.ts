@@ -15,7 +15,7 @@ const cardEffects: CardEffect[] = [{
   type: 'TRIGGER',
   triggerLocation: ['UNIT'],
   triggerEvent: 'COMBAT_DAMAGE_CAUSED',
-  isMandatory: false,
+  isMandatory: true,
   description: '你的单位对对手造成战斗伤害时，本回合中，对手的非神蚀单位不能防御你的《异界狂蝠》的攻击。',
   condition: (gameState, playerState, _instance, event) =>
     event?.playerUid === getOpponentUid(gameState, playerState.uid) &&

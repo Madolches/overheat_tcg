@@ -33,7 +33,7 @@ const cardEffects: CardEffect[] = [{
   type: 'TRIGGER',
   triggerEvent: 'CARD_EXILED',
   triggerLocation: ['UNIT'],
-  isMandatory: false,
+  isMandatory: true,
   isGlobal: true,
   description: '你的单位的共鸣能力将<瑟诺布>神蚀卡放逐时，选择对手1个单位失去所有能力，并令你的<瑟诺布>单位下一次攻击可攻击它。',
   condition: (gameState, playerState, _instance, event) => {

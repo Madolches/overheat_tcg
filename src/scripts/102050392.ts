@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { canActivateDefaultTiming, createSelectCardQuery, ensureData, markCanAttackAnyUnit, moveCardAsCost, ownUnits, wasPlacedByPromotionThisTurn } from './BaseUtil';
+import { canActivateDefaultTiming, createSelectCardQuery, ensureData, markCanAttackAnyUnit, moveCardAsCost, ownUnits, wasPlacedByPromotion } from './BaseUtil';
 
 const ownNonGodUnits = (playerState: any) => ownUnits(playerState).filter(unit => !unit.godMark);
 const redDiscardCosts = (playerState: any, instance: Card) =>
@@ -20,7 +20,7 @@ const cardEffects: CardEffect[] = [{
   applyContinuous: (gameState, instance) => {
     const owner = Object.values((gameState as any).players)
       .find((player: any) => player.unitZone.some((unit: Card | null) => unit?.gamecardId === instance.gamecardId));
-    if (!owner || !wasPlacedByPromotionThisTurn(gameState, instance)) return;
+    if (!owner || !wasPlacedByPromotion(instance)) return;
     ownUnits(owner as any).forEach(unit => markCanAttackAnyUnit(unit, instance));
   }
 }, {

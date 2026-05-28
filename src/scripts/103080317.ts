@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { canMeetBattlefieldColorRequirement, canPutUnitOntoBattlefield, cardsInZones, hasAwakenAbility, millTop, moveCard, putUnitOntoField, resonanceEffect, selectFromEntries } from './BaseUtil';
+import { canMeetBattlefieldColorRequirement, canPayAccessCost, canPutUnitOntoBattlefield, cardsInZones, hasAwakenAbility, millTop, moveCardAsCost, putUnitOntoField, resonanceEffect, selectFromEntries } from './BaseUtil';
 
 const awakenUnitEntries = (playerState: any) =>
   cardsInZones(playerState, ['DECK', 'GRAVE'])
@@ -10,7 +10,50 @@ const awakenUnitEntries = (playerState: any) =>
       canPutUnitOntoBattlefield(playerState, card)
     );
 
-const cardEffects: CardEffect[] = [
+const canPutUnitAfterSelfToGraveCost = (playerState: any, instance: Card, target: Card) => {
+  if (target.type !== 'UNIT' || !hasAwakenAbility(target)) return false;
+  if (canPutUnitOntoBattlefield(playerState, target)) return true;
+  if (instance.cardlocation !== 'UNIT') return false;
+  const slotIndex = playerState.unitZone.findIndex((unit: Card | null) => unit?.gamecardId === instance.gamecardId);
+  if (slotIndex < 0) return false;
+  const original = playerState.unitZone[slotIndex];
+  playerState.unitZone[slotIndex] = null;
+  try {
+    return canPutUnitOntoBattlefield(playerState, target);
+  } finally {
+    playerState.unitZone[slotIndex] = original;
+  }
+};
+
+const hasAwakenUnitTargetAfterSelfCost = (playerState: any, instance: Card) =>
+  cardsInZones(playerState, ['DECK', 'GRAVE'])
+    .some(({ card }) => canPutUnitAfterSelfToGraveCost(playerState, instance, card));
+
+const grienAwakenCost: CardEffect['cost'] = async (gameState, playerState, instance) => {
+  if (!canPayAccessCost(gameState, playerState, 2, undefined, instance)) return false;
+  gameState.pendingQuery = {
+    id: Math.random().toString(36).substring(7),
+    type: 'SELECT_PAYMENT',
+    playerUid: playerState.uid,
+    options: [],
+    title: '支付费用',
+    description: `支付2点费用以发动${instance.fullName}。`,
+    minSelections: 1,
+    maxSelections: 1,
+    callbackKey: 'ACTIVATE_COST_RESOLVE',
+    paymentCost: 2,
+    paymentColor: instance.color,
+    context: {
+      sourceCardId: instance.gamecardId,
+      effectId: '103080317_put_awaken_unit',
+      moveSelfToGraveAsCost: true
+    }
+  };
+  return true;
+};
+(grienAwakenCost as any).paymentCost = 2;
+
+const cardEffects: (CardEffect & { onCostResolve?: (card: Card, gameState: any, playerState: any) => void | Promise<void> })[] = [
   {
     ...resonanceEffect('103080317_resonance'),
     cost: async (gameState, playerState, instance) => {
@@ -65,18 +108,12 @@ const cardEffects: CardEffect[] = [
     erosionBackLimit: [1, 10],
     limitCount: 1,
     limitNameType: true,
-    description: '创痕1：同名1回合1次，将手牌或战场上的这张卡送入墓地，将卡组或墓地中1张具有唤醒的单位卡放置到战场。',
+    description: '创痕1：同名1回合1次，支付2费并将手牌或战场上的这张卡送入墓地，将卡组或墓地中1张具有唤醒的单位卡放置到战场。',
     condition: (_gameState, playerState, instance) =>
       ['HAND', 'UNIT'].includes(instance.cardlocation || '') &&
-      awakenUnitEntries(playerState).length > 0,
+      hasAwakenUnitTargetAfterSelfCost(playerState, instance),
+    cost: grienAwakenCost,
     execute: async (instance, gameState, playerState) => {
-      const fromZone = instance.cardlocation;
-      moveCard(gameState, playerState.uid, instance, 'GRAVE', instance);
-      (instance as any).data = {
-        ...((instance as any).data || {}),
-        paidSelfToGraveForAwakenTurn: gameState.turnCount,
-        paidSelfToGraveFromZone: fromZone
-      };
       selectFromEntries(
         gameState,
         playerState.uid,
@@ -94,6 +131,15 @@ const cardEffects: CardEffect[] = [
       const fromDeck = target.cardlocation === 'DECK';
       putUnitOntoField(gameState, playerState.uid, target, instance);
       if (fromDeck) await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'SHUFFLE_DECK' }, instance);
+    },
+    onCostResolve: async (instance, gameState, playerState) => {
+      const fromZone = instance.cardlocation;
+      moveCardAsCost(gameState, playerState.uid, instance, 'GRAVE', instance);
+      (instance as any).data = {
+        ...((instance as any).data || {}),
+        paidSelfToGraveForAwakenTurn: gameState.turnCount,
+        paidSelfToGraveFromZone: fromZone
+      };
     }
   }
 ];
