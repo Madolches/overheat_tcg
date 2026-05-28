@@ -82,6 +82,19 @@ const cardEffects: CardEffect[] = [{
       card => card.cardlocation as any
     );
   },
+  targetSpec: {
+    title: '选择破坏对象',
+    description: '选择战场上1张非神蚀卡，将其破坏。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT', 'ITEM'],
+    controller: 'ANY',
+    step: 'TARGET',
+    getCandidates: (gameState, _playerState, instance) =>
+      nonGodFieldCards(gameState)
+        .filter(card => card.gamecardId !== instance.gamecardId)
+        .map(card => ({ card, source: card.cardlocation as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = nonGodFieldCards(gameState).find(card => card.gamecardId === selections[0]);
     if (target) destroyByEffect(gameState, target, instance);

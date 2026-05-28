@@ -60,6 +60,18 @@ const cardEffects: CardEffect[] = [
         card => card.cardlocation as any
       );
     },
+    targetSpec: {
+      title: '选择不能横置的卡',
+      description: '选择对手战场上1张非神蚀卡，使其直到对手回合结束不能横置。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT', 'ITEM'],
+      controller: 'OPPONENT',
+      step: 'LOCK',
+      getCandidates: (gameState, playerState) =>
+        getOpponentBattlefieldNonGodCards(gameState, playerState.uid)
+          .map(card => ({ card, source: card.cardlocation as any }))
+    },
     onQueryResolve: async (instance, gameState, playerState, selections, context) => {
       if (context?.step === 'LOCK') {
         const target = getOpponentBattlefieldNonGodCards(gameState, playerState.uid).find(card => card.gamecardId === selections[0]);

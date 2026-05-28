@@ -105,6 +105,18 @@ const effect_102000289_grave_recover_kuya: CardEffect = {
       () => 'GRAVE'
     );
   },
+  targetSpec: {
+    title: '选择九夜卡',
+    description: '选择墓地中1张《九夜霜江》以外的卡名含有《九夜》的卡加入手牌。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState, instance) =>
+      recoverCandidates(playerState, instance)
+        .map((card: Card) => ({ card, source: 'GRAVE' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = selections[0] ? playerState.grave.find((card: Card) =>
       card.gamecardId === selections[0] &&

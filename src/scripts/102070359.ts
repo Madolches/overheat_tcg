@@ -44,7 +44,7 @@ const cardEffects: CardEffect[] = [{
   description: '将己方场上1个由《神仪》效果放置的「贝缇丝」放逐：将手牌中的这张卡放置到战场。之后，将卡组或墓地中任意数量《异界狂蝠》放置到战场。',
   condition: (gameState, playerState, instance) =>
     instance.cardlocation === 'HAND' &&
-    canPutUnitOntoBattlefield(playerState, instance) &&
+    canPutUnitOntoBattlefield(playerState, instance, { allowedByOwnEntryAbilityCardId: instance.id }) &&
     shingiBetisCandidates(playerState, gameState).length > 0,
   execute: async (instance, gameState, playerState) => {
     const candidates = shingiBetisCandidates(playerState, gameState);
@@ -65,7 +65,7 @@ const cardEffects: CardEffect[] = [{
       const betis = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
       if (!betis || !shingiBetisCandidates(playerState, gameState).some(card => card.gamecardId === betis.gamecardId)) return;
       moveCardAsCost(gameState, playerState.uid, betis, 'EXILE', instance);
-      if (!putUnitOntoField(gameState, playerState.uid, instance, instance)) return;
+      if (!putUnitOntoField(gameState, playerState.uid, instance, instance, { allowedByOwnEntryAbilityCardId: instance.id })) return;
 
       const candidates = batCandidates(playerState);
       if (candidates.length === 0) return;

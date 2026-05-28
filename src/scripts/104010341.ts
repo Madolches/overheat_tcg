@@ -42,6 +42,19 @@ const cardEffects: CardEffect[] = [{
       card => card.cardlocation as any
     );
   },
+  targetSpec: {
+    title: '选择回顶目标',
+    description: '选择战场上的1张非神蚀卡放置到持有者的卡组顶。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT', 'ITEM'],
+    controller: 'ANY',
+    step: 'TARGET',
+    getCandidates: (gameState, _playerState, instance) =>
+      allCardsOnField(gameState)
+        .filter(card => card.gamecardId !== instance.gamecardId && !card.godMark)
+        .map(card => ({ card, source: card.cardlocation as any }))
+  },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     const ownerUid = target ? AtomicEffectExecutor.findCardOwnerKey(gameState, target.gamecardId) : undefined;

@@ -24,6 +24,19 @@ const cardEffects: CardEffect[] = [{
       { sourceCardId: instance.gamecardId, effectId: '105110366_steel_damage' }
     );
   },
+  targetSpec: {
+    title: '选择钢兵单位',
+    description: '选择你的1个卡名含有《钢兵》的单位，本回合伤害+2。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      ownUnits(playerState)
+        .filter(unit => nameContains(unit, '钢兵'))
+        .map(card => ({ card, source: 'UNIT' as const }))
+  },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (target?.cardlocation === 'UNIT') addTempDamage(target, instance, 2);

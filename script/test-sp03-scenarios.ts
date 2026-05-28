@@ -174,6 +174,12 @@ async function confirmTrigger(state: any, playerUid: string) {
 
 async function activateAndResolveByOpponentPass(state: any, playerUid: string, card: Card, effectIndex: number) {
   await ServerGameService.activateEffect(state, playerUid, card.gamecardId, effectIndex);
+  if (
+    state.pendingQuery?.callbackKey === 'DECLARE_EFFECT_TARGETS' ||
+    state.pendingQuery?.callbackKey === 'DECLARE_EFFECT_TARGET_MODE'
+  ) {
+    return;
+  }
   if (state.pendingQuery?.callbackKey === 'ACTIVATE_COST_RESOLVE') {
     const optionIds = (state.pendingQuery.options || []).map((option: any) => option.card?.gamecardId || option.id || option.value);
     const min = state.pendingQuery.minSelections || 1;
@@ -183,6 +189,12 @@ async function activateAndResolveByOpponentPass(state: any, playerUid: string, c
     throw new Error(`Expected COUNTERING after activation, got ${state.phase}`);
   }
   await ServerGameService.passConfrontation(state, state.priorityPlayerId);
+}
+
+async function passIfCountering(state: any) {
+  if (state.phase === 'COUNTERING') {
+    await ServerGameService.passConfrontation(state, state.priorityPlayerId);
+  }
 }
 
 async function testPowderSnowAttackDestroysAndBoosts(): Promise<ScenarioResult> {
@@ -302,11 +314,11 @@ async function testPeonySnowModes(): Promise<ScenarioResult> {
     return fail(name, `expected own target query, got ${state.pendingQuery?.context?.step || 'none'}`);
   }
   await answerPendingQuery(state, 'BOT', [ownTarget.gamecardId]);
-  await answerPendingQuery(state, 'BOT', ['DESTROY_PAIR']);
   if (state.pendingQuery?.context?.step !== 'OPP_TARGET') {
     return fail(name, `expected opponent target query, got ${state.pendingQuery?.context?.step || 'none'}`);
   }
   await answerPendingQuery(state, 'BOT', [enemyTarget.gamecardId]);
+  await passIfCountering(state);
 
   const pairDestroyed = state.players.BOT.grave.some((card: Card) => card.gamecardId === ownTarget.gamecardId) &&
     state.players.P1.grave.some((card: Card) => card.gamecardId === enemyTarget.gamecardId);
@@ -322,7 +334,8 @@ async function testPeonySnowModes(): Promise<ScenarioResult> {
 
   await activateAndResolveByOpponentPass(setupState, 'BOT', setupPeony, 1);
   await answerPendingQuery(setupState, 'BOT', [setupTarget.gamecardId]);
-  await answerPendingQuery(setupState, 'BOT', ['SETUP_RECRUIT']);
+  await answerPendingQuery(setupState, 'BOT', []);
+  await passIfCountering(setupState);
   destroyByEffect(setupState, setupTarget, source);
   await confirmTrigger(setupState, 'BOT');
   if (setupState.pendingQuery?.context?.effectId !== '101000293_marked_recruit') {
@@ -449,6 +462,10 @@ async function testFuyioriRecoverAndTransform(): Promise<ScenarioResult> {
     return fail(name, `expected erosion target query, got ${state.pendingQuery?.context?.step || 'none'}`);
   }
   await answerPendingQuery(state, 'BOT', [kuya.gamecardId]);
+  await passIfCountering(state);
+  if (state.pendingQuery?.context?.step !== 'DISCARD') {
+    return fail(name, `expected discard query, got ${state.pendingQuery?.context?.step || 'none'}`);
+  }
   await answerPendingQuery(state, 'BOT', [discard.gamecardId]);
   const recovered = state.players.BOT.hand.some((card: Card) => card.gamecardId === kuya.gamecardId);
 
@@ -466,6 +483,10 @@ async function testFuyioriRecoverAndTransform(): Promise<ScenarioResult> {
     return fail(name, `recovered=${recovered}, expected transform target query got ${transformState.pendingQuery?.context?.step || 'none'}`);
   }
   await answerPendingQuery(transformState, 'BOT', [target.gamecardId]);
+  await passIfCountering(transformState);
+  if (transformState.pendingQuery?.context?.step !== 'COST') {
+    return fail(name, `expected transform cost query got ${transformState.pendingQuery?.context?.step || 'none'}`);
+  }
   await answerPendingQuery(transformState, 'BOT', [red.gamecardId, blue.gamecardId]);
 
   const transformed = target.power === 3500 && target.damage === 2 && !!target.isAnnihilation;
@@ -589,6 +610,14 @@ async function testKuyaColdDewSearchAndDestroy(): Promise<ScenarioResult> {
   }
 
   await ServerGameService.activateEffect(state, 'BOT', coldDew.gamecardId, 1);
+  if (state.pendingQuery?.context?.effectId !== '102000288_grave_destroy_access_three') {
+    return fail(name, `expected destroy target query, got ${state.pendingQuery?.context?.effectId || state.pendingQuery?.callbackKey || 'none'}`);
+  }
+  const options = (state.pendingQuery.options || []).map((option: any) => option.card.gamecardId);
+  if (!options.includes(target.gamecardId) || options.includes(invalidHigh.gamecardId) || options.includes(invalidGod.gamecardId)) {
+    return fail(name, `options=${options.join(',')}`);
+  }
+  await answerPendingQuery(state, 'BOT', [target.gamecardId]);
   if (state.pendingQuery?.callbackKey !== 'ACTIVATE_COST_RESOLVE') {
     return fail(name, `expected payment query, got ${state.pendingQuery?.context?.effectId || state.pendingQuery?.callbackKey || 'none'}`);
   }
@@ -597,14 +626,6 @@ async function testKuyaColdDewSearchAndDestroy(): Promise<ScenarioResult> {
     return fail(name, `expected COUNTERING after payment, got ${state.phase}`);
   }
   await ServerGameService.passConfrontation(state, state.priorityPlayerId);
-  if (state.pendingQuery?.context?.effectId !== '102000288_grave_destroy_access_three') {
-    return fail(name, `expected destroy query, got ${state.pendingQuery?.context?.effectId || state.pendingQuery?.callbackKey || 'none'}`);
-  }
-  const options = (state.pendingQuery.options || []).map((option: any) => option.card.gamecardId);
-  if (!options.includes(target.gamecardId) || options.includes(invalidHigh.gamecardId) || options.includes(invalidGod.gamecardId)) {
-    return fail(name, `options=${options.join(',')}`);
-  }
-  await answerPendingQuery(state, 'BOT', [target.gamecardId]);
 
   const paid = payerA.isExhausted === true && payerB.isExhausted === true;
   const destroyed = state.players.P1.grave.some((card: Card) => card.gamecardId === target.gamecardId);
@@ -643,6 +664,7 @@ async function testKuyaFrostRiverSearchAndRecover(): Promise<ScenarioResult> {
     return fail(name, `options=${options.join(',')}`);
   }
   await answerPendingQuery(state, 'BOT', [recover.gamecardId]);
+  await passIfCountering(state);
 
   const recovered = state.players.BOT.hand.some((card: Card) => card.gamecardId === recover.gamecardId);
   return searched && recovered
@@ -692,10 +714,11 @@ async function testFlameRayIrodoriDestroysWithSacrifice(): Promise<ScenarioResul
     return fail(name, `targetOptions=${targetOptions.join(',')}`);
   }
   await answerPendingQuery(state, 'BOT', [target.gamecardId]);
-  if (state.pendingQuery?.context?.step !== 'COST') {
-    return fail(name, `expected cost query, got ${state.pendingQuery?.context?.step || 'none'}`);
+  if (state.pendingQuery?.callbackKey !== 'ACTIVATE_COST_RESOLVE') {
+    return fail(name, `expected cost query, got ${state.pendingQuery?.context?.step || state.pendingQuery?.callbackKey || 'none'}`);
   }
   await answerPendingQuery(state, 'BOT', [sacrifice.gamecardId]);
+  await passIfCountering(state);
 
   const sacrificed = state.players.BOT.grave.some((card: Card) => card.gamecardId === sacrifice.gamecardId);
   const destroyed = state.players.P1.grave.some((card: Card) => card.gamecardId === target.gamecardId);
@@ -834,13 +857,18 @@ async function testCocolaModesDamageExileAndCounter(): Promise<ScenarioResult> {
 
   const opponentDeckBefore = state.players.P1.deck.length;
   await activateAndResolveByOpponentPass(state, 'BOT', cocola, 1);
-  if (state.pendingQuery?.callbackKey === 'ACTIVATE_COST_RESOLVE') {
-    await answerPendingQuery(state, 'BOT', [discard.gamecardId]);
+  if (state.pendingQuery?.callbackKey !== 'DECLARE_EFFECT_TARGET_MODE') {
+    return fail(name, `expected mode query, got ${state.pendingQuery?.context?.step || state.pendingQuery?.callbackKey || 'none'}`);
   }
+  await answerPendingQuery(state, 'BOT', ['DAMAGE_EXILE']);
   if (state.pendingQuery?.context?.step !== 'PLAYER') {
     return fail(name, `expected player query, got ${state.pendingQuery?.context?.step || state.pendingQuery?.callbackKey || 'none'}`);
   }
   await answerPendingQuery(state, 'BOT', ['PLAYER_OPPONENT']);
+  if (state.pendingQuery?.callbackKey === 'ACTIVATE_COST_RESOLVE') {
+    await answerPendingQuery(state, 'BOT', [discard.gamecardId]);
+  }
+  await passIfCountering(state);
   if (state.pendingQuery?.context?.step !== 'EXILE_GRAVE') {
     return fail(name, `expected exile query, got ${state.pendingQuery?.context?.step || 'none'}`);
   }
@@ -870,13 +898,16 @@ async function testCocolaModesDamageExileAndCounter(): Promise<ScenarioResult> {
   });
 
   await ServerGameService.activateEffect(counterState, 'BOT', counterCocola.gamecardId, 1);
+  if (counterState.pendingQuery?.callbackKey === 'DECLARE_EFFECT_TARGET_MODE') {
+    await answerPendingQuery(counterState, 'BOT', ['COUNTER']);
+  }
+  if (counterState.pendingQuery?.callbackKey === 'DECLARE_EFFECT_TARGETS') {
+    await answerPendingQuery(counterState, 'BOT', ['RESOLVE']);
+  }
   if (counterState.pendingQuery?.callbackKey === 'ACTIVATE_COST_RESOLVE') {
     await answerPendingQuery(counterState, 'BOT', [counterDiscard.gamecardId]);
   }
   await ServerGameService.passConfrontation(counterState, counterState.priorityPlayerId);
-  if (counterState.pendingQuery?.context?.step === 'MODE') {
-    await answerPendingQuery(counterState, 'BOT', ['COUNTER']);
-  }
   const coloredNegated = counterState.players.P1.grave.some((card: Card) => card.gamecardId === coloredPlay.gamecardId);
   const noReqUnnegated = counterState.players.P1.unitZone.some((unit: Card | null) => unit?.gamecardId === noReqPlay.gamecardId);
 

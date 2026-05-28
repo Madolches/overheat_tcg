@@ -18,7 +18,7 @@ const effect_104030125_trigger: CardEffect = {
   id: 'cocola_main_phase_trigger',
   type: 'TRIGGER',
   triggerEvent: 'PHASE_CHANGED',
-  isMandatory: false,
+  isMandatory: true,
   triggerLocation: ['UNIT'],
   triggerPriority: 100,
   description: '【诱发】在你的主要阶段开始时，选择对手的一个非神蚀单位，在本回合中，你的单位可以攻击该单位。',

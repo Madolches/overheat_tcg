@@ -62,6 +62,19 @@ const cardEffects: CardEffect[] = [universalEquipEffect, {
       context: { sourceCardId: instance.gamecardId, effectId: '304010051_revive_and_equip' }
     };
   },
+  targetSpec: {
+    title: '选择装备目标',
+    description: '选择你战场上的1个<百濑之水城>神蚀卡或卡名含有《剑仙》的单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      playerState.unitZone
+        .filter((unit): unit is Card => !!unit && isEquipTarget(unit))
+        .map(card => ({ card, source: 'UNIT' as const }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (!target || target.cardlocation !== 'UNIT' || !isEquipTarget(target)) return;

@@ -681,6 +681,7 @@ export const moveCard = (
     targetIndex?: number;
     highAlchemyMaterialColors?: string[];
     highAlchemyMaterialCount?: number;
+    allowedByOwnEntryAbilityCardId?: string;
   }
 ) => {
   const targetPlayerUid = options?.toPlayerUid || ownerUid;
@@ -701,6 +702,7 @@ export const moveCard = (
       targetIndex: options?.targetIndex,
       highAlchemyMaterialColors: options?.highAlchemyMaterialColors,
       highAlchemyMaterialCount: options?.highAlchemyMaterialCount,
+      allowedByOwnEntryAbilityCardId: options?.allowedByOwnEntryAbilityCardId,
       effectSourcePlayerUid: (sourceCard ? AtomicEffectExecutor.findCardOwnerKey(gameState, sourceCard.gamecardId) : ownerUid) || ownerUid,
       effectSourceCardId: sourceCard?.gamecardId
     }
@@ -1350,6 +1352,7 @@ export const putUnitOntoField = (
     toPlayerUid?: string;
     highAlchemyMaterialColors?: string[];
     highAlchemyMaterialCount?: number;
+    allowedByOwnEntryAbilityCardId?: string;
   }
 ) => {
   const toPlayerUid = options?.toPlayerUid || ownerUid;
@@ -1359,6 +1362,7 @@ export const putUnitOntoField = (
     toPlayerUid,
     highAlchemyMaterialColors: options?.highAlchemyMaterialColors,
     highAlchemyMaterialCount: options?.highAlchemyMaterialCount,
+    allowedByOwnEntryAbilityCardId: options?.allowedByOwnEntryAbilityCardId,
   });
   const moved = AtomicEffectExecutor.findCardById(gameState, card.gamecardId);
   if (moved) {
@@ -1404,6 +1408,7 @@ export const putCardOntoField = (
     toPlayerUid?: string;
     highAlchemyMaterialColors?: string[];
     highAlchemyMaterialCount?: number;
+    allowedByOwnEntryAbilityCardId?: string;
   }
 ) => {
   if (card.type === 'UNIT') return putUnitOntoField(gameState, ownerUid, card, source, options);

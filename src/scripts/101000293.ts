@@ -116,7 +116,79 @@ const effect_101000293_seiso_modes: CardEffect = {
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    targetGroups: [{
+      title: '选择己方单位',
+      description: '选择自己战场上的1个黄色、绿色或卡名含有《清霜》的非神蚀单位。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'SELF',
+      step: 'OWN_TARGET',
+      getCandidates: (_gameState, playerState) =>
+        ownUnits(playerState)
+          .filter(isYellowOrGreenOrSeisoNonGodUnit)
+          .map(card => ({ card, source: 'UNIT' as const }))
+    }, {
+      title: '选择对手卡牌',
+      description: '若要执行破坏效果，选择对手场上的1张ACCESS 3以下非神蚀卡；若要执行招募设置，可不选择。',
+      minSelections: 0,
+      maxSelections: 1,
+      zones: ['UNIT', 'ITEM'],
+      controller: 'OPPONENT',
+      step: 'OPP_TARGET',
+      getCandidates: (gameState, playerState) =>
+        opponentAccessThreeOrLessNonGodCards(gameState, playerState.uid)
+          .map(card => ({ card, source: card.cardlocation as any }))
+    }]
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.declaredTargets?.length) {
+      const ownTargetId = context.declaredTargets.find((target: any) => target.step === 'OWN_TARGET')?.gamecardId;
+      const ownTarget = ownTargetId ? AtomicEffectExecutor.findCardById(gameState, ownTargetId) : undefined;
+      if (
+        !ownTarget ||
+        ownTarget.cardlocation !== 'UNIT' ||
+        ownerUidOf(gameState, ownTarget) !== playerState.uid ||
+        !isYellowOrGreenOrSeisoNonGodUnit(ownTarget)
+      ) {
+        return;
+      }
+
+      const oppTargetId = context.declaredTargets.find((target: any) => target.step === 'OPP_TARGET')?.gamecardId;
+      if (oppTargetId) {
+        const oppTarget = oppTargetId ? AtomicEffectExecutor.findCardById(gameState, oppTargetId) : undefined;
+        if (ownTarget.cardlocation === 'UNIT') destroyByEffect(gameState, ownTarget, instance);
+        if (
+          oppTarget &&
+          ['UNIT', 'ITEM'].includes(oppTarget.cardlocation || '') &&
+          ownerUidOf(gameState, oppTarget) !== playerState.uid &&
+          !oppTarget.godMark &&
+          Number(oppTarget.acValue || 0) <= 3
+        ) {
+          destroyByEffect(gameState, oppTarget, instance);
+        }
+        return;
+      }
+
+      const data = ensureData(ownTarget);
+      data.seisoRecruitOnDestroyedTurn = gameState.turnCount;
+      data.seisoRecruitSourceCardId = instance.gamecardId;
+      data.seisoRecruitOwnerUid = playerState.uid;
+      data.seisoRecruitSourceName = instance.fullName;
+      (playerState as any).seisoRecruitMarks = [
+        ...(((playerState as any).seisoRecruitMarks || []).filter((mark: any) =>
+          !(mark.targetId === ownTarget.gamecardId && mark.sourceCardId === instance.gamecardId)
+        )),
+        {
+          targetId: ownTarget.gamecardId,
+          sourceCardId: instance.gamecardId,
+          turn: gameState.turnCount
+        }
+      ];
+      return;
+    }
+
     if (context?.step === 'OWN_TARGET') {
       const ownTarget = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
       if (

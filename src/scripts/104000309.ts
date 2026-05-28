@@ -35,6 +35,18 @@ const cardEffects: CardEffect[] = [{
       card => card.cardlocation as any
     );
   },
+  targetSpec: {
+    title: '选择破坏目标',
+    description: '选择战场上的1张非神蚀卡破坏。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT', 'ITEM'],
+    controller: 'ANY',
+    step: 'TARGET',
+    getCandidates: gameState =>
+      nonGodFieldCards(gameState)
+        .map(card => ({ card, source: card.cardlocation as any }))
+  },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (target && ['UNIT', 'ITEM'].includes(target.cardlocation || '') && !target.godMark) {
@@ -65,6 +77,18 @@ const cardEffects: CardEffect[] = [{
       { sourceCardId: instance.gamecardId, effectId: '104000309_oh_exhaust_mill' },
       () => 'UNIT'
     );
+  },
+  targetSpec: {
+    title: '选择横置单位',
+    description: '选择战场上的1个单位横置，并将对手卡组顶2张送入墓地。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    step: 'TARGET',
+    getCandidates: gameState =>
+      allUnitsOnField(gameState)
+        .map(card => ({ card, source: 'UNIT' as const }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;

@@ -96,6 +96,22 @@ const effect_102060290_irodori_destroy: CardEffect = {
     (instance as any).data?.enteredByIrodoriTurn === gameState.turnCount &&
     allCardsOnField(gameState).some(card => !card.godMark && (card.type === 'UNIT' || card.type === 'ITEM' || card.isEquip)) &&
     ownUnits(playerState).some(isSacrificeCostUnit),
+  cost: async (gameState, playerState, instance) => {
+    const candidates = ownUnits(playerState).filter(isSacrificeCostUnit);
+    if (candidates.length === 0) return false;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      candidates,
+      '选择送墓费用',
+      '选择己方战场上的1个红色、黄色或蓝色非神蚀单位送入墓地作为费用。',
+      1,
+      1,
+      { sourceCardId: instance.gamecardId, effectId: '102060290_irodori_destroy', costType: 'SACRIFICE_UNIT' },
+      () => 'UNIT'
+    );
+    return true;
+  },
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,
@@ -109,11 +125,43 @@ const effect_102060290_irodori_destroy: CardEffect = {
       card => card.cardlocation as any
     );
   },
+  targetSpec: {
+    title: '选择破坏目标',
+    description: '选择战场上的1张非神蚀卡。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT', 'ITEM'],
+    controller: 'ANY',
+    step: 'TARGET',
+    getCandidates: gameState =>
+      allCardsOnField(gameState)
+        .filter(card => !card.godMark && (card.type === 'UNIT' || card.type === 'ITEM' || card.isEquip))
+        .map(card => ({ card, source: card.cardlocation as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.costType === 'SACRIFICE_UNIT') {
+      const cost = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
+      if (
+        !cost ||
+        cost.cardlocation !== 'UNIT' ||
+        AtomicEffectExecutor.findCardOwnerKey(gameState, cost.gamecardId) !== playerState.uid ||
+        !isSacrificeCostUnit(cost)
+      ) {
+        context.cancelActivation = true;
+        return;
+      }
+      moveCardAsCost(gameState, playerState.uid, cost, 'GRAVE', instance);
+      return;
+    }
+
     if (context?.step === 'TARGET') {
       const targetId = selections[0];
       const target = targetId ? AtomicEffectExecutor.findCardById(gameState, targetId) : undefined;
       if (!target || target.godMark || !['UNIT', 'ITEM'].includes(target.cardlocation || '')) return;
+      if (context?.declaredTargets?.length) {
+        destroyByEffect(gameState, target, instance);
+        return;
+      }
       createSelectCardQuery(
         gameState,
         playerState.uid,

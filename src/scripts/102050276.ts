@@ -11,6 +11,7 @@ import {
   getOpponentUid,
   moveCardAsCost,
   ownUnits,
+  playerTargetCandidates,
   putUnitOntoField
 } from './BaseUtil';
 
@@ -154,6 +155,17 @@ const effect_102050276_main_damage: CardEffect = {
     gameState.phase === 'MAIN' &&
     ownUnits(playerState).some(isYellowOrBlueNonGodUnit),
   cost: yellowOrBlueNonGodUnitCost,
+  targetSpec: {
+    title: '选择对手',
+    description: '选择1名对手。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['PLAYER'],
+    controller: 'OPPONENT',
+    step: 'PLAYER',
+    getCandidates: (gameState, playerState) =>
+      playerTargetCandidates(gameState, playerState.uid, { includeSelf: false, includeOpponent: true })
+  },
   execute: async (instance, gameState, playerState) => {
     await damagePlayerByEffect(gameState, playerState.uid, getOpponentUid(gameState, playerState.uid), 2, instance);
     return;
@@ -188,6 +200,13 @@ const effect_102050276_main_damage: CardEffect = {
         { sourceCardId: instance.gamecardId, effectId: '102050276_main_damage', step: 'DAMAGE' },
         { includeSelf: false, includeOpponent: true }
       );
+      return;
+    }
+
+    if (context?.step === 'PLAYER') {
+      const declaredTarget = context.declaredTargets?.[0];
+      const targetUid = declaredTarget?.ownerUid || getOpponentUid(gameState, playerState.uid);
+      await damagePlayerByEffect(gameState, playerState.uid, targetUid, 2, instance);
       return;
     }
 

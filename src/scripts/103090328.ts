@@ -28,6 +28,19 @@ const cardEffects: CardEffect[] = [
         card => card.cardlocation as any
       );
     },
+    targetSpec: {
+      title: '选择强化单位',
+      description: '选择战场上1个非神蚀单位，本回合中伤害+1、力量+1500。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'ANY',
+      step: 'TARGET',
+      getCandidates: gameState =>
+        allUnitsOnField(gameState)
+          .filter(unit => !unit.godMark)
+          .map(card => ({ card, source: 'UNIT' as const }))
+    },
     onQueryResolve: async (instance, gameState, _playerState, selections) => {
       const target = allUnitsOnField(gameState).find(unit => unit.gamecardId === selections[0] && !unit.godMark);
       if (!target) return;
