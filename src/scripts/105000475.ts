@@ -1,6 +1,6 @@
 import { Card, CardEffect, GameEvent } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { createSelectCardQuery, destroyByEffect, getOpponentUid } from './BaseUtil';
+import { createSelectCardQuery, getOpponentUid } from './BaseUtil';
 
 const effect_105000475_temp: CardEffect = {
   id: '105000475_temp',
@@ -23,8 +23,7 @@ const effect_105000475_enter: CardEffect = {
     instance.cardlocation === 'UNIT' &&
     event?.type === 'CARD_ENTERED_ZONE' &&
     event.sourceCardId === instance.gamecardId &&
-    event.data?.zone === 'UNIT' &&
-    _playerState.itemZone.some(card => !!card),
+    event.data?.zone === 'UNIT',
   execute: async (instance, gameState, playerState) => {
     const ownItems = playerState.itemZone.filter((card): card is Card => !!card);
     if (ownItems.length > 0) {
@@ -41,12 +40,30 @@ const effect_105000475_enter: CardEffect = {
       return;
     }
 
-    return;
+    const opponentUid = getOpponentUid(gameState, playerState.uid);
+    const opponent = gameState.players[opponentUid];
+    if (opponent.hand.length === 0) return;
+
+    createSelectCardQuery(
+      gameState,
+      opponentUid,
+      [...opponent.hand],
+      '舍弃卡牌',
+      '选择1张手牌舍弃。',
+      1,
+      1,
+      { sourceCardId: instance.gamecardId, effectId: '105000475_enter', step: 'OPPONENT_DISCARD' },
+      () => 'HAND'
+    );
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context.step === 'DESTROY_ITEM') {
-      const item = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
-      if (!item || item.type !== 'ITEM' || !destroyByEffect(gameState, item, instance)) return;
+      if (selections.length === 1) {
+        await AtomicEffectExecutor.execute(gameState, playerState.uid, {
+          type: 'DESTROY_CARD',
+          targetFilter: { gamecardId: selections[0], type: 'ITEM' }
+        }, instance);
+      }
 
       const opponentUid = getOpponentUid(gameState, playerState.uid);
       const opponent = gameState.players[opponentUid];

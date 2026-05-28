@@ -124,21 +124,6 @@ const cardEffects: CardEffect[] = [story('203000116_conveyed_thoughts', '选择1
     player.preventOwnUnitsOpponentEffectDestroyTurn = gameState.turnCount;
     player.preventOwnUnitsOpponentEffectDestroySourceName = instance.fullName;
     player.preventOwnUnitsOpponentEffectDestroySourceCardId = instance.gamecardId;
-    player.preventOwnUnitsOpponentEffectDestroyControllerUid = playerState.uid;
-    return;
-  }
-}), {
-  id: '203000116_prevented_destroy_draw',
-  type: 'TRIGGER',
-  triggerLocation: ['GRAVE', 'PLAY'],
-  triggerEvent: 'CARD_EFFECT_DESTROY_PREVENTED',
-  isGlobal: true,
-  isMandatory: false,
-  description: '传达的思念防止破坏后可以抽2张卡。',
-  condition: (_gameState, playerState, instance, event) =>
-    event?.sourceCardId === instance.gamecardId &&
-    event.playerUid === playerState.uid,
-  execute: async (instance, gameState, playerState) => {
     createChoiceQuery(
       gameState,
       playerState.uid,
@@ -150,13 +135,9 @@ const cardEffects: CardEffect[] = [story('203000116_conveyed_thoughts', '选择1
       ],
       { sourceCardId: instance.gamecardId, effectId: '203000116_conveyed_thoughts', step: 'DRAW_CHOICE' }
     );
-  },
-  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context?.step === 'DRAW_CHOICE' && selections[0] === 'DRAW_TWO') {
-      await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'DRAW', value: 2 }, instance);
-    }
+    return;
   }
-}];
+})];
 
 /**
  * Auto-generated from Card.xlsx + Card2.xlsx.

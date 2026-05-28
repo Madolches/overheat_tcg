@@ -105,18 +105,6 @@ const effect_103000273_enter_boost: CardEffect = {
       () => 'UNIT'
     );
   },
-  targetSpec: {
-    title: '选择强化单位',
-    description: '选择你的1个非神蚀单位，本回合中伤害+1、力量+500。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['UNIT'],
-    controller: 'SELF',
-    getCandidates: (_gameState, playerState) =>
-      ownUnits(playerState)
-        .filter(unit => !unit.godMark)
-        .map(card => ({ card, source: 'UNIT' as any }))
-  },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (!target || target.cardlocation !== 'UNIT' || target.godMark) return;

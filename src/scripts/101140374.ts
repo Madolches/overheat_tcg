@@ -44,18 +44,6 @@ const cardEffects: CardEffect[] = [{
       card => card.cardlocation as any
     );
   },
-  targetSpec: {
-    title: '选择破坏目标',
-    description: '选择战场上1张ACCESS值+2以下的非神蚀卡。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['UNIT', 'ITEM'],
-    controller: 'ANY',
-    getCandidates: (gameState) =>
-      allCardsOnField(gameState)
-        .filter(card => !card.godMark && (card.acValue || 0) <= 2)
-        .map(card => ({ card, source: card.cardlocation as any }))
-  },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0]
       ? allCardsOnField(gameState).find(card => card.gamecardId === selections[0] && !card.godMark && (card.acValue || 0) <= 2)

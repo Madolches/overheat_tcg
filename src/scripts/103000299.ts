@@ -52,9 +52,7 @@ const effect_103000299_attack_destroy_boost: CardEffect = {
       isSeisoUnit(target) &&
       !isSeisoMochiyuki(target)
     ) {
-      if (!destroyByEffect(gameState, target, instance)) return;
-    } else {
-      return;
+      destroyByEffect(gameState, target, instance);
     }
 
     ownUnits(playerState)

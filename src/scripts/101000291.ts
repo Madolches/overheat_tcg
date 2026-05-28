@@ -53,9 +53,7 @@ const effect_101000291_attack_destroy_boost: CardEffect = {
       isSeisoUnit(target) &&
       !isSeisoMochiyuki(target)
     ) {
-      if (!destroyByEffect(gameState, target, instance)) return;
-    } else {
-      return;
+      destroyByEffect(gameState, target, instance);
     }
 
     ownUnits(playerState)
@@ -103,18 +101,6 @@ const effect_101000291_leave_destroy: CardEffect = {
       { sourceCardId: instance.gamecardId, effectId: '101000291_leave_destroy' },
       () => 'UNIT'
     );
-  },
-  targetSpec: {
-    title: '选择破坏目标',
-    description: '选择战场上1个ACCESS 3以下的非神蚀单位破坏。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['UNIT'],
-    controller: 'ANY',
-    getCandidates: (gameState) =>
-      allUnitsOnField(gameState)
-        .filter(unit => !unit.godMark && Number(unit.acValue || 0) <= 3)
-        .map(card => ({ card, source: 'UNIT' as any }))
   },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;

@@ -43,18 +43,6 @@ const cardEffects: CardEffect[] = [{
       () => 'GRAVE'
     );
   },
-  targetSpec: {
-    title: '选择奇美拉',
-    description: '选择墓地中的1张「奇美拉」单位卡放置到战场上。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['GRAVE'],
-    controller: 'SELF',
-    getCandidates: (_gameState, playerState) =>
-      chimeraInGrave(playerState)
-        .filter((card: Card) => canPutUnitOntoBattlefield(playerState, card))
-        .map((card: Card) => ({ card, source: 'GRAVE' as any }))
-  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = chimeraInGrave(playerState).find((card: Card) => card.gamecardId === selections[0] && canPutUnitOntoBattlefield(playerState, card));
     if (target) putUnitOntoField(gameState, playerState.uid, target, instance);

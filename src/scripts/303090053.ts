@@ -58,16 +58,6 @@ const cardEffects: CardEffect[] = [{
       () => 'UNIT'
     );
   },
-  targetSpec: {
-    title: '选择单位',
-    description: '选择战场上的1个单位，本回合中将其1个【启】或【诱】能力无效。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['UNIT'],
-    controller: 'ANY',
-    step: 'TARGET',
-    getCandidates: gameState => unitCandidates(gameState).map(card => ({ card, source: 'UNIT' as any }))
-  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'TARGET') {
       const target = unitCandidates(gameState).find(unit => unit.gamecardId === selections[0]);

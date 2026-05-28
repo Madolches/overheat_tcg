@@ -28,21 +28,8 @@ const cardEffects: CardEffect[] = [{
       { sourceCardId: instance.gamecardId, effectId: '103000331_enter_color', step: 'COLOR' }
     );
   },
-  targetSpec: {
-    modeTitle: '宣言颜色',
-    modeDescription: '宣言1个颜色，这个单位也具备该颜色。',
-    modeOptions: colorOptions.map(option => ({
-      id: option.id,
-      label: option.label,
-      title: '确认宣言颜色',
-      description: '确认宣言该颜色。',
-      minSelections: 0,
-      maxSelections: 0,
-      step: 'COLOR'
-    }))
-  },
-  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    const color = selections[0] || context?.selectedModeId || context?.modeId;
+  onQueryResolve: async (instance, gameState, playerState, selections) => {
+    const color = selections[0];
     if (colorOptions.some(option => option.id === color)) {
       addPersistentExtraColor(instance, color);
       gameState.logs.push(`[${instance.fullName}] 也具备 ${color}。`);

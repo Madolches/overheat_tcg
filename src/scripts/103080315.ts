@@ -40,18 +40,6 @@ const cardEffects: CardEffect[] = [
         { sourceCardId: instance.gamecardId, effectId: '103080315_unit_to_deck_put_grave_unit', step: 'TARGET' }
       );
     },
-    targetSpec: {
-      title: '选择墓地单位',
-      description: '选择墓地中1张非神蚀单位卡放置到战场。',
-      minSelections: 1,
-      maxSelections: 1,
-      zones: ['GRAVE'],
-      controller: 'SELF',
-      step: 'TARGET',
-      getCandidates: (_gameState, playerState) =>
-        graveNonGodUnits(playerState)
-          .map((card: Card) => ({ card, source: 'GRAVE' as any }))
-    },
     onQueryResolve: async (instance, gameState, playerState, selections, context) => {
       if (context?.step === 'TARGET') {
         const target = graveNonGodUnits(playerState).find((card: Card) => card.gamecardId === selections[0]);

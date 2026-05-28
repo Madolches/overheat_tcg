@@ -103,41 +103,6 @@ const effect_101000292_irodori_ready: CardEffect = {
       { sourceCardId: instance.gamecardId, effectId: '101000292_irodori_ready', step: 'MODE' }
     );
   },
-  targetSpec: {
-    modeTitle: '选择重置模式',
-    modeDescription: '选择要执行的重置模式。',
-    modeOptions: [{
-      id: 'COLOR_UNIT',
-      label: '重置1个黄/绿非神蚀单位',
-      title: '选择重置目标',
-      description: '选择自己战场上的1个黄色或绿色非神蚀单位重置。',
-      minSelections: 1,
-      maxSelections: 1,
-      zones: ['UNIT'],
-      controller: 'SELF',
-      step: 'TARGET',
-      condition: (_gameState, playerState) => ownUnits(playerState).some(unit => unit.isExhausted && isYellowOrGreenNonGodUnit(unit)),
-      getCandidates: (_gameState, playerState) =>
-        ownUnits(playerState)
-          .filter(unit => unit.isExhausted && isYellowOrGreenNonGodUnit(unit))
-          .map(card => ({ card, source: 'UNIT' as any }))
-    }, {
-      id: 'SEISO_UNITS',
-      label: '重置最多2个清霜单位',
-      title: '选择清霜单位',
-      description: '选择自己战场上最多2个卡名含有《清霜》的单位重置。',
-      minSelections: 1,
-      maxSelections: 2,
-      zones: ['UNIT'],
-      controller: 'SELF',
-      step: 'TARGET',
-      condition: (_gameState, playerState) => ownUnits(playerState).some(unit => unit.isExhausted && isSeisoUnit(unit)),
-      getCandidates: (_gameState, playerState) =>
-        ownUnits(playerState)
-          .filter(unit => unit.isExhausted && isSeisoUnit(unit))
-          .map(card => ({ card, source: 'UNIT' as any }))
-    }]
-  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'MODE') {
       if (selections[0] === 'COLOR_UNIT') {

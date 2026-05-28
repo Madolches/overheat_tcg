@@ -46,18 +46,17 @@ const cardEffects: CardEffect[] = [{
   condition: (_gameState, playerState, instance) =>
     instance.cardlocation === 'ITEM' &&
     playerState.isTurn &&
-    faceDownExile(playerState).length >= 2,
+    faceDownExile(playerState).length >= 2 &&
+    deckTargets(playerState).length > 0,
   execute: async (instance, gameState, playerState) => {
     moveCardAsCost(gameState, playerState.uid, instance, 'GRAVE', instance);
     [...faceDownExile(playerState)].forEach(card =>
       moveCard(gameState, playerState.uid, card, 'DECK', instance, { insertAtBottom: true })
     );
-    const candidates = deckTargets(playerState);
-    if (candidates.length === 0) return;
     createSelectCardQuery(
       gameState,
       playerState.uid,
-      candidates,
+      deckTargets(playerState),
       '选择魔导人偶',
       '选择卡组中的1张卡名含有《魔偶》或「斯蒂芬妮」的单位放置到战场。',
       1,

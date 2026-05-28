@@ -27,18 +27,6 @@ const cardEffects: CardEffect[] = [{
       () => 'GRAVE'
     );
   },
-  targetSpec: {
-    title: '选择墓地单位',
-    description: '选择你墓地中的1张非神蚀单位卡放置到战场上。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['GRAVE'],
-    controller: 'SELF',
-    getCandidates: (_gameState, playerState) =>
-      playerState.grave
-        .filter((card: Card) => isNonGodUnit(card) && canPutUnitOntoBattlefield(playerState, card))
-        .map((card: Card) => ({ card, source: 'GRAVE' as any }))
-  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (target?.cardlocation === 'GRAVE') putUnitOntoField(gameState, playerState.uid, target, instance);

@@ -48,17 +48,6 @@ const cardEffects: CardEffect[] = [{
       { sourceCardId: instance.gamecardId, effectId: '103000318_enter_or_leave_revive_green' }
     );
   },
-  targetSpec: {
-    title: '选择绿色单位',
-    description: '选择墓地中1张绿色非神蚀单位卡放置到战场。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['GRAVE'],
-    controller: 'SELF',
-    getCandidates: (_gameState, playerState) =>
-      greenNonGodGraveUnits(playerState)
-        .map((card: Card) => ({ card, source: 'GRAVE' as any }))
-  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = greenNonGodGraveUnits(playerState).find((card: Card) => card.gamecardId === selections[0]);
     if (target) putUnitOntoField(gameState, playerState.uid, target, instance);

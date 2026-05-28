@@ -100,19 +100,6 @@ const effect_105000323_enter_copy_activate: CardEffect = {
       () => 'UNIT'
     );
   },
-  targetSpec: {
-    title: '选择复制能力的单位',
-    description: '选择你的1个红色或白色无颜色限制非神蚀单位、或「斯蒂芬妮」单位。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['UNIT'],
-    controller: 'SELF',
-    step: 'COPY_TARGET',
-    getCandidates: (_gameState, playerState, instance) =>
-      playerState.unitZone
-        .filter((unit: Card | null): unit is Card => !!unit && unit.gamecardId !== instance.gamecardId && isCopyTarget(unit))
-        .map(card => ({ card, source: 'UNIT' as any }))
-  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step !== 'COPY_TARGET') return;
     const target = selections[0]

@@ -25,18 +25,6 @@ const cardEffects: CardEffect[] = [{
       () => 'UNIT'
     );
   },
-  targetSpec: {
-    title: '选择雷霆单位',
-    description: '选择你的1个<雷霆>单位，本回合力量+1000。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['UNIT'],
-    controller: 'SELF',
-    getCandidates: (_gameState, playerState) =>
-      ownUnits(playerState)
-        .filter(unit => isFaction(unit, '雷霆'))
-        .map(card => ({ card, source: 'UNIT' as any }))
-  },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (target) addTempPowerUntilEndOfTurn(target, instance, 1000, gameState);

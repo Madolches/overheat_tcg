@@ -105,18 +105,6 @@ const effect_103000302_irodori_revive: CardEffect = {
       () => 'GRAVE'
     );
   },
-  targetSpec: {
-    title: '选择放置单位',
-    description: '选择墓地中的1张白色或蓝色ACCESS 3以下非神蚀单位，或卡名含有《兽神》的单位卡放置到战场上。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['GRAVE'],
-    controller: 'SELF',
-    step: 'TARGET',
-    getCandidates: (_gameState, playerState) =>
-      reviveCandidates(playerState)
-        .map((card: Card) => ({ card, source: 'GRAVE' as any }))
-  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'TARGET') {
       const target = selections[0] ? reviveCandidates(playerState).find((card: Card) => card.gamecardId === selections[0]) : undefined;

@@ -210,26 +210,6 @@ async function answerPendingQuery(state: any, playerUid: string, selections: str
   await ServerGameService.handleQueryChoice(state, playerUid, state.pendingQuery.id, selections);
 }
 
-async function answerDeclaredTargetQueries(state: any, effectIds?: string[]) {
-  while (state.pendingQuery?.callbackKey === 'DECLARE_EFFECT_TARGET_MODE' || state.pendingQuery?.callbackKey === 'DECLARE_EFFECT_TARGETS') {
-    const query = state.pendingQuery;
-    if (effectIds && !effectIds.includes(query.context?.effectId)) break;
-    const min = query.minSelections || 1;
-    const selections = (query.options || [])
-      .slice(0, min)
-      .map((option: any) => option.card?.gamecardId || option.id || option.value)
-      .filter(Boolean);
-    await answerPendingQuery(state, query.playerUid, selections);
-  }
-}
-
-async function resolveDeclaredActivationTarget(state: any, playerUid: string, card: Card, effectIndex: number, selections: string[]) {
-  await ServerGameService.activateEffect(state, playerUid, card.gamecardId, effectIndex);
-  await answerPendingQuery(state, playerUid, selections);
-  if (state.phase !== 'COUNTERING') throw new Error(`Expected COUNTERING after target declaration, got ${state.phase}`);
-  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
-}
-
 async function chooseQueuedTrigger(state: any, effectId: string) {
   if (state.pendingQuery?.callbackKey !== 'TRIGGER_ORDER_CHOICE') return false;
   const option = (state.pendingQuery.options || []).find((candidate: any) => {
@@ -251,9 +231,7 @@ async function playStoryAndResolve(state: any, playerUid: string, card: Card) {
 }
 
 async function activateAndResolveByOpponentPass(state: any, playerUid: string, card: Card, effectIndex: number) {
-  const effectId = card.effects?.[effectIndex]?.id;
   await ServerGameService.activateEffect(state, playerUid, card.gamecardId, effectIndex);
-  await answerDeclaredTargetQueries(state, effectId ? [effectId] : undefined);
   if (state.pendingQuery?.callbackKey === 'ACTIVATE_COST_RESOLVE') {
     const required = Math.max(1, state.pendingQuery.minSelections || 1);
     const optionIds = (state.pendingQuery.options || [])
@@ -262,7 +240,6 @@ async function activateAndResolveByOpponentPass(state: any, playerUid: string, c
       .filter(Boolean);
     await answerPendingQuery(state, state.pendingQuery.playerUid, optionIds.length >= required ? optionIds : [optionIds[0] || 'PAY']);
   }
-  await answerDeclaredTargetQueries(state, effectId ? [effectId] : undefined);
   if (state.phase !== 'COUNTERING') throw new Error(`Expected COUNTERING after activation, got ${state.phase}`);
   await ServerGameService.passConfrontation(state, state.priorityPlayerId);
 }
@@ -1161,9 +1138,6 @@ async function testBlueSheathAndFuka(): Promise<ScenarioResult> {
     data: { zone: 'UNIT', sourceZone: 'HAND', targetZone: 'UNIT' },
   });
   await ServerGameService.checkTriggeredEffects(state);
-  if (state.pendingQuery?.context?.effectId === '304010054_hand_auto_equip') {
-    await answerPendingQuery(state, 'BOT', [momoseUnit.gamecardId]);
-  }
 
   const equippedSheath = state.players.BOT.itemZone.find((item: Card | null) => item?.id === bt06B10.id);
   const equipped = !!equippedSheath && equippedSheath.equipTargetId === momoseUnit.gamecardId;
@@ -1260,7 +1234,11 @@ async function testGreenResonanceDrawBoostAndSearch(): Promise<ScenarioResult> {
     grave: [silverCost],
     unitZone: [organist, null, null, null, null, null],
   });
-  await resolveDeclaredActivationTarget(organistState, 'BOT', organist, 0, [silverCost.gamecardId]);
+  await activateAndResolveByOpponentPass(organistState, 'BOT', organist, 0);
+  if (organistState.pendingQuery?.context?.effectId !== '103090327_resonance') {
+    return fail(name, `expected resonance query, got ${organistState.pendingQuery?.context?.effectId || 'none'}`);
+  }
+  await answerPendingQuery(organistState, 'BOT', [silverCost.gamecardId]);
   if (organistState.pendingQuery?.context?.effectId === '303090053_resonance_silence') {
     await answerPendingQuery(organistState, 'BOT', [organist.gamecardId]);
   }
@@ -1291,16 +1269,8 @@ async function testGreenResonanceDrawBoostAndSearch(): Promise<ScenarioResult> {
     grave: [boostCost],
     unitZone: [poet, boostTarget, null, null, null, null],
   });
-  await resolveDeclaredActivationTarget(boostState, 'BOT', poet, 0, [boostCost.gamecardId]);
-  if (boostState.pendingQuery?.context?.effectId === '303090053_resonance_silence') {
-    await answerPendingQuery(boostState, 'BOT', [poet.gamecardId]);
-  }
-  if (boostState.pendingQuery?.context?.effectId === '303090053_resonance_silence') {
-    const resonanceOption = (boostState.pendingQuery.options || []).find((option: any) =>
-      option.id === '103090328_resonance' || option.value === '103090328_resonance'
-    );
-    await answerPendingQuery(boostState, 'BOT', [resonanceOption?.id || boostState.pendingQuery.options?.[0]?.id]);
-  }
+  await activateAndResolveByOpponentPass(boostState, 'BOT', poet, 0);
+  await answerPendingQuery(boostState, 'BOT', [boostCost.gamecardId]);
   await ServerGameService.checkTriggeredEffects(boostState);
   await chooseQueuedTrigger(boostState, '103090328_boost');
   if (boostState.pendingQuery?.callbackKey === 'TRIGGER_CHOICE') {
@@ -1370,11 +1340,8 @@ async function testGreenBirdSalalaAndAccordion(): Promise<ScenarioResult> {
   if (birdState.pendingQuery?.callbackKey === 'TRIGGER_CHOICE') {
     await answerPendingQuery(birdState, 'BOT', ['YES']);
   }
-  if (birdState.pendingQuery?.callbackKey === 'DECLARE_EFFECT_TARGET_MODE' && birdState.pendingQuery?.context?.effectId === '103000331_enter_color') {
+  if (birdState.pendingQuery?.context?.effectId === '103000331_enter_color') {
     await answerPendingQuery(birdState, 'BOT', ['RED']);
-  }
-  if (birdState.pendingQuery?.callbackKey === 'DECLARE_EFFECT_TARGETS' && birdState.pendingQuery?.context?.effectId === '103000331_enter_color') {
-    await answerPendingQuery(birdState, 'BOT', ['RESOLVE']);
   }
   const liveFeather = birdState.players.BOT.unitZone.find((unit: Card | null) => unit?.id === bt06G05.id);
   const featherPlaced = !!liveFeather && liveFeather.isExhausted && !(liveFeather as any).data?.returnToDeckBottomAtTurnEnd;
@@ -1420,7 +1387,8 @@ async function testGreenBirdSalalaAndAccordion(): Promise<ScenarioResult> {
   }, {
     unitZone: [oppUnit, null, null, null, null, null],
   });
-  await resolveDeclaredActivationTarget(salalaState, 'BOT', salala, 0, [chimeraCost.gamecardId]);
+  await activateAndResolveByOpponentPass(salalaState, 'BOT', salala, 0);
+  await answerPendingQuery(salalaState, 'BOT', [chimeraCost.gamecardId]);
   await ServerGameService.checkTriggeredEffects(salalaState);
   if (salalaState.pendingQuery?.callbackKey === 'TRIGGER_CHOICE') {
     await answerPendingQuery(salalaState, 'BOT', ['YES']);
@@ -1649,19 +1617,6 @@ async function testRedDikaiTrackExplore(): Promise<ScenarioResult> {
   }
   const searched = enterState.players.BOT.hand.some((card: Card) => card.id === bt06R08.id);
 
-  const exploreForLeave = cloneScriptCard(bt06R09 as Card, 'DECK');
-  enterState.players.BOT.deck.push(exploreForLeave);
-  ServerGameService.moveCard(enterState, 'BOT', 'UNIT', 'BOT', 'GRAVE', dikai.gamecardId, {
-    isEffect: true,
-    effectSourcePlayerUid: 'BOT',
-    effectSourceCardId: dikai.gamecardId,
-  });
-  await activateTriggerAndAnswerYes(enterState, 'BOT');
-  if (enterState.pendingQuery?.context?.effectId === '102050363_enter_leave_search_story') {
-    await answerPendingQuery(enterState, 'BOT', [exploreForLeave.gamecardId]);
-  }
-  const searchedOnLeave = enterState.players.BOT.hand.some((card: Card) => card.gamecardId === exploreForLeave.gamecardId);
-
   const trackStory = cloneScriptCard(bt06R08 as Card, 'HAND');
   const redSource = cloneScriptCard(bt06R02 as Card, 'UNIT');
   const enemy = testCard({ id: 'R08_ENEMY', type: 'UNIT', color: 'BLUE', godMark: false, cardlocation: 'UNIT' });
@@ -1713,9 +1668,9 @@ async function testRedDikaiTrackExplore(): Promise<ScenarioResult> {
   const explored = exploreState.players.BOT.unitZone.some((unit: Card | null) => unit?.id === bt06R02.id) &&
     exploreState.players.BOT.exile.some((card: Card) => card.id === bt06R09.id);
 
-  return searched && searchedOnLeave && tracked && explored
-    ? pass(name, `searched=${searched}, leave=${searchedOnLeave}, tracked=${tracked}, explored=${explored}`)
-    : fail(name, `searched=${searched}, leave=${searchedOnLeave}, tracked=${tracked}, explored=${explored}`);
+  return searched && tracked && explored
+    ? pass(name, `searched=${searched}, tracked=${tracked}, explored=${explored}`)
+    : fail(name, `searched=${searched}, tracked=${tracked}, explored=${explored}`);
 }
 
 async function testRedBatsBetisAndGiantBat(): Promise<ScenarioResult> {

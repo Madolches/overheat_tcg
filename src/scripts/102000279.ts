@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { createPlayerSelectQuery, getOpponentUid, millTop, ownerUidOf, playerTargetCandidates } from './BaseUtil';
+import { createPlayerSelectQuery, getOpponentUid, millTop, ownerUidOf } from './BaseUtil';
 
 const effect_102000279_cost_mill: CardEffect = {
   id: '102000279_cost_mill',
@@ -33,14 +33,6 @@ const effect_102000279_cost_mill: CardEffect = {
       { sourceCardId: instance.gamecardId, effectId: '102000279_cost_mill' },
       { includeSelf: false, includeOpponent: true }
     );
-  },
-  targetSpec: {
-    title: '选择对手',
-    description: '选择1名对手，将其卡组顶1张送入墓地。',
-    minSelections: 1,
-    maxSelections: 1,
-    step: 'PLAYER',
-    getCandidates: (gameState, playerState) => playerTargetCandidates(gameState, playerState.uid, { includeSelf: false, includeOpponent: true })
   },
   onQueryResolve: async (instance, gameState, playerState) => {
     millTop(gameState, getOpponentUid(gameState, playerState.uid), 1, instance);

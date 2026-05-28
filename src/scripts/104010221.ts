@@ -1,6 +1,5 @@
 import { Card, GameState, PlayerState, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { destroyByEffect } from './BaseUtil';
 
 
 const activation_104010221_1: CardEffect = {
@@ -43,8 +42,13 @@ const activation_104010221_1: CardEffect = {
         const damageAmount = targetCard.acValue || 0;
         gameState.logs.push(`[北冥] 效果：破坏了装备卡 ${targetCard.fullName}，造成 ${damageAmount} 点效果伤害。`);
 
-        if (!destroyByEffect(gameState, targetCard, instance)) return;
+        // 1. Destroy the card
+        await AtomicEffectExecutor.execute(gameState, playerState.uid, {
+          type: 'DESTROY_CARD',
+          targetFilter: { gamecardId: targetCardId }
+        }, instance);
 
+        // 2. Deal damage to player
         await AtomicEffectExecutor.execute(gameState, playerState.uid, {
           type: 'DEAL_EFFECT_DAMAGE',
           value: damageAmount

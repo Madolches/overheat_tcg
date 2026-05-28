@@ -120,16 +120,6 @@ const effect_104000298_irodori_recover: CardEffect = {
       card => card.cardlocation as any
     );
   },
-  targetSpec: {
-    title: '选择回收卡',
-    description: '选择墓地或正面侵蚀区中1张红色或绿色正面非神蚀单位卡，或卡名含有《九夜》的卡加入手牌。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['GRAVE', 'EROSION_FRONT'],
-    controller: 'SELF',
-    getCandidates: (_gameState, playerState) =>
-      recoverCandidates(playerState).map((card: Card) => ({ card, source: card.cardlocation as any }))
-  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const selected = recoverCandidates(playerState).find((card: Card) => card.gamecardId === selections[0]);
     if (selected) {

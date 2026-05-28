@@ -63,17 +63,6 @@ const cardEffects: CardEffect[] = [{
       () => 'UNIT'
     );
   },
-  targetSpec: {
-    title: '选择对手单位',
-    description: '选择对手战场上的1个单位。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['UNIT'],
-    controller: 'OPPONENT',
-    getCandidates: (gameState, playerState) =>
-      opponentUnits(gameState, playerState.uid)
-        .map(card => ({ card, source: 'UNIT' as any }))
-  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = opponentUnits(gameState, playerState.uid).find(unit => unit.gamecardId === selections[0]);
     if (!target) return;

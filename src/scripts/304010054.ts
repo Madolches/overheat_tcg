@@ -53,37 +53,6 @@ const cardEffects: CardEffect[] = [universalEquipEffect, {
       data: { itemId: item.gamecardId, unitId: target.gamecardId }
     });
     EventEngine.recalculateContinuousEffects(gameState);
-  },
-  targetSpec: {
-    title: '选择装备单位',
-    description: '选择那些从手牌进入战场的〈百濑之水城〉神蚀单位中的1个。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['UNIT'],
-    controller: 'SELF',
-    getCandidates: (_gameState, _playerState, _instance, _declaredTargets, event) => {
-    const target = isMomoseGodUnitFromHand(event)
-      ? event.sourceCard
-      : undefined;
-      return target ? [{ card: target, source: 'UNIT' as any }] : [];
-    }
-  },
-  onQueryResolve: async (instance, gameState, playerState, selections) => {
-    const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
-    if (!target || target.cardlocation !== 'UNIT' || target.faction !== '百濑之水城' || !target.godMark) return;
-    moveCard(gameState, playerState.uid, instance, 'ITEM', instance);
-    const item = AtomicEffectExecutor.findCardById(gameState, instance.gamecardId);
-    if (!item || item.cardlocation !== 'ITEM') return;
-    item.equipTargetId = target.gamecardId;
-    EventEngine.dispatchEvent(gameState, {
-      type: 'CARD_EQUIPPED',
-      playerUid: playerState.uid,
-      sourceCard: item,
-      sourceCardId: item.gamecardId,
-      targetCardId: target.gamecardId,
-      data: { itemId: item.gamecardId, unitId: target.gamecardId }
-    });
-    EventEngine.recalculateContinuousEffects(gameState);
   }
 }, {
   id: '304010054_return_with_unit',

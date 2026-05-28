@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { addInfluence, canPutUnitOntoBattlefield, createSelectCardQuery, destroyByEffect, getOpponentUid, moveCard, ownerUidOf } from './BaseUtil';
+import { addInfluence, canPutUnitOntoBattlefield, createSelectCardQuery, getOpponentUid, moveCard, ownerUidOf } from './BaseUtil';
 
 const effect_205000144_activate: CardEffect = {
   id: '205000144_activate',
@@ -23,8 +23,10 @@ const effect_205000144_activate: CardEffect = {
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context.step === 'DESTROY_ITEM') {
-      const item = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
-      if (!item || item.type !== 'ITEM' || !destroyByEffect(gameState, item, instance)) return;
+      await AtomicEffectExecutor.execute(gameState, playerState.uid, {
+        type: 'DESTROY_CARD',
+        targetFilter: { gamecardId: selections[0], type: 'ITEM' }
+      }, instance);
 
       const opponentUid = getOpponentUid(gameState, playerState.uid);
       const opponent = gameState.players[opponentUid];

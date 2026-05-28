@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { createPlayerSelectQuery, getOpponentUid, millTop, ownUnits, playerTargetCandidates } from './BaseUtil';
+import { createPlayerSelectQuery, getOpponentUid, millTop, ownUnits } from './BaseUtil';
 
 const hasWhiteOrYellowUnit = (playerState: any) =>
   ownUnits(playerState).some(unit =>
@@ -30,14 +30,6 @@ const effect_102000277_enter_mill: CardEffect = {
       { sourceCardId: instance.gamecardId, effectId: '102000277_enter_mill' },
       { includeSelf: false, includeOpponent: true }
     );
-  },
-  targetSpec: {
-    title: '选择对手',
-    description: '选择1名对手，将其卡组顶2张送入墓地。',
-    minSelections: 1,
-    maxSelections: 1,
-    step: 'PLAYER',
-    getCandidates: (gameState, playerState) => playerTargetCandidates(gameState, playerState.uid, { includeSelf: false, includeOpponent: true })
   },
   onQueryResolve: async (instance, gameState, playerState) => {
     millTop(gameState, getOpponentUid(gameState, playerState.uid), 2, instance);

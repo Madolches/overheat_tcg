@@ -20,11 +20,9 @@ const feijingTargets = (playerState: any) =>
   );
 
 const leftByBattleOrOpponentEffect = (playerUid: string, event: any) =>
-  event?.type === 'CARD_LEFT_FIELD' &&
-  (
-    (event.data?.isEffect === false && event.data?.targetZone === 'GRAVE') ||
-    (event.data?.isEffect === true && event.data?.effectSourcePlayerUid && event.data.effectSourcePlayerUid !== playerUid)
-  );
+  event?.type === 'CARD_DESTROYED_BATTLE' ||
+  event?.data?.sourcePlayerId && event.data.sourcePlayerId !== playerUid ||
+  event?.data?.effectSourcePlayerUid && event.data.effectSourcePlayerUid !== playerUid;
 
 const cardEffects: CardEffect[] = [{
   id: '102000360_enter_discard_put_feijing',
@@ -67,24 +65,14 @@ const cardEffects: CardEffect[] = [{
 }, {
   id: '102000360_leave_destroy_card',
   type: 'TRIGGER',
-  triggerLocation: ['UNIT', 'GRAVE', 'EXILE'],
-  triggerEvent: 'CARD_LEFT_FIELD',
-  sourceSnapshotOnLeftField: true,
+  triggerLocation: ['GRAVE', 'EXILE'],
+  triggerEvent: ['CARD_LEFT_FIELD', 'CARD_DESTROYED_BATTLE', 'CARD_DESTROYED_EFFECT'],
   isMandatory: true,
   erosionBackLimit: [2, 10],
   description: '创痕2：这张卡由于战斗或对手效果从战场离开时，选择战场上的1张卡破坏。',
   condition: (_gameState, playerState, instance, event) => {
-    const isSelf =
-      event?.sourceCard === instance ||
-      event?.sourceCardId === instance.gamecardId ||
-      event?.targetCardId === instance.gamecardId ||
-      event?.data?.previousSourceCardId === instance.gamecardId ||
-      (
-        !!event?.sourceCard?.runtimeFingerprint &&
-        event.sourceCard.runtimeFingerprint === instance.runtimeFingerprint
-      );
+    const isSelf = event?.sourceCardId === instance.gamecardId || event?.targetCardId === instance.gamecardId;
     return !!isSelf &&
-      event?.data?.sourceZone === 'UNIT' &&
       leftByBattleOrOpponentEffect(playerState.uid, event) &&
       playerState.erosionBack.filter(Boolean).length >= 2;
   },
@@ -101,16 +89,6 @@ const cardEffects: CardEffect[] = [{
       { sourceCardId: instance.gamecardId, effectId: '102000360_leave_destroy_card' },
       card => card.cardlocation as any
     );
-  },
-  targetSpec: {
-    title: '选择破坏卡',
-    description: '选择战场上的1张卡破坏。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['UNIT', 'ITEM'],
-    controller: 'ANY',
-    getCandidates: (gameState) =>
-      allCardsOnField(gameState).map(card => ({ card, source: card.cardlocation as any }))
   },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;

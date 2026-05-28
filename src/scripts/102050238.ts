@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, createPlayerSelectQuery, createSelectCardQuery, damagePlayerByEffect, getOpponentUid, isFaction, isNonGodUnit, ownUnits, playerTargetCandidates } from './BaseUtil';
+import { AtomicEffectExecutor, createPlayerSelectQuery, createSelectCardQuery, damagePlayerByEffect, getOpponentUid, isFaction, isNonGodUnit, ownUnits } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
   id: '102050238_ileu_damage',
@@ -34,14 +34,6 @@ const cardEffects: CardEffect[] = [{
       { sourceCardId: instance.gamecardId, effectId: '102050238_ileu_damage' },
       { includeSelf: false, includeOpponent: true }
     );
-  },
-  targetSpec: {
-    title: '选择对手',
-    description: '选择1名对手，给予其2点伤害。',
-    minSelections: 1,
-    maxSelections: 1,
-    step: 'PLAYER',
-    getCandidates: (gameState, playerState) => playerTargetCandidates(gameState, playerState.uid, { includeSelf: false, includeOpponent: true })
   },
   onQueryResolve: async (instance, gameState, playerState) => {
     await damagePlayerByEffect(gameState, playerState.uid, getOpponentUid(gameState, playerState.uid), 2, instance);

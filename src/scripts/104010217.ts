@@ -47,21 +47,8 @@ const trigger_104010217: CardEffect = {
       };
     }
   },
-  targetSpec: {
-    title: '选择「剑仙」卡牌',
-    description: '选择侵蚀区的1张「剑仙」卡牌加入手牌。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['EROSION_FRONT'],
-    controller: 'SELF',
-    step: 'TARGET',
-    getCandidates: (_gameState, playerState) =>
-      playerState.erosionFront
-        .filter((card: Card | null): card is Card => !!card && card.displayState === 'FRONT_UPRIGHT' && card.fullName.includes('剑仙'))
-        .map(card => ({ card, source: 'EROSION_FRONT' as any }))
-  },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
-    if (context.step === 1 || context.step === 'TARGET') {
+    if (context.step === 1) {
       const targetId = selections[0];
       const targetCard = playerState.erosionFront.find(c => c?.gamecardId === targetId);
 

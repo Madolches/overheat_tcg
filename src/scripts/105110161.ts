@@ -1,6 +1,7 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { createSelectCardQuery, destroyByEffect } from './BaseUtil';
+import { GameService } from '../services/gameService';
+import { createSelectCardQuery } from './BaseUtil';
 
 const effect_105110161_activate: CardEffect = {
   id: '105110161_activate',
@@ -30,7 +31,7 @@ const effect_105110161_activate: CardEffect = {
       const targetItem = AtomicEffectExecutor.findCardById(gameState, selections[0]);
       if (!targetItem) return;
 
-      if (!destroyByEffect(gameState, targetItem, instance)) return;
+      await GameService.destroyUnit(gameState, playerState.uid, targetItem.gamecardId, true, playerState.uid);
 
       const ownUnits = playerState.unitZone.filter((card): card is Card => !!card);
       if (ownUnits.length === 0) return;

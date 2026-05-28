@@ -78,38 +78,9 @@ const cardEffects: CardEffect[] = [{
       { sourceCardId: instance.gamecardId, effectId: '105110386_blueprint_entry_destroy', step: 'MODE' }
     );
   },
-  targetSpec: {
-    modeTitle: '选择效果',
-    modeDescription: '选择1项效果执行。',
-    modeOptions: [{
-      id: 'DESTROY_OPPONENT_NON_GOD',
-      label: '破坏对手非神蚀卡',
-      title: '确认效果',
-      description: '破坏对手战场上的所有非神蚀卡。',
-      minSelections: 0,
-      maxSelections: 0,
-      step: 'MODE',
-      condition: (gameState, playerState) => opponentNonGodFieldCards(gameState, playerState.uid).length > 0
-    }, {
-      id: 'DESTROY_GODMARK',
-      label: '破坏神蚀卡',
-      title: '选择神蚀卡',
-      description: '选择战场上的1张神蚀卡破坏。',
-      minSelections: 1,
-      maxSelections: 1,
-      zones: ['UNIT', 'ITEM'],
-      controller: 'ANY',
-      step: 'DESTROY_GODMARK',
-      condition: (gameState) => godmarkFieldCards(gameState).length > 0,
-      getCandidates: (gameState) =>
-        godmarkFieldCards(gameState)
-          .map(card => ({ card, source: card.cardlocation as any }))
-    }]
-  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    const selectedMode = selections[0] || context?.selectedModeId || context?.modeId;
     if (context?.step === 'MODE') {
-      if (selectedMode === 'DESTROY_OPPONENT_NON_GOD') {
+      if (selections[0] === 'DESTROY_OPPONENT_NON_GOD') {
         opponentNonGodFieldCards(gameState, playerState.uid).forEach(target => destroyByEffect(gameState, target, instance));
         return;
       }

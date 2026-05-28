@@ -29,19 +29,6 @@ const cardEffects: CardEffect[] = [{
       () => 'UNIT'
     );
   },
-  targetSpec: {
-    title: '选择神蚀单位',
-    description: '选择对手场上1个神蚀单位。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['UNIT'],
-    controller: 'OPPONENT',
-    step: 'TARGET',
-    getCandidates: (gameState, playerState) =>
-      ownUnits(gameState.players[getOpponentUid(gameState, playerState.uid)])
-        .filter(unit => unit.godMark)
-        .map(card => ({ card, source: 'UNIT' as any }))
-  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'TARGET') {
       const targetId = selections[0];

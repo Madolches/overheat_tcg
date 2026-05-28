@@ -246,15 +246,6 @@ export const ServerGameService = {
     return !!effect?.targetSpec && effect.targetSpec.preselect !== false;
   },
 
-  isModeOnlyTargetShape(targetShape: any) {
-    return !!targetShape &&
-      targetShape.minSelections === 0 &&
-      targetShape.maxSelections === 0 &&
-      !targetShape.getCandidates &&
-      !targetShape.zones &&
-      !targetShape.targetGroups;
-  },
-
   cloneForTargetProbe(gameState: GameState): GameState {
     const clone = JSON.parse(JSON.stringify(gameState));
     ServerGameService.hydrateGameState(clone);
@@ -400,12 +391,12 @@ export const ServerGameService = {
     return true;
   },
 
-  getTargetCandidates(gameState: GameState, playerUid: string, sourceCard: Card, effect: CardEffect, targetShape?: any, declaredTargets?: DeclaredEffectTarget[], event?: GameEvent): EffectTargetCandidate[] {
+  getTargetCandidates(gameState: GameState, playerUid: string, sourceCard: Card, effect: CardEffect, targetShape?: any, declaredTargets?: DeclaredEffectTarget[]): EffectTargetCandidate[] {
     const spec = targetShape || effect.targetSpec;
     if (!spec) return [];
     const player = gameState.players[playerUid];
     let candidates = spec.getCandidates
-      ? spec.getCandidates(gameState, player, sourceCard, declaredTargets, event)
+      ? spec.getCandidates(gameState, player, sourceCard, declaredTargets)
       : Object.entries(gameState.players).flatMap(([uid, zonePlayer]) => {
           if (spec.controller === 'SELF' && uid !== playerUid) return [];
           if (spec.controller === 'OPPONENT' && uid === playerUid) return [];
@@ -434,84 +425,6 @@ export const ServerGameService = {
     });
   },
 
-  getDeclaredTargetOption(
-    gameState: GameState,
-    playerUid: string,
-    selectionId: string
-  ): { card: Card; ownerUid: string; zone: TriggerLocation } | undefined {
-    const located = ServerGameService.findCardLocation(gameState, selectionId);
-    if (located) return located;
-
-    if (selectionId === 'PLAYER_SELF') {
-      const player = gameState.players[playerUid];
-      if (!player) return undefined;
-      return {
-        ownerUid: playerUid,
-        zone: 'PLAYER',
-        card: {
-          gamecardId: 'PLAYER_SELF',
-          id: 'PLAYER_SELF',
-          uniqueId: 'PLAYER_SELF',
-          fullName: player.displayName || '我方玩家',
-          specialName: '',
-          type: 'UNIT',
-          color: 'NONE',
-          faction: '无',
-          acValue: 0,
-          power: 0,
-          basePower: 0,
-          damage: 0,
-          baseDamage: 0,
-          godMark: false,
-          displayState: 'FRONT_UPRIGHT',
-          isExhausted: false,
-          isrush: false,
-          canAttack: false,
-          feijingMark: false,
-          canResetCount: 0,
-          effects: [],
-          cardlocation: 'PLAYER' as TriggerLocation
-        } as Card
-      };
-    }
-
-    if (selectionId === 'PLAYER_OPPONENT') {
-      const opponentUid = gameState.playerIds.find(uid => uid !== playerUid);
-      if (!opponentUid) return undefined;
-      const opponent = gameState.players[opponentUid];
-      return {
-        ownerUid: opponentUid,
-        zone: 'PLAYER',
-        card: {
-          gamecardId: 'PLAYER_OPPONENT',
-          id: 'PLAYER_OPPONENT',
-          uniqueId: 'PLAYER_OPPONENT',
-          fullName: opponent?.displayName || '对手玩家',
-          specialName: '',
-          type: 'UNIT',
-          color: 'NONE',
-          faction: '无',
-          acValue: 0,
-          power: 0,
-          basePower: 0,
-          damage: 0,
-          baseDamage: 0,
-          godMark: false,
-          displayState: 'FRONT_UPRIGHT',
-          isExhausted: false,
-          isrush: false,
-          canAttack: false,
-          feijingMark: false,
-          canResetCount: 0,
-          effects: [],
-          cardlocation: 'PLAYER' as TriggerLocation
-        } as Card
-      };
-    }
-
-    return undefined;
-  },
-
   createDeclareTargetQuery(
     gameState: GameState,
     playerUid: string,
@@ -528,16 +441,14 @@ export const ServerGameService = {
       const player = gameState.players[playerUid];
       const options = activeSpec.modeOptions
         .filter(mode => !mode.condition || mode.condition(gameState, player, sourceCard))
-        .filter(mode => ServerGameService.isModeOnlyTargetShape(mode) || ServerGameService.getTargetCandidates(gameState, playerUid, sourceCard, effect, mode, context.declaredTargets, context.event).length >= mode.minSelections)
+        .filter(mode => ServerGameService.getTargetCandidates(gameState, playerUid, sourceCard, effect, mode).length >= mode.minSelections)
         .map(mode => ({ id: mode.id, label: mode.label, detail: mode.modeDescription || mode.description }));
       if (options.length === 0) return false;
       const choiceContext = {
         ...context,
         sourceCardId: sourceCard.gamecardId,
         effectIndex,
-        effectId: effect.id,
-        activationPlayerUid: playerUid,
-        step: 'MODE'
+        activationPlayerUid: playerUid
       };
       gameState.pendingQuery = {
         id: Math.random().toString(36).substring(7),
@@ -558,44 +469,7 @@ export const ServerGameService = {
       ? activeSpec.modeOptions?.find((mode: any) => mode.id === context.modeId)
       : activeSpec.targetGroups?.[context.targetGroupIndex || 0] || activeSpec;
     if (!targetShape) return false;
-    if (ServerGameService.isModeOnlyTargetShape(targetShape)) {
-      const declaredTargets = [...(context.declaredTargets || []), {
-        gamecardId: `MODE:${context.modeId || targetShape.id}`,
-        ownerUid: playerUid,
-        zone: 'PLAYER' as TriggerLocation,
-        sourceCardId: sourceCard.gamecardId,
-        sourceCardName: sourceCard.fullName,
-        effectIndex,
-        modeId: context.modeId || targetShape.id,
-        step: targetShape.step
-      }];
-      if (context.pendingAction === 'TRIGGER_EFFECT' && context.triggerRecord) {
-        gameState.pendingQuery = {
-          id: Math.random().toString(36).substring(7),
-          type: 'SELECT_CHOICE',
-          playerUid,
-          options: [{ id: 'RESOLVE', value: 'RESOLVE', label: '结算' }],
-          title: targetShape.title || '确认效果',
-          description: targetShape.description || '确认结算该效果。',
-          minSelections: 1,
-          maxSelections: 1,
-          callbackKey: 'DECLARE_EFFECT_TARGETS',
-          context: {
-            ...context,
-            sourceCardId: sourceCard.gamecardId,
-            effectIndex,
-            effectId: effect.id,
-            activationPlayerUid: playerUid,
-            declaredTargets,
-            targetGroupIndex: context.targetGroupIndex || 0,
-            skipDeclareTargetSelection: true
-          }
-        };
-        return true;
-      }
-      return false;
-    }
-    const candidates = ServerGameService.getTargetCandidates(gameState, playerUid, sourceCard, effect, targetShape, context.declaredTargets, context.event);
+    const candidates = ServerGameService.getTargetCandidates(gameState, playerUid, sourceCard, effect, targetShape, context.declaredTargets);
     if (candidates.length < targetShape.minSelections) return false;
     gameState.pendingQuery = {
       id: Math.random().toString(36).substring(7),
@@ -618,7 +492,6 @@ export const ServerGameService = {
         ...context,
         sourceCardId: sourceCard.gamecardId,
         effectIndex,
-        effectId: effect.id,
         activationPlayerUid: playerUid,
         step: targetShape.step,
         capturedContext: targetShape.capturedContext,
@@ -637,8 +510,7 @@ export const ServerGameService = {
     selections: string[],
     targetShape?: any,
     previousTargets?: DeclaredEffectTarget[],
-    modeId?: string,
-    event?: GameEvent
+    modeId?: string
   ): DeclaredEffectTarget[] {
     const spec = effect.targetSpec || (effect as any).__runtimeTargetSpec;
     if (!spec && !targetShape) throw new Error('该效果不需要指定对象');
@@ -647,12 +519,12 @@ export const ServerGameService = {
       throw new Error(`请选择 ${activeTargetShape.minSelections === activeTargetShape.maxSelections ? activeTargetShape.minSelections : `${activeTargetShape.minSelections}-${activeTargetShape.maxSelections}`} 个合法对象`);
     }
 
-    const legalIds = new Set(ServerGameService.getTargetCandidates(gameState, playerUid, sourceCard, effect, activeTargetShape, previousTargets, event).map(candidate => candidate.card.gamecardId));
+    const legalIds = new Set(ServerGameService.getTargetCandidates(gameState, playerUid, sourceCard, effect, activeTargetShape, previousTargets).map(candidate => candidate.card.gamecardId));
     const declaredTargets: DeclaredEffectTarget[] = [];
 
     for (const id of selections) {
       if (!legalIds.has(id)) throw new Error('选择的对象不合法');
-      const located = ServerGameService.getDeclaredTargetOption(gameState, playerUid, id);
+      const located = ServerGameService.findCardLocation(gameState, id);
       if (!located) throw new Error('选择的对象已不存在');
       const { card, ownerUid, zone } = located;
       if (card.nextEffectProtection) {
@@ -685,19 +557,17 @@ export const ServerGameService = {
         metadata: { effectIndex, modeId, step: activeTargetShape.step, effectDescription: effect.description, linkNumber },
         text: `[${sourceCard.fullName}]的[${effectLabel}]指定了${targetRef ? describeBattleLogTarget(targetRef) : `[${card.fullName}]`}。`
       });
-      if (zone !== 'PLAYER') {
-        card.declaredTargetMarkers = [
-          ...(card.declaredTargetMarkers || []).filter(marker => marker.sourceCardId !== sourceCard.gamecardId || marker.effectIndex !== effectIndex),
-          { sourceCardId: sourceCard.gamecardId, sourceCardName: sourceCard.fullName, effectIndex, modeId: declaredTarget.modeId, step: declaredTarget.step }
-        ];
-        EventEngine.dispatchEvent(gameState, {
-          type: 'CARD_SELECTED_TARGET',
-          sourceCard,
-          sourceCardId: sourceCard.gamecardId,
-          targetCardId: card.gamecardId,
-          playerUid
-        });
-      }
+      card.declaredTargetMarkers = [
+        ...(card.declaredTargetMarkers || []).filter(marker => marker.sourceCardId !== sourceCard.gamecardId || marker.effectIndex !== effectIndex),
+        { sourceCardId: sourceCard.gamecardId, sourceCardName: sourceCard.fullName, effectIndex, modeId: declaredTarget.modeId, step: declaredTarget.step }
+      ];
+      EventEngine.dispatchEvent(gameState, {
+        type: 'CARD_SELECTED_TARGET',
+        sourceCard,
+        sourceCardId: sourceCard.gamecardId,
+        targetCardId: card.gamecardId,
+        playerUid
+      });
     }
 
     EventEngine.recalculateContinuousEffects(gameState);
@@ -706,7 +576,6 @@ export const ServerGameService = {
 
   getValidDeclaredTargets(gameState: GameState, declaredTargets?: DeclaredEffectTarget[]) {
     return (declaredTargets || []).filter(target => {
-      if (target.zone === 'PLAYER') return true;
       const located = ServerGameService.findCardLocation(gameState, target.gamecardId);
       return !!located && located.ownerUid === target.ownerUid && located.zone === target.zone;
     });
@@ -784,22 +653,15 @@ export const ServerGameService = {
     declaredTargets?: DeclaredEffectTarget[],
     event?: GameEvent
   ) {
-    const modeOnlyDeclaredTargets = (declaredTargets || []).filter(target => String(target.gamecardId).startsWith('MODE:'));
-    const validDeclaredTargets = [
-      ...ServerGameService.getValidDeclaredTargets(gameState, declaredTargets),
-      ...modeOnlyDeclaredTargets.filter(target => target.zone !== 'PLAYER')
-    ];
+    const validDeclaredTargets = ServerGameService.getValidDeclaredTargets(gameState, declaredTargets);
     const requiresDeclaredTargets = ServerGameService.hasPreselectTargetSpec(effect) || !!declaredTargets?.some(target => target.capturedContext);
     if (requiresDeclaredTargets && validDeclaredTargets.length === 0) {
       gameState.logs.push(`[效果结算] [${sourceCard.fullName}] 指定对象已全部离开原位置，后续效果不处理。`);
       return false;
     }
 
-    const declaredSelectionIds = validDeclaredTargets
-      .filter(target => !String(target.gamecardId).startsWith('MODE:'))
-      .map(target => target.gamecardId);
-    const firstDeclaredTarget = validDeclaredTargets.find(target => !String(target.gamecardId).startsWith('MODE:')) || validDeclaredTargets[0];
-    const selectedModeId = validDeclaredTargets.find(target => target.modeId)?.modeId;
+    const declaredSelectionIds = validDeclaredTargets.map(target => target.gamecardId);
+    const firstDeclaredTarget = validDeclaredTargets[0];
     const captured = validDeclaredTargets.find(target => target.capturedContext)?.capturedContext;
     if (captured && effect.onQueryResolve) {
       await (effect.onQueryResolve as any)(sourceCard, gameState, owner, declaredSelectionIds, captured);
@@ -808,8 +670,8 @@ export const ServerGameService = {
     if (ServerGameService.hasPreselectTargetSpec(effect) && effect.onQueryResolve) {
       await (effect.onQueryResolve as any)(sourceCard, gameState, owner, declaredSelectionIds, {
         step: firstDeclaredTarget?.step,
-        modeId: selectedModeId,
-        selectedModeId,
+        modeId: firstDeclaredTarget?.modeId,
+        selectedModeId: firstDeclaredTarget?.modeId,
         declaredTargets: validDeclaredTargets
       });
       return true;
@@ -820,6 +682,7 @@ export const ServerGameService = {
     }
 
     if (effect.execute) {
+      const selectedModeId = validDeclaredTargets[0]?.modeId;
       await (effect.execute as any)(sourceCard, gameState, owner, event, declaredSelectionIds, { selectedModeId, declaredTargets: validDeclaredTargets });
     }
     return true;
@@ -3397,7 +3260,7 @@ export const ServerGameService = {
     }
     const isVirtualTrigger = effectIndex < 0;
     if (!liveSource) {
-      if (isVirtualTrigger || effect.sourceSnapshotOnLeftField === true || ['CARD_DESTROYED_BATTLE', 'CARD_DESTROYED_EFFECT'].includes(event?.type)) {
+      if (isVirtualTrigger) {
         liveSource = { card, ownerUid: playerUid, zone: card.cardlocation || 'PLAY' };
       }
     }
@@ -3416,28 +3279,12 @@ export const ServerGameService = {
       return;
     }
 
-    if (effect.isMandatory && ServerGameService.hasPreselectTargetSpec(effect) && !trigger.declaredTargets) {
-      const opened = ServerGameService.createDeclareTargetQuery(gameState, playerUid, card, effect, effectIndex, {
-        pendingAction: 'TRIGGER_EFFECT',
-        triggerRecord: trigger,
-        event,
-        sourceCardId: card.gamecardId
-      });
-      if (opened) {
-        ServerGameService.markBattleEndAfterPendingQuery(gameState, playerUid);
-        return;
-      }
-      await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
-      return;
-    }
-
-    if (effect.isMandatory || trigger.activationConfirmed) {
+    if (effect.isMandatory) {
       await ServerGameService.executeTriggeredEffect(gameState, playerUid, {
         effectIndex,
         card,
         effect,
-        event,
-        declaredTargets: trigger.declaredTargets
+        event
       }, onUpdate);
       return;
     }
@@ -3460,8 +3307,7 @@ export const ServerGameService = {
         effectDescription: effect.description,
         sourceCardId: card.gamecardId,
         sourceCardSnapshot: { ...card, effects: undefined },
-        event,
-        declaredTargets: trigger.declaredTargets
+        event
       }
     };
     ServerGameService.markBattleEndAfterPendingQuery(gameState, playerUid);
@@ -3661,19 +3507,6 @@ export const ServerGameService = {
         const effectIndex = query.context?.effectIndex;
         const effect = sourceCard.effects?.[effectIndex];
         if (!effect) throw new Error('指定对象失败：找不到效果');
-        if (query.context?.skipDeclareTargetSelection) {
-          const declaredTargets = (query.context?.declaredTargets || []) as DeclaredEffectTarget[];
-          if (query.context?.pendingAction === 'TRIGGER_EFFECT') {
-            const trigger = query.context.triggerRecord;
-            if (!trigger) throw new Error('指定对象失败：找不到诱发记录');
-            await ServerGameService.processSelectedTriggerRecord(gameState, {
-              ...trigger,
-              declaredTargets
-            }, onUpdate);
-            return gameState;
-          }
-          return gameState;
-        }
         const runtimeTargetSpec = query.context?.runtimeTargetSpec || query.context?.capturedContext
           ? {
               title: query.title,
@@ -3696,7 +3529,7 @@ export const ServerGameService = {
 
         const activationPlayerUid = query.context?.activationPlayerUid || playerUid;
         const previousDeclaredTargets = (query.context?.declaredTargets || []) as DeclaredEffectTarget[];
-      const newlyDeclaredTargets = ServerGameService.declareEffectTargets(
+        const newlyDeclaredTargets = ServerGameService.declareEffectTargets(
           gameState,
           activationPlayerUid,
           sourceCard,
@@ -3705,22 +3538,9 @@ export const ServerGameService = {
           currentSelections,
           targetShape,
           previousDeclaredTargets,
-          query.context?.modeId,
-          query.context?.event
+          query.context?.modeId
         );
-        const modeOnlySelectionTarget = query.context?.modeId && newlyDeclaredTargets.length === 0
-          ? [{
-              gamecardId: `MODE:${query.context.modeId}`,
-              ownerUid: activationPlayerUid,
-              zone: 'PLAYER' as TriggerLocation,
-              sourceCardId: sourceCard.gamecardId,
-              sourceCardName: sourceCard.fullName,
-              effectIndex,
-              modeId: query.context.modeId,
-              step: targetShape.step
-            }]
-          : [];
-        const declaredTargets = [...previousDeclaredTargets, ...modeOnlySelectionTarget, ...newlyDeclaredTargets];
+        const declaredTargets = [...previousDeclaredTargets, ...newlyDeclaredTargets];
         const nextGroupIndex = (query.context?.targetGroupIndex || 0) + 1;
         if (!query.context?.modeId && spec.targetGroups && nextGroupIndex < spec.targetGroups.length) {
           const opened = ServerGameService.createDeclareTargetQuery(gameState, activationPlayerUid, sourceCard, effect, effectIndex, {
@@ -3756,17 +3576,6 @@ export const ServerGameService = {
           return gameState;
         }
 
-        if (query.context?.pendingAction === 'TRIGGER_EFFECT') {
-          const trigger = query.context.triggerRecord;
-          if (!trigger) throw new Error('指定对象失败：找不到诱发记录');
-          await ServerGameService.processSelectedTriggerRecord(gameState, {
-            ...trigger,
-            declaredTargets
-          }, onUpdate);
-          await ServerGameService.finalizeBattleAfterPendingQuery(gameState, onUpdate);
-          return gameState;
-        }
-
         return gameState;
       } catch (err) {
         gameState.pendingQuery = query;
@@ -3780,16 +3589,14 @@ export const ServerGameService = {
       }
       const effectIndex = query.context?.effectIndex;
       const effectId = query.context?.effectId;
-      const runtimeTargetSpec = query.context?.runtimeTargetSpec;
       const effect = effectIndex !== undefined
         ? sourceCard.effects?.[effectIndex]
         : effectId
           ? sourceCard.effects?.find(e => e.id === effectId)
           : undefined;
-      const spec: any = effect?.targetSpec || runtimeTargetSpec;
-      if (!spec?.modeOptions) throw new Error('指定对象失败：找不到模式声明');
+      if (!effect?.targetSpec?.modeOptions) throw new Error('指定对象失败：找不到模式声明');
       const modeId = currentSelections[0];
-      const mode = spec.modeOptions.find(option => option.id === modeId);
+      const mode = effect.targetSpec.modeOptions.find(option => option.id === modeId);
       if (!mode) throw new Error('指定对象失败：选择的模式无效');
       const activationPlayerUid = query.context?.activationPlayerUid || playerUid;
       const opened = ServerGameService.createDeclareTargetQuery(gameState, activationPlayerUid, sourceCard, effect, effectIndex, {
@@ -4036,41 +3843,19 @@ export const ServerGameService = {
             ? sourceCard?.effects?.find(e => e.id === effectId)
             : undefined;
         const queuedEffect = query.context?.queuedEffect as CardEffect | undefined;
-        const effectToRun = effect || queuedEffect;
-        if (sourceCard && effectToRun && ServerGameService.hasPreselectTargetSpec(effectToRun) && !query.context?.declaredTargets) {
-          const opened = ServerGameService.createDeclareTargetQuery(gameState, playerUid, sourceCard, effectToRun, isSyntheticTrigger ? -1 : effectIndex, {
-            pendingAction: 'TRIGGER_EFFECT',
-            triggerRecord: {
-              card: sourceCard,
-              effect: effectToRun,
-              effectIndex: isSyntheticTrigger ? -1 : effectIndex,
-              playerUid,
-              event: query.context.event,
-              activationConfirmed: true
-            },
-            event: query.context.event,
-            sourceCardId: sourceCard.gamecardId
-          });
-          if (opened) {
-            ServerGameService.markBattleEndAfterPendingQuery(gameState, playerUid);
-            return gameState;
-          }
-          await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
-        } else if (sourceCard && effect) {
+        if (sourceCard && effect) {
           await ServerGameService.executeTriggeredEffect(gameState, playerUid, {
             effectIndex,
             card: sourceCard,
             effect,
-            event: query.context.event,
-            declaredTargets: query.context.declaredTargets
+            event: query.context.event
           }, onUpdate);
         } else if (sourceCard && queuedEffect) {
           await ServerGameService.executeTriggeredEffect(gameState, playerUid, {
             effectIndex: isSyntheticTrigger ? -1 : effectIndex,
             card: sourceCard,
             effect: queuedEffect,
-            event: query.context.event,
-            declaredTargets: query.context.declaredTargets
+            event: query.context.event
           }, onUpdate);
         } else if (isSyntheticTrigger && sourceCard) {
           const queuedLikeEffect: CardEffect = {
@@ -4084,8 +3869,7 @@ export const ServerGameService = {
             effectIndex: -1,
             card: sourceCard,
             effect: queuedLikeEffect,
-            event: query.context.event,
-            declaredTargets: query.context.declaredTargets
+            event: query.context.event
           }, onUpdate);
         } else {
           const fallbackCard = snapshot || sourceCard;
@@ -4359,8 +4143,7 @@ export const ServerGameService = {
           effect,
           effectIndex,
           event: query.context.event,
-          skipCost: true,
-          declaredTargets: query.context?.declaredTargets
+          skipCost: true
         }, onUpdate);
       } else if (effect) {
         ServerGameService.finalizeEffectActivation(gameState, activationPlayerUid, sourceCard, effect, effectIndex, query.context?.declaredTargets);
@@ -5867,18 +5650,6 @@ export const ServerGameService = {
       const preventSource = preventSourceCardId ? ServerGameService.findCardById(gameState, preventSourceCardId) : undefined;
       const sourceName = preventSource?.fullName || (player as any).preventOwnUnitsOpponentEffectDestroySourceName || '破坏防止';
       gameState.logs.push(`[${sourceName}] 防止了 [${unit.fullName}] 将要被对手的卡的效果破坏。`);
-      EventEngine.dispatchEvent(gameState, {
-        type: 'CARD_EFFECT_DESTROY_PREVENTED',
-        sourceCard: preventSource,
-        sourceCardId: preventSourceCardId,
-        targetCardId: gamecardId,
-        playerUid: playerId,
-        data: {
-          preventedCardId: gamecardId,
-          destroySourcePlayerId: sourcePlayerId,
-          destroySourceCardId: gameState.currentProcessingItem?.card?.gamecardId
-        }
-      });
       return false;
     }
 
@@ -6590,7 +6361,7 @@ export const ServerGameService = {
   async executeTriggeredEffect(
     gameState: GameState,
     playerUid: string,
-    trigger: { card: Card; effect: CardEffect; effectIndex: number; event?: any; skipCost?: boolean; declaredTargets?: DeclaredEffectTarget[] },
+    trigger: { card: Card; effect: CardEffect; effectIndex: number; event?: any; skipCost?: boolean },
     onUpdate?: (state: GameState) => Promise<void>
   ) {
     ServerGameService.hydrateVirtualTriggerRecord(trigger);
@@ -6601,9 +6372,6 @@ export const ServerGameService = {
       liveSource = ServerGameService.findCardLocation(gameState, event.data?.previousSourceCardId);
     }
     if (!liveSource && effectIndex < 0) {
-      liveSource = { card, ownerUid: playerUid, zone: card.cardlocation || 'PLAY' };
-    }
-    if (!liveSource && (effect.sourceSnapshotOnLeftField === true || ['CARD_DESTROYED_BATTLE', 'CARD_DESTROYED_EFFECT'].includes(event?.type))) {
       liveSource = { card, ownerUid: playerUid, zone: card.cardlocation || 'PLAY' };
     }
 
@@ -6640,8 +6408,7 @@ export const ServerGameService = {
           sourceCardId: liveCard.gamecardId,
           effectIndex: effectIndex,
           isTrigger: true, // IMPORTANT: mark as trigger to avoid countering after cost
-          event,
-          declaredTargets: trigger.declaredTargets
+          event
         };
         return;
       }
@@ -6688,11 +6455,12 @@ export const ServerGameService = {
     await ServerGameService.waitForVisualDelay(gameState, ServerGameService.getTriggerVisualDelayMs());
 
     // 4. Atomic Effects
-    if (trigger.declaredTargets?.length) {
-      await ServerGameService.executeWithDeclaredTargets(gameState, playerUid, liveCard, effect, gameState.players[playerUid], trigger.declaredTargets, event);
-    } else if (effect.atomicEffects) {
+    if (effect.atomicEffects) {
       await AtomicEffectExecutor.executeBatch(gameState, playerUid, effect.atomicEffects, liveCard, event);
-    } else if (effect.execute) {
+    }
+
+    // 5. Execute Legacy Callback
+    if (effect.execute) {
       await (effect.execute as any)(liveCard, gameState, gameState.players[playerUid], event);
     }
 
@@ -6715,7 +6483,6 @@ export const ServerGameService = {
         text: '诱发效果结算完成。',
         metadata: { effectIndex, effectId: effect.id }
       });
-      ServerGameService.clearDeclaredTargetMarkers(gameState, trigger.declaredTargets);
     }
 
     // 7. Cleanup highlight
@@ -6728,8 +6495,7 @@ export const ServerGameService = {
         card: liveCard,
         effect,
         effectIndex,
-        playerUid,
-        declaredTargets: trigger.declaredTargets
+        playerUid
       });
     }
 
@@ -8105,7 +7871,6 @@ export const ServerGameService = {
       const player = gameState.players[playerUid];
       const availableModes = spec.modeOptions.filter((mode: any) => {
         if (mode.condition && !mode.condition(gameState, player, sourceCard)) return false;
-        if (ServerGameService.isModeOnlyTargetShape(mode)) return true;
         return ServerGameService.getTargetCandidates(gameState, playerUid, sourceCard, effect, mode).length >= (mode.minSelections ?? 0);
       });
       if (availableModes.length === 0) return undefined;
@@ -8139,19 +7904,6 @@ export const ServerGameService = {
     for (let index = 0; index < targetShapes.length; index += 1) {
       const targetShape = targetShapes[index];
       const candidates = ServerGameService.getTargetCandidates(gameState, playerUid, sourceCard, effect, targetShape, declaredTargets);
-      if (ServerGameService.isModeOnlyTargetShape(targetShape)) {
-        declaredTargets = [...declaredTargets, {
-          gamecardId: `MODE:${modeId || targetShape.id}`,
-          ownerUid: playerUid,
-          zone: 'PLAYER' as TriggerLocation,
-          sourceCardId: sourceCard.gamecardId,
-          sourceCardName: sourceCard.fullName,
-          effectIndex,
-          modeId: modeId || targetShape.id,
-          step: targetShape.step
-        }];
-        continue;
-      }
       if (candidates.length < (targetShape.minSelections ?? 0)) {
         ServerGameService.clearDeclaredTargetMarkers(gameState, declaredTargets);
         return undefined;
@@ -8197,8 +7949,7 @@ export const ServerGameService = {
         selections,
         targetShape,
         declaredTargets,
-        modeId,
-        undefined
+        modeId
       );
       declaredTargets = [...declaredTargets, ...newlyDeclaredTargets];
     }

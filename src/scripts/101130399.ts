@@ -38,17 +38,6 @@ const cardEffects: CardEffect[] = [{
       () => 'UNIT'
     );
   },
-  targetSpec: {
-    title: '选择重置单位',
-    description: '选择《暮城巡逻队》以外的你战场上的1个<圣王国>非神蚀单位，将其重置。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['UNIT'],
-    controller: 'SELF',
-    getCandidates: (_gameState, playerState, instance) =>
-      readyTargets(playerState, instance)
-        .map(card => ({ card, source: 'UNIT' as any }))
-  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = readyTargets(playerState, instance).find(unit => unit.gamecardId === selections[0]);
     if (target) readyByEffect(gameState, target, instance);

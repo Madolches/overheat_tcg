@@ -27,18 +27,6 @@ const cardEffects: CardEffect[] = [{
       () => 'GRAVE'
     );
   },
-  targetSpec: {
-    title: '选择菲晶卡',
-    description: '选择你墓地中的1张具有【菲晶】的卡加入手牌。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['GRAVE'],
-    controller: 'SELF',
-    getCandidates: (_gameState, playerState) =>
-      playerState.grave
-        .filter(isFeijingCard)
-        .map((card: Card) => ({ card, source: 'GRAVE' as any }))
-  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const selected = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (selected?.cardlocation === 'GRAVE') moveCard(gameState, playerState.uid, selected, 'HAND', instance);
