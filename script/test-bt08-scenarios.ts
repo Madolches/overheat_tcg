@@ -2281,7 +2281,6 @@ async function testYellowPuppetDesignerBlueprintAndDominic(): Promise<ScenarioRe
     stateA.players.BOT.deck[stateA.players.BOT.deck.length - 1].gamecardId === topA.gamecardId;
   stateA.phase = 'MAIN';
   await activateAndResolveByOpponentPass(stateA, 'BOT', designer, 1);
-  await answerPendingQuery(stateA, 'BOT', [bottomHand.gamecardId]);
   const drew = stateA.players.BOT.hand.some((card: Card) => card.gamecardId === topB.gamecardId) &&
     stateA.players.BOT.hand.some((card: Card) => card.gamecardId === topA.gamecardId) &&
     stateA.players.BOT.deck[0].gamecardId === bottomHand.gamecardId;

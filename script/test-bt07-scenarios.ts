@@ -70,7 +70,6 @@ import bt08G05 from '../src/scripts/103000419';
 import bt03R03 from '../src/scripts/102060192';
 import bt03R04 from '../src/scripts/102060193';
 import bt03R07 from '../src/scripts/102060196';
-import rafa from '../src/scripts/102060244';
 import {
   addContinuousPower,
   awakenUnit,
@@ -246,7 +245,7 @@ function optionIdByValue(state: any, value: string): string {
 }
 
 async function testPrepWorkerDestroysAfterShingiCostExile(): Promise<ScenarioResult> {
-  const name = 'BT07-W01 prep worker destroys AC2 non-god after Shingi cost exile';
+  const name = 'BT07-W01 prep worker destroys selected non-god after paying AC+2';
   const worker = cloneScriptCard(bt07W01 as Card, 'UNIT');
   const shingi = testCard({ id: 'SHINGI_STORY', fullName: '神仪：测试', type: 'STORY', cardlocation: 'PLAY' });
   const target = testCard({ id: 'AC2_TARGET', fullName: 'AC2 Target', acValue: 2, cardlocation: 'UNIT' });
@@ -265,15 +264,20 @@ async function testPrepWorkerDestroysAfterShingiCostExile(): Promise<ScenarioRes
     return fail(name, `expected destroy query, got ${state.pendingQuery?.context?.effectId || 'none'}`);
   }
   const optionIds = (state.pendingQuery.options || []).map((option: any) => option.card.gamecardId);
-  if (!optionIds.includes(target.gamecardId) || optionIds.includes(high.gamecardId)) {
+  if (!optionIds.includes(target.gamecardId) || !optionIds.includes(high.gamecardId)) {
     return fail(name, `options=${optionIds.join(',')}`);
   }
   await answerPendingQuery(state, 'BOT', [target.gamecardId]);
+  if (state.pendingQuery?.type !== 'SELECT_PAYMENT' || state.pendingQuery.paymentCost !== 4) {
+    return fail(name, `expected AC+2 payment cost 4, got ${state.pendingQuery?.type || 'none'} cost=${state.pendingQuery?.paymentCost}`);
+  }
+  await answerPendingQuery(state, 'BOT', [JSON.stringify({})]);
 
   const destroyed = state.players.P1.grave.some((card: Card) => card.gamecardId === target.gamecardId);
-  return destroyed
-    ? pass(name, `destroyed=${destroyed}, options=${optionIds.length}`)
-    : fail(name, `grave=${state.players.P1.grave.map((card: Card) => card.fullName).join(',')}`);
+  const paidFour = state.players.BOT.erosionFront.filter((card: Card | null) => !!card).length === 4;
+  return destroyed && paidFour
+    ? pass(name, `destroyed=${destroyed}, paid=4, options=${optionIds.length}`)
+    : fail(name, `destroyed=${destroyed}, erosion=${state.players.BOT.erosionFront.length}, grave=${state.players.P1.grave.map((card: Card) => card.fullName).join(',')}`);
 }
 
 function testTwilightGuardProtectsAlliance(): ScenarioResult {
@@ -1121,9 +1125,11 @@ async function testBlueElenaReplacesDeckSearchAndTriggers(): Promise<ScenarioRes
 async function testBlueMahoragaMeditationAndTenkoOrder(): Promise<ScenarioResult> {
   const name = 'BT07-B06/B07/B08 Mahoraga Meditation and Tenko Order resolve';
   const mahoraga = cloneScriptCard(bt07B06 as Card, 'UNIT');
+  const paymentUnit = testCard({ id: 'B06_PAYMENT', fullName: 'B06 Payment', cardlocation: 'UNIT' });
   const nonGodTarget = testCard({ id: 'B06_TARGET', fullName: 'Non God Target', type: 'ITEM', godMark: false, cardlocation: 'ITEM' });
   const state = game({
-    unitZone: [mahoraga, null, null, null, null, null],
+    unitZone: [mahoraga, paymentUnit, null, null, null, null],
+    erosionFront: deckCards(8, 'B06_GODDESS_FRONT').map(card => ({ ...card, cardlocation: 'EROSION_FRONT' })),
     erosionBack: [testCard({ id: 'B06_BACK_0', cardlocation: 'EROSION_BACK' }), testCard({ id: 'B06_BACK_1', cardlocation: 'EROSION_BACK' })],
     isGoddessMode: true,
   }, {
@@ -1132,6 +1138,12 @@ async function testBlueMahoragaMeditationAndTenkoOrder(): Promise<ScenarioResult
   (state.players.BOT as any).drawnByEffectTurn = state.turnCount;
   const destroyIndex = mahoraga.effects?.findIndex(effect => effect.id === '104000309_draw_effect_destroy') ?? -1;
   await ServerGameService.activateEffect(state, 'BOT', mahoraga.gamecardId, destroyIndex);
+  if (state.pendingQuery?.context?.effectId === '104000309_draw_effect_destroy') {
+    await answerPendingQuery(state, 'BOT', [nonGodTarget.gamecardId]);
+  }
+  if (state.pendingQuery?.type === 'SELECT_PAYMENT') {
+    await answerPendingQuery(state, 'BOT', [JSON.stringify({ exhaustUnitIds: [mahoraga.gamecardId, paymentUnit.gamecardId] })]);
+  }
   await ServerGameService.passConfrontation(state, state.priorityPlayerId);
   if (state.pendingQuery?.context?.effectId === '104000309_draw_effect_destroy') {
     await answerPendingQuery(state, 'BOT', [nonGodTarget.gamecardId]);
@@ -1150,10 +1162,10 @@ async function testBlueMahoragaMeditationAndTenkoOrder(): Promise<ScenarioResult
   const ohSource = ohState.players.BOT.unitZone[0] as Card;
   const ohIndex = ohSource.effects?.findIndex(effect => effect.id === '104000309_oh_exhaust_mill') ?? -1;
   await ServerGameService.activateEffect(ohState, 'BOT', ohSource.gamecardId, ohIndex);
-  await ServerGameService.passConfrontation(ohState, ohState.priorityPlayerId);
   if (ohState.pendingQuery?.context?.effectId === '104000309_oh_exhaust_mill') {
     await answerPendingQuery(ohState, 'BOT', [ohTarget.gamecardId]);
   }
+  await ServerGameService.passConfrontation(ohState, ohState.priorityPlayerId);
   const ohResolved = ohTarget.isExhausted &&
     ohState.players.P1.deck.length === 2 &&
     ohState.players.P1.grave.length === 2 &&
@@ -1871,13 +1883,11 @@ async function testRedBatBladeItemAndTamiThresholds(): Promise<ScenarioResult> {
   const itemDrew = bladeState.players.BOT.hand.length === 1;
   const bladeCounted = totalUnitsSentFromFieldToGraveThisTurn(bladeState) >= 1;
 
-  const rafaUnit = cloneScriptCard(rafa as Card, 'UNIT');
   const tami = cloneScriptCard(bt07R11 as Card, 'UNIT');
-  const rafa = cloneScriptCard(bt05R07 as Card, 'UNIT');
+  const rafaUnit = cloneScriptCard(bt05R07 as Card, 'UNIT');
   const ally = testCard({ id: 'R11_ALLY', fullName: 'Tami Ally', color: 'RED', cardlocation: 'UNIT', power: 1000, basePower: 1000 });
   const tamiTarget = testCard({ id: 'R11_TARGET', fullName: 'Tami Target', cardlocation: 'UNIT' });
   const tamiState = game({
-    unitZone: [tami, rafa, ally, null, null, null],
     unitZone: [tami, ally, rafaUnit, null, null, null],
   }, {
     unitZone: [tamiTarget, null, null, null, null, null],
@@ -1886,10 +1896,7 @@ async function testRedBatBladeItemAndTamiThresholds(): Promise<ScenarioResult> {
   EventEngine.recalculateContinuousEffects(tamiState);
   const tamiThresholds =
     tami.power === 4500 &&
-    rafa.power === 4500 &&
-    ally.power === 2500 &&
     rafaUnit.power === 4500 &&
-    tami.power === 4500 &&
     ally.power === 2500 &&
     !!tami.isrush &&
     !!tami.isHeroic &&
@@ -2006,6 +2013,8 @@ async function testNormalBattleDestroyDoesNotCountAsInterruptedBattle(): Promise
   return defenderDestroyed && returnedMain && exhaustedAttacker && noInterruptedLog
     ? pass(name, `destroyed=${defenderDestroyed}, phase=${state.phase}, exhausted=${exhaustedAttacker}`)
     : fail(name, `destroyed=${defenderDestroyed}, phase=${state.phase}, battle=${!!state.battleState}, exhausted=${exhaustedAttacker}, interruptedLog=${!noInterruptedLog}`);
+}
+
 function testThunderHighPowerRushThresholds(): ScenarioResult {
   const name = 'BT03-R04/BT07-R04 thunder rush thresholds';
   const flyer = cloneScriptCard(bt03R04 as Card, 'UNIT');
@@ -2287,6 +2296,9 @@ async function testYellowGuardRawStoneAndStories(): Promise<ScenarioResult> {
     effectSourceCardId: reviveSource.gamecardId,
   });
   await confirmTrigger(guardState, 'BOT');
+  if (guardState.pendingQuery?.type === 'SELECT_PAYMENT') {
+    await answerPendingQuery(guardState, 'BOT', [JSON.stringify({})]);
+  }
   if (guardState.pendingQuery?.context?.effectId === '105110382_opponent_grave_entry_recruit') {
     await answerPendingQuery(guardState, 'BOT', [recruit.gamecardId]);
   }

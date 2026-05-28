@@ -3840,6 +3840,53 @@ export const ServerGameService = {
       const mode = spec.modeOptions.find(option => option.id === modeId);
       if (!mode) throw new Error('指定对象失败：选择的模式无效');
       const activationPlayerUid = query.context?.activationPlayerUid || playerUid;
+      if (ServerGameService.isModeOnlyTargetShape(mode)) {
+        const declaredTargets = [
+          ...((query.context?.declaredTargets || []) as DeclaredEffectTarget[]),
+          {
+            gamecardId: `MODE:${modeId}`,
+            ownerUid: activationPlayerUid,
+            zone: 'PLAYER' as TriggerLocation,
+            sourceCardId: sourceCard.gamecardId,
+            sourceCardName: sourceCard.fullName,
+            effectIndex,
+            modeId,
+            step: mode.step
+          }
+        ];
+        if (query.context?.pendingAction === 'PLAY_CARD') {
+          await ServerGameService.playCard(
+            gameState,
+            activationPlayerUid,
+            query.context.cardId,
+            query.context.paymentSelection || {},
+            declaredTargets,
+            { resumeFromQuery: true, paymentSelectionResolved: !!query.context?.paymentSelectionResolved }
+          );
+          return gameState;
+        }
+        if (query.context?.pendingAction === 'ACTIVATE_EFFECT') {
+          await ServerGameService.activateEffect(
+            gameState,
+            activationPlayerUid,
+            query.context.cardId,
+            effectIndex,
+            declaredTargets,
+            { resumeFromQuery: true }
+          );
+          return gameState;
+        }
+        if (query.context?.pendingAction === 'TRIGGER_EFFECT') {
+          const trigger = query.context.triggerRecord;
+          if (!trigger) throw new Error('指定对象失败：找不到诱发记录');
+          await ServerGameService.processSelectedTriggerRecord(gameState, {
+            ...trigger,
+            declaredTargets
+          }, onUpdate);
+          await ServerGameService.finalizeBattleAfterPendingQuery(gameState, onUpdate);
+          return gameState;
+        }
+      }
       const opened = ServerGameService.createDeclareTargetQuery(gameState, activationPlayerUid, sourceCard, effect, effectIndex, {
         ...query.context,
         modeId,
@@ -3980,6 +4027,7 @@ export const ServerGameService = {
         maxSelections: 1,
         callbackKey: 'DIKAI_BATTLE_SAVE_PAYMENT',
         paymentCost: 3,
+        paymentColor: 'RED',
         context: { cardId, targetUnitId, isEffect, sourcePlayerId }
       };
       return gameState;

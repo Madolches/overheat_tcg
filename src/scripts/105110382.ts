@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { backErosionCount, canPutUnitOntoBattlefield, createSelectCardQuery, putUnitOntoField } from './BaseUtil';
+import { backErosionCount, canPayAccessCost, canPutUnitOntoBattlefield, createSelectCardQuery, paymentCost, putUnitOntoField } from './BaseUtil';
 
 const recruitCandidates = (playerState: any) =>
   playerState.deck.filter((card: Card) =>
@@ -30,11 +30,13 @@ const cardEffects: CardEffect[] = [{
   limitCount: 1,
   erosionBackLimit: [1, 99],
   description: '1回合1次：对手通过卡的能力将墓地的单位卡放置到战场上时，创痕1，从卡组放置1张这张卡以外的ACCESS3以下黄色非神蚀单位。',
-  condition: (_gameState, playerState, instance, event) =>
+  condition: (gameState, playerState, instance, event) =>
     instance.cardlocation === 'UNIT' &&
     backErosionCount(playerState) >= 1 &&
     opponentPutUnitFromGraveByEffect(playerState.uid, event) &&
-    recruitCandidates(playerState).length > 0,
+    recruitCandidates(playerState).length > 0 &&
+    canPayAccessCost(gameState, playerState, 1, instance.color, instance),
+  cost: paymentCost(1),
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,
