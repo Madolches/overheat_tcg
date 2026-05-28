@@ -1734,9 +1734,14 @@ async function testRedBatsBetisAndGiantBat(): Promise<ScenarioResult> {
   }, {
     unitZone: [enemy, null, null, null, null, null],
   });
-  await activateAndResolveByOpponentPass(betisState, 'BOT', betis, 2);
-  if (betisState.pendingQuery?.context?.effectId === '102070358_shingi_turn_destroy') {
+  const betisFactionFixed = betis.faction === '忒碧拉之门';
+  await ServerGameService.activateEffect(betisState, 'BOT', betis.gamecardId, 2);
+  const betisTargetPreselected = betisState.pendingQuery?.callbackKey === 'DECLARE_EFFECT_TARGETS';
+  if (betisTargetPreselected) {
     await answerPendingQuery(betisState, 'BOT', [enemy.gamecardId]);
+  }
+  if (betisState.phase === 'COUNTERING') {
+    await ServerGameService.passConfrontation(betisState, betisState.priorityPlayerId);
   }
   const newBat = cloneScriptCard(bt06R04 as Card, 'DECK');
   betisState.players.BOT.deck.push(newBat);
@@ -1752,11 +1757,14 @@ async function testRedBatsBetisAndGiantBat(): Promise<ScenarioResult> {
     placedByShingiEffectSourceName: '神仪：测试'
   };
   const giant = cloneScriptCard(bt06R06 as Card, 'HAND');
+  const giantFactionFixed = giant.faction === '忒碧拉之门';
   const giantBat = cloneScriptCard(bt06R04 as Card, 'DECK');
   const giantState = game({
     hand: [giant],
     deck: [giantBat, ...deckCards(3, 'R06_FILL', 'RED')],
     unitZone: [giantBetis, null, null, null, null, null],
+  }, {}, {
+    turnCount: 7,
   });
   await activateAndResolveByOpponentPass(giantState, 'BOT', giant, 1);
   if (giantState.pendingQuery?.context?.step === 'COST_BETIS') {
@@ -1769,9 +1777,21 @@ async function testRedBatsBetisAndGiantBat(): Promise<ScenarioResult> {
     giantState.players.BOT.unitZone.some((unit: Card | null) => unit?.id === bt06R06.id) &&
     giantState.players.BOT.unitZone.some((unit: Card | null) => unit?.id === bt06R04.id);
 
-  return batsPlaced && recovered && betisResolved && giantResolved
-    ? pass(name, `bats=${batsPlaced}, recovered=${recovered}, betis=${betisResolved}, giant=${giantResolved}`)
-    : fail(name, `bats=${batsPlaced}, recovered=${recovered}, betis=${betisResolved}, giant=${giantResolved}`);
+  const illegalGiant = cloneScriptCard(bt06R06 as Card, 'HAND');
+  const illegalState = game({ hand: [illegalGiant] });
+  const illegalPutBlocked = !ServerGameService.moveCard(
+    illegalState,
+    'BOT',
+    'HAND',
+    'BOT',
+    'UNIT',
+    illegalGiant.gamecardId,
+    { isEffect: true, effectSourcePlayerUid: 'BOT', effectSourceCardId: betis.gamecardId }
+  );
+
+  return batsPlaced && recovered && betisFactionFixed && giantFactionFixed && betisTargetPreselected && betisResolved && giantResolved && illegalPutBlocked
+    ? pass(name, `bats=${batsPlaced}, recovered=${recovered}, betis=${betisResolved}/${betisTargetPreselected}/${betisFactionFixed}, giant=${giantResolved}/${illegalPutBlocked}/${giantFactionFixed}`)
+    : fail(name, `bats=${batsPlaced}, recovered=${recovered}, betis=${betisResolved}/${betisTargetPreselected}/${betisFactionFixed}, giant=${giantResolved}/${illegalPutBlocked}/${giantFactionFixed}`);
 }
 
 async function testRedTrainerLockAndCelia(): Promise<ScenarioResult> {

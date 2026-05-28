@@ -7,7 +7,7 @@ const cardEffects: CardEffect[] = [{
   triggerLocation: ['UNIT'],
   description: '你的回合中，由于这张卡的诱发能力进入战场的这个单位伤害+1、力量+2000并获得【速攻】【歼灭】。',
   applyContinuous: (gameState, instance) => {
-    if (ensureData(instance).enteredBySelfGoddessTriggerTurn !== gameState.turnCount) return;
+    if (!ensureData(instance).enteredBySelfGoddessTrigger) return;
     const owner = Object.values(gameState.players).find(player => player.unitZone.some(unit => unit?.gamecardId === instance.gamecardId));
     if (!owner?.isTurn) return;
     addContinuousDamage(instance, instance, 1);
@@ -30,6 +30,7 @@ const cardEffects: CardEffect[] = [{
   execute: async (instance, gameState, playerState) => {
     if (!putUnitOntoField(gameState, playerState.uid, instance, instance)) return;
     ensureData(instance).enteredBySelfGoddessTriggerTurn = gameState.turnCount;
+    ensureData(instance).enteredBySelfGoddessTrigger = true;
     addContinuousDamage(instance, instance, 1);
     addContinuousPower(instance, instance, 2000);
     addContinuousKeyword(instance, instance, 'rush');

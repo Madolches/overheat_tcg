@@ -11,9 +11,15 @@ import {
 const enteredByBlueprintOrOwnEffect = (gameState: any, instance: Card) => {
   const data = (instance as any).data || {};
   const source = AtomicEffectExecutor.findCardById(gameState, data.lastMoveEffectSourceCardId);
-  return data.placedByBlueprintEffectTurn === gameState.turnCount ||
-    data.placedByOwnRevealEffectTurn === gameState.turnCount ||
-    !!source && nameContains(source, '蓝图');
+  return !!data.placedByBlueprintSourceCardId ||
+    !!data.placedByOwnRevealEffect ||
+    (
+      data.placedByBlueprintEffectTurn !== undefined &&
+      data.lastMovedByEffectTurn === data.placedByBlueprintEffectTurn &&
+      data.lastMovedToZone === 'UNIT' &&
+      !!source &&
+      nameContains(source, '蓝图')
+    );
 };
 
 const revealedFromDeckTop = (instance: Card, event: any) =>
@@ -47,7 +53,8 @@ const cardEffects: CardEffect[] = [{
     if (moved) {
       (moved as any).data = {
         ...((moved as any).data || {}),
-        placedByOwnRevealEffectTurn: gameState.turnCount
+        placedByOwnRevealEffectTurn: gameState.turnCount,
+        placedByOwnRevealEffect: true
       };
     }
   }

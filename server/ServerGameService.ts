@@ -2,7 +2,7 @@ import { GameState, PlayerState, Card, Deck, TriggerLocation, CardEffect, StackI
 import { EventEngine } from '../src/services/EventEngine';
 import { AtomicEffectExecutor } from '../src/services/AtomicEffectExecutor';
 import { clearBattlefieldState, shouldClearBattlefieldStateOnMove } from '../src/lib/cardState';
-import { satisfiesHighAlchemyEntryRestriction } from '../src/lib/highAlchemy';
+import { getEntryRestrictionReason, satisfiesHighAlchemyEntryRestriction } from '../src/lib/highAlchemy';
 import { getCardIdentity } from '../src/lib/utils';
 import { addBattleLog, addCardAddedToHandBattleLog, cardToBattleLogRef, describeBattleLogTarget } from '../src/lib/battleLog';
 import { SERVER_CARD_LIBRARY } from './card_loader';
@@ -1523,6 +1523,7 @@ export const ServerGameService = {
       suppressLog?: boolean;
       highAlchemyMaterialColors?: string[];
       highAlchemyMaterialCount?: number;
+      onlySelfActivateSourceCardId?: string;
     }
   ): boolean {
     const sourcePlayer = gameState.players[sourcePlayerId];
@@ -1554,7 +1555,7 @@ export const ServerGameService = {
         card.type === 'UNIT' &&
         !satisfiesHighAlchemyEntryRestriction(card, options)
       ) {
-        gameState.logs.push(`[系统] [${card.fullName}] 只能通过满足素材颜色与数量的《高位炼金》效果进入战场。`);
+        gameState.logs.push(`[系统] [${card.fullName}] ${getEntryRestrictionReason(card) || '不能通过当前方式进入战场'}。`);
         return false;
       }
       if (options?.isEffect && options.effectSourceCardId) {
@@ -1936,7 +1937,7 @@ export const ServerGameService = {
         return { canPlay: false, reason: '单位区已有同名专用卡' };
       }
       if (!satisfiesHighAlchemyEntryRestriction(card)) {
-        return { canPlay: false, reason: '这张卡只能通过满足素材颜色与数量的《高位炼金》效果进入战场' };
+        return { canPlay: false, reason: getEntryRestrictionReason(card) || '这张卡不能通过当前方式进入战场' };
       }
     } else if (card.type === 'ITEM') {
       if (card.specialName && player.itemZone.some(c => c?.specialName === card.specialName)) {
@@ -4130,6 +4131,10 @@ export const ServerGameService = {
           event: query.context?.event
         };
         return gameState;
+      }
+
+      if (typeof (effect as any).onCostResolve === 'function') {
+        await (effect as any).onCostResolve(sourceCard, gameState, gameState.players[activationPlayerUid], currentSelections, query.context);
       }
 
       if (query.context?.cancelActivation) {

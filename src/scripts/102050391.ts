@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { executePromotionAfterOptionalDiscard, hasPromotionTarget, markCanAttackAnyUnit, wasPlacedByPromotionThisTurn } from './BaseUtil';
+import { executePromotionAfterOptionalDiscard, hasPromotionTarget, markCanAttackAnyUnit, wasPlacedByPromotion } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
   id: '102050391_promotion_attack_units',
@@ -8,7 +8,7 @@ const cardEffects: CardEffect[] = [{
   triggerLocation: ['UNIT'],
   description: '由于晋升进入战场的这个单位可以攻击对手的单位。',
   applyContinuous: (gameState, instance) => {
-    if (wasPlacedByPromotionThisTurn(gameState, instance)) markCanAttackAnyUnit(instance, instance);
+    if (wasPlacedByPromotion(instance)) markCanAttackAnyUnit(instance, instance);
   }
 }, {
   id: '102050391_end_draw_promotion_after_attack',

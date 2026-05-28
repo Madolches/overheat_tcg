@@ -952,6 +952,12 @@ async function testRedAttackUnitGrants(): Promise<ScenarioResult> {
   EventEngine.recalculateContinuousEffects(stateA);
   const hundredCan = !!(hundred as any).data?.canAttackAnyUnit;
   const allyCan = !!(ally as any).data?.canAttackAnyUnit;
+  (hundred as any).data = { ...((hundred as any).data || {}), canAttackAnyUnit: false };
+  (ally as any).data = { ...((ally as any).data || {}), canAttackAnyUnit: false };
+  stateA.turnCount = 7;
+  EventEngine.recalculateContinuousEffects(stateA);
+  const hundredCanNextTurn = !!(hundred as any).data?.canAttackAnyUnit;
+  const allyCanNextTurn = !!(ally as any).data?.canAttackAnyUnit;
 
   const handCrimson = cloneScriptCard(bt08R06 as Card, 'HAND');
   const discard = testCard({ id: 'R06_RED_HAND', fullName: 'R06 Red Hand', color: 'RED', cardlocation: 'HAND' });
@@ -965,9 +971,9 @@ async function testRedAttackUnitGrants(): Promise<ScenarioResult> {
   await answerPendingQuery(stateB, 'BOT', [discard.gamecardId]);
   const handGranted = !!(target as any).data?.canAttackAnyUnit && (target as any).data?.canAttackAnyUnitUntilTurn === stateB.turnCount;
 
-  return hundredCan && allyCan && handGranted
-    ? pass(name, `hundred=${hundredCan}, ally=${allyCan}, handGranted=${handGranted}`)
-    : fail(name, `hundred=${hundredCan}, ally=${allyCan}, handGranted=${handGranted}`);
+  return hundredCan && hundredCanNextTurn && allyCan && allyCanNextTurn && handGranted
+    ? pass(name, `hundred=${hundredCan}/${hundredCanNextTurn}, ally=${allyCan}/${allyCanNextTurn}, handGranted=${handGranted}`)
+    : fail(name, `hundred=${hundredCan}/${hundredCanNextTurn}, ally=${allyCan}/${allyCanNextTurn}, handGranted=${handGranted}`);
 }
 
 async function testSoulDevourPowerAndDraw(): Promise<ScenarioResult> {

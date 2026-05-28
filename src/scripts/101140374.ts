@@ -1,10 +1,18 @@
 import { Card, CardEffect } from '../types/game';
-import { allCardsOnField, createSelectCardQuery, destroyByEffect } from './BaseUtil';
+import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import { allCardsOnField, createSelectCardQuery, destroyByEffect, paymentCost } from './BaseUtil';
+
+const SHINGI_KEYWORDS = ['\u795e\u4eea', '\u7ec1\u70b0\u534e'];
 
 const isShingiStory = (card?: Card) =>
   !!card &&
   card.type === 'STORY' &&
-  card.fullName.includes('神仪');
+  [card.fullName, card.specialName || ''].some(name =>
+    SHINGI_KEYWORDS.some(keyword => name.includes(keyword))
+  );
+
+const nonGodUnitTargets = (gameState: any) =>
+  allCardsOnField(gameState).filter(card => card.type === 'UNIT' && !card.godMark);
 
 const cardEffects: CardEffect[] = [{
   id: '101140374_shingi_cost_destroy',
@@ -14,30 +22,28 @@ const cardEffects: CardEffect[] = [{
   triggerLocation: ['EXILE'],
   limitCount: 1,
   limitNameType: true,
-  description: '同名1回合1次：这个单位由于卡名含有《神仪》的故事卡费用被放逐时，选择战场1张非神蚀卡；若该卡ACCESS值+2以下，可以破坏。',
+  description: '同名1回合1次：这个单位由于卡名含有《神仪》的故事卡的费用而被放逐时，选择战场上1个非神蚀单位，支付2费，可以将被选择的卡破坏。',
   condition: (gameState, _playerState, instance, event) => {
-    if (event?.sourceCardId !== instance.gamecardId || instance.cardlocation !== 'EXILE') return false;
+    const liveInstance = AtomicEffectExecutor.findCardById(gameState, instance.gamecardId) || instance;
+    if (event?.sourceCardId !== instance.gamecardId || liveInstance.cardlocation !== 'EXILE') return false;
+    if ((instance as any).data?.lastMovedAsCostTurn !== gameState.turnCount) return false;
     const sourceCardId = event.data?.effectSourceCardId || (instance as any).data?.lastMovedAsCostSourceCardId;
-    const source = sourceCardId
-      ? allCardsOnField(gameState).find(card => card.gamecardId === sourceCardId) ||
-        Object.values(gameState.players)
-          .flatMap(player => [...player.hand, ...player.deck, ...player.grave, ...player.exile, ...player.playZone])
-          .find(card => card?.gamecardId === sourceCardId)
-      : undefined;
+    const source = sourceCardId ? AtomicEffectExecutor.findCardById(gameState, sourceCardId) : undefined;
     return event.data?.sourceZone === 'UNIT' &&
       event.data?.targetZone === 'EXILE' &&
       event.data?.isEffect === false &&
       isShingiStory(source) &&
-      allCardsOnField(gameState).some(card => !card.godMark && (card.acValue || 0) <= 2);
+      nonGodUnitTargets(gameState).length > 0;
   },
+  cost: paymentCost(2),
   execute: async (instance, gameState, playerState) => {
-    const candidates = allCardsOnField(gameState).filter(card => !card.godMark && (card.acValue || 0) <= 2);
+    const candidates = nonGodUnitTargets(gameState);
     createSelectCardQuery(
       gameState,
       playerState.uid,
       candidates,
       '选择破坏目标',
-      '选择战场上1张ACCESS值+2以下的非神蚀卡，将其破坏。',
+      '选择战场上1个非神蚀单位，将其破坏。',
       0,
       1,
       { sourceCardId: instance.gamecardId, effectId: '101140374_shingi_cost_destroy' },
@@ -46,7 +52,7 @@ const cardEffects: CardEffect[] = [{
   },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0]
-      ? allCardsOnField(gameState).find(card => card.gamecardId === selections[0] && !card.godMark && (card.acValue || 0) <= 2)
+      ? nonGodUnitTargets(gameState).find(card => card.gamecardId === selections[0])
       : undefined;
     if (target) destroyByEffect(gameState, target, instance);
   }
