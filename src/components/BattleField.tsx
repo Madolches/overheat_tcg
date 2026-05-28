@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 
-import { GameState, PlayerState, Card, StackItem, CardEffect, TriggerLocation, GAME_TIMEOUTS } from '../types/game';
+import { GameState, PlayerState, Card, CardEffect, TriggerLocation, GAME_TIMEOUTS } from '../types/game';
 import { socket, getAuthUser, onceAuthenticated, isSocketAuthenticated } from '../socket';
 
 import { GameService } from '../services/gameService';
@@ -14,11 +14,13 @@ import { PlayField } from './PlayField';
 import { Rulebook } from './Rulebook';
 import { motion, AnimatePresence } from 'motion/react';
 import { StandardPopup } from './StandardPopup';
-import { Flag, Trophy, Frown, Home, Sword, Shield, Zap, LogOut, BookOpen, Send, Loader2, Trash2, X, Play, Search, ChevronRight, ShieldCheck, Layers, Sparkles, Flame, AlertTriangle, PackagePlus, Scissors, Circle, FileText } from 'lucide-react';
+import { Flag, Trophy, Frown, Home, Sword, Shield, Zap, LogOut, BookOpen, Loader2, Trash2, X, Play, Search, ChevronRight, ShieldCheck, Layers, Sparkles, Flame, AlertTriangle, PackagePlus, Scissors, Circle, FileText } from 'lucide-react';
 import { cn, getCardColorHanzi, getCardColorLabel, getCardImageUrl, getCardIdentity, getCardTypeLabel, getEffectiveCardColors, getLocationLabel, getPhaseLabel } from '../lib/utils';
 import { KeywordBadges } from './KeywordBadges';
 import { BattleLogPanel } from './BattleLogPanel';
 import { battleLogText } from '../lib/battleLog';
+import { BattleAnimationLayer } from './BattleAnimationLayer';
+import { useBattleAnimationPreference, useBattleAnimations } from '../hooks/useBattleAnimations';
 
 const EFFECT_TYPE_LABELS: Record<string, string> = {
   ACTIVATE: '主动',
@@ -27,105 +29,9 @@ const EFFECT_TYPE_LABELS: Record<string, string> = {
   CONTINUOUS: '永续'
 };
 
-const ACTION_TYPE_LABELS: Record<string, string> = {
-  PHASE_END: '阶段结束请求'
-};
-
 const getEffectTypeLabel = (type?: string | null) => {
   if (!type) return '效果';
   return EFFECT_TYPE_LABELS[type] || type;
-};
-
-const getActionTypeLabel = (type?: string | null) => {
-  if (!type) return '处理中';
-  return ACTION_TYPE_LABELS[type] || type.replace(/_/g, ' ');
-};
-
-const getPhaseRequestMeta = (item?: StackItem | null) => {
-  if (!item || item.type !== 'PHASE_END') {
-    return {
-      title: getActionTypeLabel(item?.type),
-      subtitle: '行动请求',
-      Icon: Send,
-      tone: 'orange'
-    };
-  }
-
-  if (item.nextPhase === 'DAMAGE_CALCULATION') {
-    return {
-      title: '结束战斗自由',
-      subtitle: '进入伤害计算',
-      Icon: Sword,
-      tone: 'red'
-    };
-  }
-
-  if (item.nextPhase === 'DISCARD') {
-    return {
-      title: '结束回合',
-      subtitle: '进入结束处理',
-      Icon: Flag,
-      tone: 'blue'
-    };
-  }
-
-  return {
-    title: '阶段切换请求',
-    subtitle: item.nextPhase ? getPhaseLabel(item.nextPhase) : '等待响应',
-    Icon: Send,
-    tone: 'orange'
-  };
-};
-
-const PhaseRequestCard: React.FC<{ item: StackItem; className?: string }> = ({ item, className }) => {
-  const meta = getPhaseRequestMeta(item);
-  const Icon = meta.Icon;
-  const toneClass = meta.tone === 'red'
-    ? 'border-red-400/70 bg-red-950/80 text-red-100 shadow-[0_0_24px_rgba(239,68,68,0.35)]'
-    : meta.tone === 'blue'
-      ? 'border-sky-400/70 bg-sky-950/80 text-sky-100 shadow-[0_0_24px_rgba(56,189,248,0.3)]'
-      : 'border-[#f27d26]/70 bg-zinc-950/90 text-orange-100 shadow-[0_0_24px_rgba(242,125,38,0.28)]';
-
-  return (
-    <div className={cn(
-      'relative flex aspect-[3/4] w-full flex-col items-center justify-center overflow-hidden rounded-xl border-2 p-2 text-center',
-      toneClass,
-      className
-    )}>
-      <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.16),transparent_36%,rgba(255,255,255,0.05))]" />
-      <div className="relative flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-black/35 shadow-inner md:h-12 md:w-12">
-        <Icon className="h-5 w-5 md:h-7 md:w-7" />
-      </div>
-      <div className="relative mt-2 text-[10px] font-black leading-tight md:text-sm">
-        {meta.title}
-      </div>
-      <div className="relative mt-1 text-[7px] font-bold uppercase tracking-widest text-white/55 md:text-[9px]">
-        {meta.subtitle}
-      </div>
-    </div>
-  );
-};
-
-const AttackRequestCard: React.FC<{ item: StackItem; className?: string }> = ({ item, className }) => {
-  const isAlliance = !!item.isAlliance || (item.attackerIds?.length || 0) > 1;
-
-  return (
-    <div className={cn(
-      'relative flex aspect-[3/4] w-full flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-red-400/70 bg-red-950/80 p-2 text-center text-red-100 shadow-[0_0_24px_rgba(239,68,68,0.35)]',
-      className
-    )}>
-      <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.16),transparent_36%,rgba(255,255,255,0.05))]" />
-      <div className="relative flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-black/35 shadow-inner md:h-12 md:w-12">
-        <Sword className="h-5 w-5 md:h-7 md:w-7" />
-      </div>
-      <div className="relative mt-2 text-[10px] font-black leading-tight md:text-sm">
-        {isAlliance ? '联军攻击' : '宣告攻击'}
-      </div>
-      <div className="relative mt-1 text-[7px] font-bold uppercase tracking-widest text-white/55 md:text-[9px]">
-        单位攻击
-      </div>
-    </div>
-  );
 };
 
 const MulliganRevealOverlay: React.FC<{
@@ -315,7 +221,7 @@ export const BattleField: React.FC = () => {
   const [lastError, setLastError] = useState<string | null>(null);
   const [isPopupHidden, setIsPopupHidden] = useState(false);
   const [dismissedPublicRevealId, setDismissedPublicRevealId] = useState<string | null>(null);
-  const [hoveredPopupCard, setHoveredPopupCard] = useState<Card | null>(null);
+  const [hoverPreviewCard, setHoverPreviewCard] = useState<Card | null>(null);
   const lastStrategyUpdateRef = useRef<number>(0);
   const lastJoinEmitRef = useRef<number>(0);
   const [pregameNow, setPregameNow] = useState(Date.now());
@@ -330,6 +236,8 @@ export const BattleField: React.FC = () => {
   const opponent = useMemo(() => (game && opponentUid) ? game.players[opponentUid] : null, [game, opponentUid]);
   const confrontationStrategy = (me?.confrontationStrategy || 'AUTO') as 'ON' | 'AUTO' | 'OFF';
   const [localStrategy, setLocalStrategy] = useState<'ON' | 'AUTO' | 'OFF'>(confrontationStrategy);
+  const [battleAnimationsEnabled, setBattleAnimationsEnabled] = useBattleAnimationPreference();
+  const battleAnimations = useBattleAnimations(game, effectiveMyUid);
   const activeMulliganReveal = !isSpectator && game?.phase === 'MULLIGAN' ? me?.mulliganReveal : undefined;
   const handleToggleLogs = () => {
     if (typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches) {
@@ -2215,10 +2123,10 @@ export const BattleField: React.FC = () => {
         maxSelections={1}
         minSelections={erosionChoice === 'C' ? 1 : 0}
         onCardClick={(card) => setSelectedErosionCardId(card.gamecardId)}
-        onCardHover={setHoveredPopupCard}
+        onCardHover={setHoverPreviewCard}
         cardBackUrl={cardBackUrl}
         onHide={() => {
-          setHoveredPopupCard(null);
+          setHoverPreviewCard(null);
           setIsPopupHidden(true);
         }}
         isHidden={isPopupHidden}
@@ -2250,38 +2158,6 @@ export const BattleField: React.FC = () => {
           </button>
         </div>
       </StandardPopup>}
-
-      <AnimatePresence>
-        {hoveredPopupCard && (
-          <motion.div
-            initial={{ opacity: 0, x: 16 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 16 }}
-            className="pointer-events-none fixed right-4 top-24 z-[1200] hidden w-[300px] rounded-2xl border border-white/10 bg-black/75 p-3 shadow-2xl backdrop-blur-md lg:block"
-          >
-            <div className="overflow-hidden rounded-xl border border-white/10 bg-black/40">
-              <img
-                src={getPreviewFullImage(hoveredPopupCard)}
-                alt={hoveredPopupCard.fullName}
-                className="aspect-[3/4] w-full object-contain"
-                draggable={false}
-                referrerPolicy="no-referrer"
-              />
-            </div>
-            <div className="mt-3">
-              <div className="text-sm font-black text-white">{hoveredPopupCard.fullName}</div>
-              <div className="mt-1 text-[10px] font-bold tracking-widest text-white/45">
-                {hoveredPopupCard.id} · {hoveredPopupCard.type} · {hoveredPopupCard.color}
-              </div>
-              {hoveredPopupCard.description && (
-                <div className="mt-2 text-xs leading-relaxed text-white/70">
-                  {hoveredPopupCard.description}
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Payment Selection Overlay */}
       <AnimatePresence>
@@ -2565,6 +2441,7 @@ export const BattleField: React.FC = () => {
                   isPopupHidden={isPopupHidden}
                   onHidePopup={() => setIsPopupHidden(true)}
                   onExpand={() => setIsPopupHidden(false)}
+                  onHoverPreview={setHoverPreviewCard}
 
                   showPhaseMenu={showPhaseMenu}
                   isAnyPopupOpen={
@@ -2588,6 +2465,25 @@ export const BattleField: React.FC = () => {
                   }
                 />
               )}
+              <BattleAnimationLayer
+                events={battleAnimations.events}
+                enabled={battleAnimationsEnabled}
+                onEventComplete={battleAnimations.dismiss}
+                hoverPreview={hoverPreviewCard}
+              />
+              <button
+                type="button"
+                onClick={() => setBattleAnimationsEnabled(!battleAnimationsEnabled)}
+                className={cn(
+                  "absolute right-3 top-3 z-[220] flex h-9 w-9 items-center justify-center rounded-full border text-white shadow-2xl backdrop-blur-md transition-all hover:scale-105 active:scale-95 md:h-10 md:w-10",
+                  battleAnimationsEnabled
+                    ? "border-[#f27d26]/45 bg-[#f27d26]/20 text-[#f27d26]"
+                    : "border-white/10 bg-black/50 text-white/35"
+                )}
+                title={battleAnimationsEnabled ? '关闭战斗动画' : '开启战斗动画'}
+              >
+                <Sparkles className="h-4 w-4 md:h-5 md:w-5" />
+              </button>
             </div>
           </div>
         </div>
@@ -2600,98 +2496,6 @@ export const BattleField: React.FC = () => {
             />
           </div>
         )}
-
-        <AnimatePresence>
-          {game.currentProcessingItem && (
-            <motion.div
-              initial={{ opacity: 0, backdropFilter: "blur(0px)" }}
-              animate={{ opacity: 1, backdropFilter: "blur(12px)" }}
-              exit={{ opacity: 0, backdropFilter: "blur(0px)" }}
-              className="fixed inset-0 z-[600] bg-black/40 flex items-center justify-center pointer-events-auto"
-            >
-              <div className="flex flex-col items-center gap-12">
-                <motion.div
-                  initial={{ y: 20, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  className="flex flex-col items-center gap-4"
-                >
-                  <div className="flex items-center gap-4 text-red-500">
-                    <Zap className="w-5 h-5 md:w-8 md:h-8 animate-pulse text-red-500/50" />
-                    <h2 className="text-lg md:text-3xl font-black italic uppercase tracking-tighter text-white/90">
-                      效果结算中
-                    </h2>
-                    <Zap className="w-5 h-5 md:w-8 md:h-8 animate-pulse text-red-500/50" />
-                  </div>
-                  <div className="h-1 w-48 bg-gradient-to-r from-transparent via-red-500 to-transparent" />
-                </motion.div>
-
-                <motion.div
-                  initial={{ scale: 0.5, opacity: 0, rotateY: 90 }}
-                  animate={{ scale: 1, opacity: 1, rotateY: 0 }}
-                  exit={{ scale: 1.5, opacity: 0, filter: "brightness(2)" }}
-                  transition={{ type: "spring", damping: 15 }}
-                  className="relative"
-                >
-                  <div className="absolute -inset-8 bg-red-600/10 blur-[40px] rounded-full animate-pulse" />
-                  <div className="w-48 md:w-56 relative z-10 transition-all">
-                    {game.currentProcessingItem.card ? (
-                      <div className="relative group">
-                        <CardComponent card={game.currentProcessingItem.card} isExhausted={false} disableZoom cardBackUrl={cardBackUrl} />
-                        <div className="absolute -inset-0.5 bg-gradient-to-t from-red-600/50 to-transparent opacity-50 rounded-2xl" />
-
-                        {/* UL/UR Labels for Resolving Card */}
-                        <div className={cn(
-                          "absolute -top-2 -left-2 px-3 py-1 rounded-full text-[10px] font-black uppercase italic shadow-lg z-[20] border border-white/20",
-                          game.currentProcessingItem.ownerUid === myUid ? "bg-blue-600 text-white" : "bg-red-600 text-white"
-                        )}>
-                          {game.currentProcessingItem.ownerUid === myUid ? "我方" : "对方"}
-                        </div>
-                        <div className="absolute -top-2 -right-2 px-3 py-1 bg-black/80 rounded-full text-[10px] font-bold text-white uppercase z-[20] border border-white/20">
-                          {getCardIdentity(game, game.currentProcessingItem.ownerUid, game.currentProcessingItem.card).split('|')[1].replace(']', '')}
-                        </div>
-                      </div>
-                    ) : game.currentProcessingItem.type === 'PHASE_END' ? (
-                      <PhaseRequestCard item={game.currentProcessingItem} className="shadow-2xl" />
-                    ) : game.currentProcessingItem.type === 'ATTACK' ? (
-                      <AttackRequestCard item={game.currentProcessingItem} className="shadow-2xl" />
-                    ) : (
-                      <div className="aspect-[3/4] bg-zinc-900 border-2 border-red-500/30 rounded-2xl flex flex-col items-center justify-center p-8 text-center shadow-2xl">
-                        <Sword className="w-20 h-20 text-red-500/40 mb-6" />
-                        <span className="text-2xl font-black text-white uppercase tracking-widest leading-none">
-                          {getActionTypeLabel(game.currentProcessingItem.type)}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Link Badge */}
-                  <div className="absolute -top-6 -left-6 w-20 h-20 bg-red-600 rounded-full border-4 border-zinc-900 flex items-center justify-center shadow-2xl z-20">
-                    <span className="text-2xl font-black italic text-white uppercase tracking-tighter">连锁</span>
-                  </div>
-                </motion.div>
-
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="flex flex-col items-center gap-2"
-                >
-                  <span className="text-white/40 text-[10px] font-black uppercase tracking-[0.5em]">发起方</span>
-                  <span className={cn(
-                    "px-6 py-2 rounded-full border text-xs font-black uppercase tracking-widest italic shadow-lg flex items-center gap-3",
-                    game.currentProcessingItem.ownerUid === myUid ? "bg-blue-600/20 border-blue-500/50 text-blue-400" : "bg-red-600/20 border-red-500/50 text-red-400"
-                  )}>
-                    {game.currentProcessingItem.ownerUid === myUid ? "我方" : "对方"}
-                    {game.currentProcessingItem.card && (
-                      <span className="opacity-60 text-[10px] border-l border-current pl-3 ml-2">
-                        {getCardIdentity(game, game.currentProcessingItem.ownerUid, game.currentProcessingItem.card).split('|')[1].replace(']', '')}
-                      </span>
-                    )}
-                  </span>
-                </motion.div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
 
         <AnimatePresence>
           {!isSpectator && game.phase === 'COUNTERING' && (game.priorityPlayerId !== myUid || game.isResolvingStack) && (
@@ -3266,114 +3070,6 @@ export const BattleField: React.FC = () => {
                 </button>
               </div>
             </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Global Confrontation Chain Overlay (Above Popups) */}
-      <AnimatePresence>
-        {!isSpectator && ((game.phase === 'BATTLE_FREE' && game.battleState?.askConfront) || game.phase === 'COUNTERING' || isConfronting) && 
-         (game.counterStack.length > 0 || game.battleState?.attackerCardId) && (
-          <motion.div
-            initial={{ opacity: 0, y: -50 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -50 }}
-            className="fixed inset-x-0 top-12 z-[1100] flex flex-col items-center pointer-events-none"
-          >
-            <div className="flex flex-col items-center gap-4 bg-black/60 backdrop-blur-md p-6 rounded-[2rem] border border-white/10 shadow-2xl">
-              <div className="flex items-center gap-2 text-zinc-400 text-[10px] font-black uppercase tracking-widest mb-2">
-                <Layers className="w-4 h-4 text-red-500" />
-                完整对抗连锁
-              </div>
-              
-              <div className="flex items-center gap-4">
-                {/* Battle Context (The "Root" of the confrontation) */}
-                {game.battleState?.attackerCardId && (
-                  <>
-                    <div className="flex flex-col items-center gap-2">
-                      <div className="w-16 md:w-24 aspect-[3/4] rounded-xl overflow-hidden border-2 border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.3)] relative">
-                        {(() => {
-                          const attackerUid = (game.battleState as any).attackerUid || game.playerIds[game.currentTurnPlayer];
-                          const attacker = [...(game.players[attackerUid]?.unitZone || []), ...(game.players[attackerUid]?.itemZone || [])].find(c => c?.gamecardId === game.battleState!.attackerCardId);
-                          return attacker ? <CardComponent card={attacker} disableZoom cardBackUrl={cardBackUrl} /> : <div className="w-full h-full bg-zinc-800" />;
-                        })()}
-                        <div className="absolute top-1 left-1 px-1.5 py-0.5 bg-red-600 rounded text-[8px] font-black italic text-white z-10 shadow-lg">
-                          攻击者
-                        </div>
-                      </div>
-                      <span className="text-[8px] font-bold text-red-400 uppercase">
-                        {((game.battleState as any).attackerUid || game.playerIds[game.currentTurnPlayer]) === myUid ? "我方" : isSpectator ? "攻击方" : "对方"}
-                      </span>
-                    </div>
-
-                    {game.battleState.defenderCardId && (
-                      <div className="flex items-center gap-4">
-                        <Sword className="w-4 h-4 text-zinc-500 animate-pulse" />
-                        <div className="flex flex-col items-center gap-2">
-                          <div className="w-16 md:w-24 aspect-[3/4] rounded-xl overflow-hidden border-2 border-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.3)] relative">
-                            {(() => {
-                              const defenderUid = (game.battleState as any).defenderUid || game.playerIds[game.currentTurnPlayer === 0 ? 1 : 0];
-                              const defender = [...(game.players[defenderUid]?.unitZone || [])].find(c => c?.gamecardId === game.battleState!.defenderCardId);
-                              return defender ? <CardComponent card={defender} disableZoom cardBackUrl={cardBackUrl} /> : <div className="w-full h-full bg-zinc-800" />;
-                            })()}
-                            <div className="absolute top-1 left-1 px-1.5 py-0.5 bg-blue-600 rounded text-[8px] font-black italic text-white z-10 shadow-lg">
-                              防御者
-                            </div>
-                          </div>
-                          <span className="text-[8px] font-bold text-blue-400 uppercase">
-                            {((game.battleState as any).defenderUid || game.playerIds[game.currentTurnPlayer === 0 ? 1 : 0]) === myUid ? "我方" : isSpectator ? "防御方" : "对方"}
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                    
-                    {(game.counterStack.length > 0) && (
-                      <div className="h-12 w-px bg-white/10 mx-2" />
-                    )}
-                  </>
-                )}
-
-                {/* Counter Stack */}
-                {game.counterStack.map((item, idx) => (
-                  <div key={`${idx}-${item.timestamp}`} className="flex items-center gap-4">
-                    <div className="flex flex-col items-center gap-2">
-                      <div className="w-16 md:w-24 aspect-[3/4] rounded-xl overflow-hidden border-2 border-white/20 shadow-2xl relative">
-                        {item.card
-                          ? <CardComponent card={item.card} disableZoom cardBackUrl={cardBackUrl} />
-                          : item.type === 'PHASE_END'
-                            ? <PhaseRequestCard item={item} />
-                            : item.type === 'ATTACK'
-                              ? <AttackRequestCard item={item} />
-                            : <div className="w-full h-full bg-zinc-800" />}
-                        <div className={cn(
-                          "absolute top-1 left-1 px-1.5 py-0.5 rounded text-[8px] font-black italic text-white z-10 shadow-lg",
-                          item.ownerUid === myUid ? "bg-blue-600" : "bg-red-600"
-                        )}>
-                          L{idx + 1}
-                        </div>
-                      </div>
-                      <span className={cn(
-                        "text-[8px] font-bold uppercase",
-                        item.ownerUid === myUid ? "text-blue-400" : "text-red-400"
-                      )}>
-                        {item.ownerUid === myUid ? "我方" : "对方"}
-                      </span>
-                    </div>
-                    {idx < game.counterStack.length - 1 && (
-                      <ChevronRight className="w-4 h-4 text-zinc-700" />
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              {isConfronting && (
-                <div className="mt-4 px-6 py-2 bg-red-600/20 border border-red-500/50 rounded-full animate-pulse">
-                  <span className="text-red-400 text-xs font-black italic uppercase tracking-widest">
-                    请点击卡牌来发动对抗
-                  </span>
-                </div>
-              )}
-            </div>
           </motion.div>
         )}
       </AnimatePresence>

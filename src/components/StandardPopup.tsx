@@ -317,7 +317,6 @@ const VisualOptionCard: React.FC<{
   return (
     <motion.button
       type="button"
-      whileHover={option.disabled ? undefined : { y: -10, scale: 1.05 }}
       whileTap={option.disabled ? undefined : { scale: 0.95 }}
       onClick={option.disabled ? undefined : onClick}
       disabled={option.disabled}
@@ -573,7 +572,6 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
                   return (
                     <motion.div
                       key={`${card.gamecardId || card.id}-${i}`}
-                      whileHover={option.disabled ? undefined : { y: -10, scale: 1.05 }}
                       whileTap={option.disabled ? undefined : { scale: 0.95 }}
                       onClick={(e) => {
                         handleOptionClick(option, e);

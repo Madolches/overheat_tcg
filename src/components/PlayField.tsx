@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Card, PlayerOngoingEffect, PlayerState, StackItem, GameState } from '../types/game';
 import { CardComponent } from './Card';
@@ -48,6 +48,7 @@ interface PlayFieldProps {
   onHidePopup?: () => void;
   onExpand?: () => void;
   isSpectator?: boolean;
+  onHoverPreview?: (card: Card | null) => void;
 }
 
 const CardSlot: React.FC<{
@@ -71,7 +72,9 @@ const CardSlot: React.FC<{
   slotLabel?: string;
   cardBackUrl?: string;
   isHighlighted?: boolean;
-}> = ({ card, label, onClick, onPreview, onHover, className, isFaceUp = true, isExhausted, isSelectedForPayment, isDeck, count = 0, showCount = true, isAttacking, isDefending, isOpponent, isAllianceInitiator, displayMode, slotLabel, cardBackUrl, isHighlighted }) => {
+  animationAnchor?: string;
+  chainLabel?: string;
+}> = ({ card, label, onClick, onPreview, onHover, className, isFaceUp = true, isExhausted, isSelectedForPayment, isDeck, count = 0, showCount = true, isAttacking, isDefending, isOpponent, isAllianceInitiator, displayMode, slotLabel, cardBackUrl, isHighlighted, animationAnchor, chainLabel }) => {
   // Dynamic height scaling for stack areas (Deck, Grave, Exile)
   const isStackArea = isDeck || label === '墓地' || label === '放逐';
   const numericCount = typeof count === 'number' ? count : 0;
@@ -89,6 +92,8 @@ const CardSlot: React.FC<{
       style={{ transform: `scaleY(${heightScale})`, transformOrigin: isOpponent ? 'top' : 'bottom' }}
     >
       <div
+        data-animation-anchor={animationAnchor}
+        data-animation-card-id={card?.gamecardId}
         className={cn(
           "relative h-full w-full rounded-md border border-white/10 transition-all flex items-center justify-center group overflow-hidden cursor-pointer",
           (card || isDeck || count > 0) ? "bg-black/40 shadow-lg" : "bg-white/5",
@@ -181,6 +186,21 @@ const CardSlot: React.FC<{
           </div>
         )}
       </div>
+
+      {chainLabel && (
+        <motion.div
+          initial={{ opacity: 0, y: isOpponent ? 8 : -8, scale: 0.75 }}
+          animate={{ opacity: 1, y: 0, scale: [1, 1.08, 1] }}
+          transition={{ duration: 0.7, repeat: Infinity, repeatDelay: 0.55, ease: "easeOut" }}
+          className={cn(
+            "pointer-events-none absolute left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-full border border-white/30 bg-zinc-950/90 px-2 py-0.5 text-[10px] font-black italic leading-none text-white shadow-[0_0_18px_rgba(242,125,38,0.55)] backdrop-blur-md md:text-xs",
+            isOpponent ? "-bottom-3 rotate-180 md:-bottom-4" : "-top-3 md:-top-4"
+          )}
+        >
+          <Zap className="h-3 w-3 text-[#f27d26]" />
+          {chainLabel}
+        </motion.div>
+      )}
 
       {slotLabel && (
         <div className={cn(
@@ -386,6 +406,9 @@ const withEffectiveCostInfluence = (gameState: GameState | undefined, player: Pl
   return { effectiveAcValue, card: { ...card, influencingEffects } };
 };
 
+const animationZoneAnchor = (uid: string, zone: string) => `player:${uid}:${zone}`;
+const animationUnitAnchor = (uid: string, index: number) => `player:${uid}:unit:${index}`;
+
 const PlayerHalf: React.FC<{
   player: PlayerState;
   isOpponent?: boolean;
@@ -407,7 +430,8 @@ const PlayerHalf: React.FC<{
   setViewingZone?: (zone: { title: string, type: string, isOpponentZone?: boolean } | null) => void;
   highlightedCardIds?: Set<string>;
   isSpectator?: boolean;
-}> = ({ player, isOpponent, wealthValue = 0, ongoingEffects = [], onOpenOngoingEffects, onCardClick, onPreviewCard, onHoverCard, onPlayCard, paymentSelection, pendingPlayCard, selectedAttackers, selectedDefender, game, allianceInitiator, cardBackUrl, viewingZone, setViewingZone, highlightedCardIds, isSpectator }) => {
+  chainLabels?: Map<string, string>;
+}> = ({ player, isOpponent, wealthValue = 0, ongoingEffects = [], onOpenOngoingEffects, onCardClick, onPreviewCard, onHoverCard, onPlayCard, paymentSelection, pendingPlayCard, selectedAttackers, selectedDefender, game, allianceInitiator, cardBackUrl, viewingZone, setViewingZone, highlightedCardIds, isSpectator, chainLabels }) => {
   if (!player) return null;
   const getCardCostDisplay = (card: Card) => withEffectiveCostInfluence(game, player, card);
   const ongoingEffectCount = ongoingEffects.filter(effect => effect.category !== 'WEALTH').length;
@@ -434,9 +458,23 @@ const PlayerHalf: React.FC<{
 
   return (
     <div className={cn(
-      "flex-1 md:grid md:grid-cols-[100px_1fr_100px] grid grid-cols-5 gap-0.5 md:gap-2 p-0.5 md:p-2 relative h-full min-h-0 perspective-[1000px]",
-      isOpponent ? "bg-red-500/5 items-start" : "bg-blue-500/5 items-end"
+      "flex-1 md:grid md:grid-cols-[100px_1fr_100px] grid grid-cols-5 gap-0.5 md:gap-2 p-0.5 md:p-2 relative h-full min-h-0 perspective-[1000px] overflow-hidden",
+      isOpponent ? "bg-red-500/5 items-start" : "bg-blue-500/5 items-end",
+      player.isGoddessMode && (isOpponent
+        ? "shadow-[inset_0_0_44px_rgba(242,125,38,0.24)]"
+        : "shadow-[inset_0_0_44px_rgba(251,191,36,0.24)]")
     )}>
+      {player.isGoddessMode && (
+        <motion.div
+          className={cn(
+            "pointer-events-none absolute inset-x-0 z-[2] h-1 bg-gradient-to-r from-transparent via-amber-200 to-transparent",
+            isOpponent ? "bottom-0" : "top-0"
+          )}
+          initial={false}
+          animate={{ opacity: [0.35, 1, 0.35], scaleX: [0.85, 1, 0.85] }}
+          transition={{ duration: 2.1, repeat: Infinity, ease: "easeInOut" }}
+        />
+      )}
 
       {/* SIDEBAR 1: Left Columns */}
       <div className="flex flex-col gap-1 md:gap-4 h-full justify-center">
@@ -446,6 +484,7 @@ const PlayerHalf: React.FC<{
             <CardSlot
               card={null} isDeck label="牌库" count={player.deck?.length || 0}
               className="border-white/20 scale-[0.8] md:scale-100" cardBackUrl={cardBackUrl}
+              animationAnchor={animationZoneAnchor(player.uid, 'deck')}
             />
             <CardSlot
               card={player.grave?.length > 0 ? player.grave[player.grave.length - 1] : null}
@@ -454,6 +493,8 @@ const PlayerHalf: React.FC<{
               onClick={() => setViewingZone?.({ title: '墓地', type: 'grave', isOpponentZone: !!isOpponent })}
               onHover={onHoverCard}
               isFaceUp={true} isOpponent={isOpponent} displayMode="erosion_item"
+              animationAnchor={animationZoneAnchor(player.uid, 'grave')}
+              chainLabel={player.grave?.length > 0 ? chainLabels?.get(player.grave[player.grave.length - 1].gamecardId) : undefined}
             />
             <CardSlot
               card={player.exile?.length > 0 ? player.exile[player.exile.length - 1] : null}
@@ -464,6 +505,8 @@ const PlayerHalf: React.FC<{
               isFaceUp={player.exile?.length > 0 ? player.exile[player.exile.length - 1]?.displayState !== 'FRONT_FACEDOWN' : true}
               isOpponent={isOpponent}
               displayMode="erosion_item"
+              animationAnchor={animationZoneAnchor(player.uid, 'exile')}
+              chainLabel={player.exile?.length > 0 ? chainLabels?.get(player.exile[player.exile.length - 1].gamecardId) : undefined}
             />
           </>
         ) : (
@@ -479,6 +522,8 @@ const PlayerHalf: React.FC<{
               isExhausted={!!(player.itemZone?.filter(Boolean).slice(-1)[0] as Card | undefined)?.isExhausted}
               isHighlighted={highlightedCardIds?.has((player.itemZone?.filter(Boolean).slice(-1)[0] as Card | undefined)?.gamecardId || '')}
               displayMode="erosion_item"
+              animationAnchor={animationZoneAnchor(player.uid, 'item')}
+              chainLabel={chainLabels?.get((player.itemZone?.filter(Boolean).slice(-1)[0] as Card | undefined)?.gamecardId || '')}
             />
             <div className="flex justify-center">
               <OngoingEffectButton
@@ -502,11 +547,15 @@ const PlayerHalf: React.FC<{
               isFaceUp={player.erosionFront?.some(c => c !== null)}
               isHighlighted={highlightedCardIds?.has((player.erosionFront?.filter(Boolean).slice(-1)[0] || null)?.gamecardId || '')}
               displayMode="erosion_item"
+              animationAnchor={animationZoneAnchor(player.uid, 'erosion')}
+              chainLabel={chainLabels?.get((player.erosionFront?.filter(Boolean).slice(-1)[0] || player.erosionBack?.filter(Boolean).slice(-1)[0] || null)?.gamecardId || '')}
             />
             <CardSlot
               card={(player.playZone?.length || 0) > 0 ? player.playZone[player.playZone.length - 1] : null}
               label="出牌区" count={player.playZone?.length || 0}
               className="border-yellow-500/30 scale-[0.8] md:scale-100" cardBackUrl={cardBackUrl}
+              animationAnchor={animationZoneAnchor(player.uid, 'play')}
+              chainLabel={chainLabels?.get(((player.playZone?.length || 0) > 0 ? player.playZone[player.playZone.length - 1] : null)?.gamecardId || '')}
             />
           </>
         )}
@@ -521,7 +570,7 @@ const PlayerHalf: React.FC<{
           <>
             {/* Opponent Hand Area */}
             <div className="flex items-center justify-center px-1 md:px-0 mb-1 md:mb-2">
-              <div className="flex-1 h-14 md:h-20 flex items-center justify-center gap-1 overflow-x-auto bg-black/20 rounded-lg border border-white/5 custom-scrollbar">
+              <div data-animation-anchor={animationZoneAnchor(player.uid, 'hand')} className="flex-1 h-14 md:h-20 flex items-center justify-center gap-1 overflow-x-auto bg-black/20 rounded-lg border border-white/5 custom-scrollbar">
                 {shouldRenderHandSlot ? (
                   <HandZoneSlot
                     count={player.hand?.length || 0}
@@ -535,12 +584,19 @@ const PlayerHalf: React.FC<{
                     return (
                       <div
                         key={card.gamecardId || i}
-                        className="w-10 md:w-[76.8px] shrink-0 cursor-pointer shadow-lg drop-shadow-md transition-all hover:-translate-y-1"
+                        data-animation-anchor={`card:${card.gamecardId}`}
+                        data-animation-card-id={card.gamecardId}
+                        className="w-10 md:w-[76.8px] shrink-0 cursor-pointer shadow-lg drop-shadow-md transition-all"
                         onClick={(e) => onCardClick?.(costDisplay.card, 'hand', i, e)}
                         onMouseEnter={() => onHoverCard?.(costDisplay.card)}
                         onMouseLeave={() => onHoverCard?.(null)}
                       >
                         <CardComponent card={costDisplay.card} cardBackUrl={cardBackUrl} disableZoom displayMode="hand" effectiveAcValue={costDisplay.effectiveAcValue} />
+                        {chainLabels?.get(card.gamecardId) && (
+                          <div className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 rounded-full border border-white/30 bg-zinc-950/90 px-2 py-0.5 text-[10px] font-black italic text-white shadow-xl">
+                            {chainLabels.get(card.gamecardId)}
+                          </div>
+                        )}
                       </div>
                     );
                   })
@@ -548,6 +604,8 @@ const PlayerHalf: React.FC<{
                   player.hand?.map((card, i) => (
                     <div
                       key={i}
+                      data-animation-anchor={`card:${card.gamecardId}`}
+                      data-animation-card-id={card.gamecardId}
                       className={cn(
                         "w-10 md:w-[76.8px] aspect-[3/4] -ml-4 md:-ml-[38.4px] first:ml-0 shadow-lg drop-shadow-md transition-all shrink-0",
                         isOpponent && "rotate-180"
@@ -585,6 +643,8 @@ const PlayerHalf: React.FC<{
                             className={displayCard.isFaceUp ? "border-red-600" : "border-red-900/50"}
                             isHighlighted={displayCard.isFaceUp && highlightedCardIds?.has(displayCard.gamecardId)}
                             showCount={false} isOpponent={isOpponent} displayMode="erosion_item" slotLabel={num} cardBackUrl={cardBackUrl}
+                            animationAnchor={i === 0 ? animationZoneAnchor(player.uid, 'erosion') : `player:${player.uid}:erosion:${i}`}
+                            chainLabel={chainLabels?.get(displayCard.gamecardId)}
                           />
                         ) : (
                           <div className="h-full w-full rounded-md border border-dashed border-white/5 bg-white/5 flex items-center justify-center">
@@ -599,7 +659,7 @@ const PlayerHalf: React.FC<{
             </div>
 
             {/* Opponent Unit Zone */}
-            <div className={cn("grid w-full grid-cols-3 md:grid-cols-6 gap-2 md:gap-2 items-center justify-items-center relative z-10 px-2 md:px-0 translate-y-2 md:translate-y-[60px] transition-transform duration-700", unitZoneOffsetClass)} style={{ transform: 'translateZ(-100px) rotateX(-5deg)' }}>
+            <div data-animation-anchor={animationZoneAnchor(player.uid, 'unit-row')} className={cn("grid w-full grid-cols-3 md:grid-cols-6 gap-2 md:gap-2 items-center justify-items-center relative z-10 px-2 md:px-0 translate-y-2 md:translate-y-[60px] transition-transform duration-700", unitZoneOffsetClass)} style={{ transform: 'translateZ(-100px) rotateX(-5deg)' }}>
               {Array.from({ length: 6 }).map((_, i) => {
                 const unit = player.unitZone?.[i];
                 return (
@@ -614,6 +674,8 @@ const PlayerHalf: React.FC<{
                     isDefending={unit ? (selectedDefender === unit.gamecardId || game?.battleState?.defender === unit.gamecardId || game?.battleState?.unitTargetId === unit.gamecardId) : false}
                     isHighlighted={unit ? highlightedCardIds?.has(unit.gamecardId) : false}
                     showCount={false} isOpponent={isOpponent} displayMode="unit" slotLabel={`${6 - i}`} cardBackUrl={cardBackUrl}
+                    animationAnchor={animationUnitAnchor(player.uid, i)}
+                    chainLabel={unit ? chainLabels?.get(unit.gamecardId) : undefined}
                   />
                 );
               })}
@@ -622,7 +684,7 @@ const PlayerHalf: React.FC<{
         ) : (
           <>
             {/* Player Unit Zone */}
-            <div className={cn("grid w-full grid-cols-3 md:grid-cols-6 gap-2 md:gap-2 items-center justify-items-center relative z-10 px-2 md:px-0 -translate-y-4 md:-translate-y-[60px] transition-transform duration-700", unitZoneOffsetClass)} style={{ transform: 'translateZ(-100px) rotateX(5deg)' }}>
+            <div data-animation-anchor={animationZoneAnchor(player.uid, 'unit-row')} className={cn("grid w-full grid-cols-3 md:grid-cols-6 gap-2 md:gap-2 items-center justify-items-center relative z-10 px-2 md:px-0 -translate-y-4 md:-translate-y-[60px] transition-transform duration-700", unitZoneOffsetClass)} style={{ transform: 'translateZ(-100px) rotateX(5deg)' }}>
               {Array.from({ length: 6 }).map((_, i) => {
                 const unit = player.unitZone?.[i];
                 return (
@@ -638,6 +700,8 @@ const PlayerHalf: React.FC<{
                     isAllianceInitiator={unit && allianceInitiator === unit.gamecardId}
                     isHighlighted={unit ? highlightedCardIds?.has(unit.gamecardId) : false}
                     showCount={false} displayMode="unit" slotLabel={`${i + 1}`} cardBackUrl={cardBackUrl}
+                    animationAnchor={animationUnitAnchor(player.uid, i)}
+                    chainLabel={unit ? chainLabels?.get(unit.gamecardId) : undefined}
                   />
                 );
               })}
@@ -672,6 +736,8 @@ const PlayerHalf: React.FC<{
                             displayMode="erosion_item"
                             slotLabel={num}
                             cardBackUrl={cardBackUrl}
+                            animationAnchor={i === 0 ? animationZoneAnchor(player.uid, 'erosion') : `player:${player.uid}:erosion:${i}`}
+                            chainLabel={chainLabels?.get(displayCard.gamecardId)}
                           />
                         ) : (
                           <div className="h-full w-full rounded-md border border-dashed border-white/5 bg-white/5 flex items-center justify-center">
@@ -687,7 +753,7 @@ const PlayerHalf: React.FC<{
             </div>
 
             <div className="flex items-center justify-center px-1 md:px-0 mt-0 -translate-y-2 md:mt-2 md:translate-y-0">
-              <div className="flex-1 h-16 md:h-36 flex items-center justify-center gap-0.5 overflow-visible bg-black/20 rounded-lg border border-white/5 relative">
+              <div data-animation-anchor={animationZoneAnchor(player.uid, 'hand')} className="flex-1 h-16 md:h-36 flex items-center justify-center gap-0.5 overflow-visible bg-black/20 rounded-lg border border-white/5 relative">
                 {shouldUseHandSlot ? (
                   <HandZoneSlot count={player.hand?.length || 0} onClick={openHandZone} />
                 ) : player.hand?.map((card, i) => {
@@ -701,6 +767,8 @@ const PlayerHalf: React.FC<{
                   return (
                     <div
                       key={card.gamecardId || i}
+                      data-animation-anchor={`card:${card.gamecardId}`}
+                      data-animation-card-id={card.gamecardId}
                       className="absolute w-[38.4px] md:w-[115.2px] transition-all duration-300 cursor-pointer"
                       style={{
                         transform: `translateX(${xPos}px) ${isFeijingSelected ? 'translateY(-10px) md:translateY(-50px) scale(1.1)' : ''}`,
@@ -717,6 +785,11 @@ const PlayerHalf: React.FC<{
                         isHighlighted={highlightedCardIds?.has(card.gamecardId)}
                         className={cn("shadow-2xl transition-all duration-300", isFeijingSelected && "shadow-[#f27d26]/60 ring-2 ring-[#f27d26]")}
                       />
+                      {chainLabels?.get(card.gamecardId) && (
+                        <div className="pointer-events-none absolute left-1/2 -top-3 z-20 -translate-x-1/2 rounded-full border border-white/30 bg-zinc-950/90 px-2 py-0.5 text-[10px] font-black italic text-white shadow-xl">
+                          {chainLabels.get(card.gamecardId)}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -740,6 +813,8 @@ const PlayerHalf: React.FC<{
               className="border-yellow-500/30 scale-[0.8] md:scale-100" cardBackUrl={cardBackUrl}
               onPreview={onPreviewCard} isOpponent={isOpponent}
               onHover={onHoverCard}
+              animationAnchor={animationZoneAnchor(player.uid, 'play')}
+              chainLabel={chainLabels?.get(((player.playZone?.length || 0) > 0 ? player.playZone[player.playZone.length - 1] : null)?.gamecardId || '')}
             />
             <CardSlot
               card={player.erosionFront?.filter(Boolean).slice(-1)[0] || player.erosionBack?.filter(Boolean).slice(-1)[0] || null}
@@ -756,6 +831,8 @@ const PlayerHalf: React.FC<{
               isFaceUp={player.erosionFront?.some(c => c !== null)}
               isOpponent={isOpponent}
               displayMode="erosion_item"
+              animationAnchor={animationZoneAnchor(player.uid, 'erosion')}
+              chainLabel={chainLabels?.get((player.erosionFront?.filter(Boolean).slice(-1)[0] || player.erosionBack?.filter(Boolean).slice(-1)[0] || null)?.gamecardId || '')}
             />
             <CardSlot
               card={player.itemZone?.filter(Boolean).slice(-1)[0] || null}
@@ -768,6 +845,8 @@ const PlayerHalf: React.FC<{
               isHighlighted={highlightedCardIds?.has((player.itemZone?.filter(Boolean).slice(-1)[0] as Card | undefined)?.gamecardId || '')}
               isOpponent={isOpponent}
               displayMode="erosion_item"
+              animationAnchor={animationZoneAnchor(player.uid, 'item')}
+              chainLabel={chainLabels?.get((player.itemZone?.filter(Boolean).slice(-1)[0] as Card | undefined)?.gamecardId || '')}
             />
             <div className={cn("flex justify-center", isOpponent && "rotate-180")}>
               <OngoingEffectButton
@@ -789,6 +868,8 @@ const PlayerHalf: React.FC<{
               onHover={onHoverCard}
               isFaceUp={player.exile?.length > 0 ? player.exile[player.exile.length - 1]?.displayState !== 'FRONT_FACEDOWN' : true}
               displayMode="erosion_item"
+              animationAnchor={animationZoneAnchor(player.uid, 'exile')}
+              chainLabel={player.exile?.length > 0 ? chainLabels?.get(player.exile[player.exile.length - 1].gamecardId) : undefined}
             />
             <CardSlot
               card={player.grave?.length > 0 ? player.grave[player.grave.length - 1] : null}
@@ -797,10 +878,13 @@ const PlayerHalf: React.FC<{
               onClick={() => setViewingZone?.({ title: '墓地', type: 'grave', isOpponentZone: !!isOpponent })}
               onHover={onHoverCard}
               isFaceUp={true} displayMode="erosion_item"
+              animationAnchor={animationZoneAnchor(player.uid, 'grave')}
+              chainLabel={player.grave?.length > 0 ? chainLabels?.get(player.grave[player.grave.length - 1].gamecardId) : undefined}
             />
             <CardSlot
               card={null} isDeck label="牌库" count={player.deck?.length || 0}
               className="border-white/20 scale-[0.8] md:scale-100" cardBackUrl={cardBackUrl}
+              animationAnchor={animationZoneAnchor(player.uid, 'deck')}
             />
           </>
         )}
@@ -816,21 +900,30 @@ export const PlayField: React.FC<PlayFieldProps> = ({
   setViewingZone, highlightedCardIds, onShowLogs, onOpenRulebook,
   onSurrender, onPhaseClick, confrontationStrategy, onUpdateStrategy,
   canConfront, isConfrontPromptActive, isCounteringPromptActive, isDefensePromptActive, onStartConfront, onDeclineConfront, onDeclineDefense,
-  showPhaseMenu, isAnyPopupOpen, isPopupHidden, onHidePopup, onExpand, isSpectator
+  showPhaseMenu, isAnyPopupOpen, isPopupHidden, onHidePopup, onExpand, isSpectator, onHoverPreview
 }) => {
-  const [hoveredCard, setHoveredCard] = useState<Card | null>(null);
-  const [isDesktop, setIsDesktop] = useState<boolean>(() => typeof window !== 'undefined' ? window.innerWidth >= 1024 : false);
   const [ongoingEffectsPopup, setOngoingEffectsPopup] = useState<{
     title: string;
     effects: PlayerOngoingEffect[];
   } | null>(null);
-
-  useEffect(() => {
-    const onResize = () => setIsDesktop(window.innerWidth >= 1024);
-    onResize();
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
+  const chainLabels = useMemo(() => {
+    const labels = new Map<string, string>();
+    (stack || []).forEach((item, index) => {
+      const label = `L${index + 1}`;
+      if (item.card?.gamecardId) labels.set(item.card.gamecardId, label);
+      item.attackerIds?.forEach(cardId => labels.set(cardId, label));
+    });
+    return labels;
+  }, [stack]);
+  const fallbackChainItems = useMemo(() => (
+    (stack || [])
+      .map((item, index) => ({
+        key: `${item.timestamp}-${index}`,
+        label: `L${index + 1}`,
+        isFallback: !item.card?.gamecardId && !(item.attackerIds?.length)
+      }))
+      .filter(item => item.isFallback)
+  ), [stack]);
 
   if (!player || !opponent || !game) return null;
   const isCurrentPlayer = !isSpectator && game.playerIds[game.currentTurnPlayer] === myUid;
@@ -853,8 +946,6 @@ export const PlayField: React.FC<PlayFieldProps> = ({
         game.phase === 'BATTLE_DECLARATION' ? '战斗宣言' :
           game.phase === 'DEFENSE_DECLARATION' ? '防御宣言' :
             game.phase === 'BATTLE_FREE' ? (isCurrentPlayer ? '结束战斗自由' : '战斗自由') : game.phase;
-  const getPreviewFullImage = (card: Card) =>
-    card.fullImageUrl || getCardImageUrl(card.id, card.rarity, false, card.availableRarities);
   const viewingZoneOwner = viewingZone?.isOpponentZone ? opponent : player;
   const viewingZoneCards = !viewingZone ? [] : (
     viewingZone.type === 'item' ? ((viewingZoneOwner.itemZone?.filter(Boolean) as Card[]) || []) :
@@ -969,30 +1060,6 @@ export const PlayField: React.FC<PlayFieldProps> = ({
           </motion.div>
         )}
       </AnimatePresence>
-      {isDesktop && hoveredCard && (
-        <div className="pointer-events-none absolute right-4 top-4 z-[120] hidden w-[300px] rounded-2xl border border-white/10 bg-black/75 p-3 shadow-2xl backdrop-blur-md lg:block">
-          <div className="overflow-hidden rounded-xl border border-white/10 bg-black/40">
-            <img
-              src={getPreviewFullImage(hoveredCard)}
-              alt={hoveredCard.fullName}
-              className="aspect-[3/4] w-full object-contain"
-              draggable={false}
-              referrerPolicy="no-referrer"
-            />
-          </div>
-          <div className="mt-3">
-            <div className="text-sm font-black text-white">{hoveredCard.fullName}</div>
-            <div className="mt-1 text-[10px] font-bold tracking-widest text-white/45">
-              {hoveredCard.id} · {hoveredCard.type} · {hoveredCard.color}
-            </div>
-            {hoveredCard.description && (
-              <div className="mt-2 text-xs leading-relaxed text-white/70">
-                {hoveredCard.description}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
       {/* Opponent Half */}
       <div className="flex-1 min-h-0">
         <PlayerHalf
@@ -1003,7 +1070,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
           onOpenOngoingEffects={openOngoingEffects}
           onCardClick={onCardClick}
           onPreviewCard={onPreviewCard}
-          onHoverCard={setHoveredCard}
+          onHoverCard={onHoverPreview}
           game={game}
           selectedAttackers={selectedAttackers}
           selectedDefender={selectedDefender}
@@ -1016,8 +1083,26 @@ export const PlayField: React.FC<PlayFieldProps> = ({
           setViewingZone={setViewingZone}
           highlightedCardIds={highlightedCardIds}
           isSpectator={isSpectator}
+          chainLabels={chainLabels}
         />
       </div>
+
+      <AnimatePresence>
+        {fallbackChainItems.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 8, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.96 }}
+            className="pointer-events-none absolute left-1/2 top-1/2 z-[125] flex -translate-x-1/2 -translate-y-1/2 items-center gap-1 rounded-full border border-white/10 bg-zinc-950/80 px-2 py-1 shadow-2xl backdrop-blur-md"
+          >
+            {fallbackChainItems.map(item => (
+              <span key={item.key} className="rounded-full border border-[#f27d26]/40 bg-[#f27d26]/15 px-2 py-0.5 text-[10px] font-black italic text-amber-100">
+                {item.label}
+              </span>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Central Battle Info Panel */}
       <div className={cn(
@@ -1185,7 +1270,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
           onOpenOngoingEffects={openOngoingEffects}
           onCardClick={onCardClick}
           onPreviewCard={onPreviewCard}
-          onHoverCard={setHoveredCard}
+          onHoverCard={onHoverPreview}
           onPlayCard={onPlayCard}
           paymentSelection={paymentSelection}
           pendingPlayCard={pendingPlayCard}
@@ -1197,6 +1282,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
           setViewingZone={setViewingZone}
           highlightedCardIds={highlightedCardIds}
           isSpectator={isSpectator}
+          chainLabels={chainLabels}
         />
       </div>
 
