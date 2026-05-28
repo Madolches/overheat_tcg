@@ -1,7 +1,78 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, addInfluence, universalEquipEffect } from './BaseUtil';
+import { EventEngine } from '../services/EventEngine';
+import { AtomicEffectExecutor, addInfluence } from './BaseUtil';
 
-const cardEffects: CardEffect[] = [universalEquipEffect, {
+const hasSilverCrossArmorEquipped = (playerItems: Array<Card | null>, targetId: string, currentArmorId: string) =>
+  playerItems.some(item =>
+    item?.id === '301130025' &&
+    item.gamecardId !== currentArmorId &&
+    item.equipTargetId === targetId
+  );
+
+const silverCrossEquipEffect: CardEffect = {
+  id: '301130025_equip',
+  type: 'ACTIVATE',
+  description: '主要阶段中，选择你的1个未装备《银白十字战衣》的单位装备这张卡，或解除装备状态。',
+  limitCount: 1,
+  limitNameType: false,
+  triggerLocation: ['ITEM'],
+  condition: gameState => gameState.phase === 'MAIN',
+  execute: async (card, gameState, playerState) => {
+    const currentTargetId = card.equipTargetId;
+    const options = currentTargetId
+      ? [{ card, source: 'ITEM' as const }]
+      : playerState.unitZone
+          .filter((unit): unit is Card =>
+            !!unit && !hasSilverCrossArmorEquipped(playerState.itemZone, unit.gamecardId, card.gamecardId)
+          )
+          .map(unit => ({ card: unit, source: 'UNIT' as const }));
+
+    if (options.length === 0) return;
+
+    gameState.pendingQuery = {
+      id: Math.random().toString(36).substring(7),
+      type: 'SELECT_CARD',
+      playerUid: playerState.uid,
+      options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, options),
+      title: currentTargetId ? '解除装备' : '选择装备目标',
+      description: currentTargetId ? '选择这张卡以解除装备状态。' : '选择1个未装备《银白十字战衣》的单位。',
+      minSelections: 1,
+      maxSelections: 1,
+      callbackKey: 'EFFECT_RESOLVE',
+      context: {
+        sourceCardId: card.gamecardId,
+        effectId: '301130025_equip'
+      }
+    };
+  },
+  onQueryResolve: async (card, gameState, playerState, selections) => {
+    const selectedId = selections[0];
+    if (selectedId === card.gamecardId) {
+      card.equipTargetId = undefined;
+      EventEngine.recalculateContinuousEffects(gameState);
+      return;
+    }
+
+    const target = playerState.unitZone.find(unit => unit?.gamecardId === selectedId);
+    if (!target || hasSilverCrossArmorEquipped(playerState.itemZone, target.gamecardId, card.gamecardId)) return;
+
+    card.equipTargetId = target.gamecardId;
+    EventEngine.dispatchEvent(gameState, {
+      type: 'CARD_EQUIPPED',
+      playerUid: playerState.uid,
+      sourceCard: card,
+      sourceCardId: card.gamecardId,
+      targetCardId: target.gamecardId,
+      data: {
+        itemId: card.gamecardId,
+        unitId: target.gamecardId
+      }
+    });
+    EventEngine.recalculateContinuousEffects(gameState);
+  }
+};
+
+const cardEffects: CardEffect[] = [silverCrossEquipEffect, {
   id: '301130025_reset_equipped',
   type: 'TRIGGER',
   triggerLocation: ['ITEM'],

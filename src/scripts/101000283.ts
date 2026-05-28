@@ -33,6 +33,19 @@ const effect_101000283_enter_recover: CardEffect = {
       () => 'GRAVE'
     );
   },
+  targetSpec: {
+    title: '选择放回卡组底的卡',
+    description: '选择你的墓地中最多三张红色或黄色卡。',
+    minSelections: 0,
+    maxSelections: 3,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      playerState.grave
+        .filter(card => card.color === 'RED' || card.color === 'YELLOW')
+        .map(card => ({ card, source: 'GRAVE' as const }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const selectedCards = selections
       .map(id => playerState.grave.find(card => card.gamecardId === id))

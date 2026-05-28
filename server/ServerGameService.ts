@@ -2,7 +2,7 @@ import { GameState, PlayerState, Card, Deck, TriggerLocation, CardEffect, StackI
 import { EventEngine } from '../src/services/EventEngine';
 import { AtomicEffectExecutor } from '../src/services/AtomicEffectExecutor';
 import { clearBattlefieldState, shouldClearBattlefieldStateOnMove } from '../src/lib/cardState';
-import { satisfiesHighAlchemyEntryRestriction } from '../src/lib/highAlchemy';
+import { getEntryRestrictionMessage, satisfiesHighAlchemyEntryRestriction } from '../src/lib/highAlchemy';
 import { getCardIdentity } from '../src/lib/utils';
 import { addBattleLog, addCardAddedToHandBattleLog, cardToBattleLogRef, describeBattleLogTarget } from '../src/lib/battleLog';
 import { SERVER_CARD_LIBRARY } from './card_loader';
@@ -577,6 +577,31 @@ export const ServerGameService = {
           options: [{ id: 'RESOLVE', value: 'RESOLVE', label: '结算' }],
           title: targetShape.title || '确认效果',
           description: targetShape.description || '确认结算该效果。',
+          minSelections: 1,
+          maxSelections: 1,
+          callbackKey: 'DECLARE_EFFECT_TARGETS',
+          context: {
+            ...context,
+            sourceCardId: sourceCard.gamecardId,
+            effectIndex,
+            effectId: effect.id,
+            activationPlayerUid: playerUid,
+            declaredTargets,
+            targetGroupIndex: context.targetGroupIndex || 0,
+            skipDeclareTargetSelection: true
+          }
+        };
+        return true;
+      }
+
+      if (context.pendingAction === 'ACTIVATE_EFFECT' || context.pendingAction === 'PLAY_CARD') {
+        gameState.pendingQuery = {
+          id: Math.random().toString(36).substring(7),
+          type: 'SELECT_CHOICE',
+          playerUid,
+          options: [{ id: 'RESOLVE', value: 'RESOLVE', label: 'Resolve' }],
+          title: targetShape.title || 'Confirm effect',
+          description: targetShape.description || 'Confirm resolving this effect.',
           minSelections: 1,
           maxSelections: 1,
           callbackKey: 'DECLARE_EFFECT_TARGETS',
@@ -1660,6 +1685,7 @@ export const ServerGameService = {
       suppressLog?: boolean;
       highAlchemyMaterialColors?: string[];
       highAlchemyMaterialCount?: number;
+      allowedByOwnEntryAbilityCardId?: string;
     }
   ): boolean {
     const sourcePlayer = gameState.players[sourcePlayerId];
@@ -1691,7 +1717,7 @@ export const ServerGameService = {
         card.type === 'UNIT' &&
         !satisfiesHighAlchemyEntryRestriction(card, options)
       ) {
-        gameState.logs.push(`[系统] [${card.fullName}] 只能通过满足素材颜色与数量的《高位炼金》效果进入战场。`);
+        gameState.logs.push(`[系统] [${card.fullName}] ${getEntryRestrictionMessage(card)}`);
         return false;
       }
       if (options?.isEffect && options.effectSourceCardId) {
@@ -2062,7 +2088,7 @@ export const ServerGameService = {
         return { canPlay: false, reason: '单位区已有同名专用卡' };
       }
       if (!satisfiesHighAlchemyEntryRestriction(card)) {
-        return { canPlay: false, reason: '这张卡只能通过满足素材颜色与数量的《高位炼金》效果进入战场' };
+        return { canPlay: false, reason: getEntryRestrictionMessage(card) };
       }
     } else if (card.type === 'ITEM') {
       if (card.specialName && player.itemZone.some(c => c?.specialName === card.specialName)) {
@@ -3659,6 +3685,28 @@ export const ServerGameService = {
               ...trigger,
               declaredTargets
             }, onUpdate);
+            return gameState;
+          }
+          if (query.context?.pendingAction === 'ACTIVATE_EFFECT') {
+            await ServerGameService.activateEffect(
+              gameState,
+              query.context.activationPlayerUid || playerUid,
+              query.context.cardId,
+              effectIndex,
+              declaredTargets,
+              { resumeFromQuery: true }
+            );
+            return gameState;
+          }
+          if (query.context?.pendingAction === 'PLAY_CARD') {
+            await ServerGameService.playCard(
+              gameState,
+              query.context.activationPlayerUid || playerUid,
+              query.context.cardId,
+              query.context.paymentSelection || {},
+              declaredTargets,
+              { resumeFromQuery: true, paymentSelectionResolved: !!query.context?.paymentSelectionResolved }
+            );
             return gameState;
           }
           return gameState;

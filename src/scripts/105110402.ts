@@ -8,7 +8,7 @@ const cardEffects: CardEffect[] = [{
   triggerEvent: 'CARD_ENTERED_ZONE',
   limitCount: 1,
   limitNameType: true,
-  isMandatory: false,
+  isMandatory: true,
   description: '同名1回合1次：这个单位进入战场时，将你卡组顶的1张卡背面放逐。',
   condition: (_gameState, playerState, instance, event) =>
     instance.cardlocation === 'UNIT' &&

@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { createSelectCardQuery, damagePlayerByEffect, getOpponentUid, isFeijingCard, moveCard, moveCardAsCost } from './BaseUtil';
+import { createSelectCardQuery, damagePlayerByEffect, getOpponentUid, isFeijingCard, moveCard, moveCardAsCost, playerTargetCandidates } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
   id: '302000044_burn',
@@ -32,10 +32,24 @@ const cardEffects: CardEffect[] = [{
       () => 'HAND'
     );
   },
+  targetSpec: {
+    title: '选择对手',
+    description: '选择1名对手。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['PLAYER'],
+    controller: 'OPPONENT',
+    step: 'PLAYER',
+    getCandidates: (gameState, playerState) => {
+      return playerTargetCandidates(gameState, playerState.uid, { includeSelf: false, includeOpponent: true });
+    }
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'PLAYER') {
       const owner = gameState.players[context.ownerUid || playerState.uid];
       const feijingHands = owner.hand.filter(isFeijingCard);
+      const declaredTarget = context?.declaredTargets?.[0];
+      const targetUid = declaredTarget?.ownerUid || getOpponentUid(gameState, owner.uid);
       createSelectCardQuery(
         gameState,
         owner.uid,
@@ -44,7 +58,7 @@ const cardEffects: CardEffect[] = [{
         '选择手牌中的最多2张具有【菲晶】的卡舍弃。每舍弃1张，给予对手2点伤害。',
         0,
         Math.min(2, feijingHands.length),
-        { sourceCardId: instance.gamecardId, effectId: '302000044_burn', step: 'DISCARD', ownerUid: owner.uid, targetUid: getOpponentUid(gameState, owner.uid) },
+        { sourceCardId: instance.gamecardId, effectId: '302000044_burn', step: 'DISCARD', ownerUid: owner.uid, targetUid },
         () => 'HAND'
       );
       return;

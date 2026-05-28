@@ -31,6 +31,19 @@ const effect_205000136_activate: CardEffect = {
       () => 'DECK'
     );
   },
+  targetSpec: {
+    title: '选择单位',
+    description: '从你的卡组选择1个单位放置到战场。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['DECK'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      playerState.deck
+        .filter(card => card.type === 'UNIT' && canPutUnitOntoBattlefield(playerState, card))
+        .map(card => ({ card, source: 'DECK' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = AtomicEffectExecutor.findCardById(gameState, selections[0]);
     if (!target) return;

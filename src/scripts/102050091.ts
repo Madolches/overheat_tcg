@@ -1,4 +1,4 @@
-import { Card, CardEffect, TriggerLocation } from '../types/game';
+import { Card, CardEffect } from '../types/game';
 import { addInfluence, ensureData, ownUnits, ownerOf } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
@@ -23,7 +23,8 @@ const cardEffects: CardEffect[] = [{
     triggerLocation: ['HAND'],
     isGlobal: true,
     description: '你的1个单位将要被战斗破坏时，支付三费且我方场上有2个以上红色单位：可以将这张卡从手牌放置到战场上。之后，防止那次破坏。',
-    condition: () => false
+    condition: (_gameState, _playerState, _instance, event) =>
+      event?.type === 'BATTLE_DESTROY_WOULD_OCCUR'
   }];
 
 /**

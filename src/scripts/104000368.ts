@@ -10,6 +10,7 @@ import {
   getOpponentUid,
   moveCard,
   moveCardAsCost,
+  playerTargetCandidates,
   putUnitOntoField
 } from './BaseUtil';
 
@@ -151,6 +152,33 @@ const effect_104000368_modes: CardEffect = {
     );
     return true;
   },
+  targetSpec: {
+    modeTitle: '选择效果',
+    modeDescription: '选择要执行的效果。',
+    modeOptions: [{
+      id: 'DAMAGE_EXILE',
+      label: '给予对手2点伤害并放逐其墓地最多2张卡',
+      title: '选择对手',
+      description: '选择1名对手。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['PLAYER'],
+      controller: 'OPPONENT',
+      step: 'PLAYER',
+      condition: canDamageOpponent,
+      getCandidates: (gameState, playerState) =>
+        playerTargetCandidates(gameState, playerState.uid, { includeSelf: false, includeOpponent: true })
+    }, {
+      id: 'COUNTER',
+      label: '反击有颜色限制的非神蚀卡',
+      title: '反击',
+      description: '反击那张卡。',
+      minSelections: 0,
+      maxSelections: 0,
+      step: 'COUNTER',
+      condition: canCounterOpponentColoredNonGodCard
+    }]
+  },
   execute: async (instance, gameState, playerState) => {
     const options = modeOptions(gameState, playerState);
     if (options.length === 1 && options[0].value === 'COUNTER') {
@@ -182,6 +210,15 @@ const effect_104000368_modes: CardEffect = {
     );
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.modeId === 'COUNTER' || context?.step === 'COUNTER') {
+      const target = findOpponentColoredNonGodStackItem(gameState, playerState.uid);
+      if (target) {
+        target.isNegated = true;
+        gameState.logs.push(`[${instance.fullName}] countered [${target.card?.fullName || 'opponent card'}].`);
+      }
+      return;
+    }
+
     if (context?.step === 'MODE') {
       if (selections[0] === 'COUNTER') {
         const target = findOpponentColoredNonGodStackItem(gameState, playerState.uid);
@@ -203,9 +240,10 @@ const effect_104000368_modes: CardEffect = {
     }
 
     if (context?.step === 'PLAYER') {
-      const targetUid = selections[0] === 'PLAYER_OPPONENT'
+      const declaredTarget = context.declaredTargets?.[0];
+      const targetUid = declaredTarget?.ownerUid || (selections[0] === 'PLAYER_OPPONENT'
         ? getOpponentUid(gameState, playerState.uid)
-        : selections[0];
+        : selections[0]);
       if (!targetUid || !gameState.players[targetUid]) return;
       await damagePlayerByEffect(gameState, playerState.uid, targetUid, 2, instance);
       const graveTargets = gameState.players[targetUid].grave.filter((card: Card) => !!card);

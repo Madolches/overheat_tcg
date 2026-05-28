@@ -16,6 +16,22 @@ const cardEffects: CardEffect[] = [{
       faceUpErosion(playerState).filter(card => card.color === 'RED').length >= 2 &&
       ownUnits(opponent).some(unit => !unit.godMark);
   },
+  cost: async (gameState, playerState, instance) => {
+    const candidates = faceUpErosion(playerState).filter(card => card.color === 'RED');
+    if (candidates.length < 2) return false;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      candidates,
+      '选择红色侵蚀',
+      '选择侵蚀区中的2张红色正面卡送入墓地作为费用。',
+      2,
+      2,
+      { sourceCardId: instance.gamecardId, effectId: '102050479_enter_destroy', costType: 'EROSION_COST' },
+      () => 'EROSION_FRONT'
+    );
+    return true;
+  },
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,
@@ -29,7 +45,34 @@ const cardEffects: CardEffect[] = [{
       () => 'EROSION_FRONT'
     );
   },
+  targetSpec: {
+    title: '选择破坏目标',
+    description: '选择对手场上的1个非神蚀单位破坏。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    step: 'TARGET',
+    getCandidates: (gameState, playerState) => {
+      const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
+      return ownUnits(opponent)
+        .filter(unit => !unit.godMark)
+        .map(card => ({ card, source: 'UNIT' as any }));
+    }
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.costType === 'EROSION_COST') {
+      const selected = selections
+        .map(id => playerState.erosionFront.find(entry => entry?.gamecardId === id && entry.color === 'RED' && entry.displayState === 'FRONT_UPRIGHT'))
+        .filter((card: Card | undefined): card is Card => !!card);
+      if (selected.length !== 2) {
+        context.cancelActivation = true;
+        return;
+      }
+      selected.forEach(card => moveCardAsCost(gameState, playerState.uid, card, 'GRAVE', instance));
+      return;
+    }
+
     if (context?.step === 'COST') {
       selections.forEach(id => {
         const card = playerState.erosionFront.find(entry => entry?.gamecardId === id && entry.color === 'RED' && entry.displayState === 'FRONT_UPRIGHT');

@@ -30,6 +30,21 @@ const cardEffects: CardEffect[] = [{
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    title: '选择横置目标',
+    description: '选择对手的1个非神蚀单位，将其横置。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    step: 'TARGET',
+    getCandidates: (gameState, playerState) => {
+      const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
+      return ownUnits(opponent)
+        .filter(isNonGodUnit)
+        .map(card => ({ card, source: 'UNIT' as const }));
+    }
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     await AtomicEffectExecutor.execute(
       gameState,

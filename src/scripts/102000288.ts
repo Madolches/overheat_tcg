@@ -107,6 +107,19 @@ const effect_102000288_grave_destroy_access_three: CardEffect = {
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    title: '选择破坏目标',
+    description: '选择战场上的1个ACCESS值+3的非神蚀单位破坏。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    step: 'TARGET',
+    getCandidates: gameState =>
+      allCardsOnField(gameState)
+        .filter(isAccessThreeNonGodUnit)
+        .map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (target && isAccessThreeNonGodUnit(target) && target.cardlocation === 'UNIT') {

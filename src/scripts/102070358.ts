@@ -101,6 +101,19 @@ const cardEffects: CardEffect[] = [{
       card => card.cardlocation as any
     );
   },
+  targetSpec: {
+    title: '选择破坏单位',
+    description: '选择战场上的1个非神蚀单位破坏。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    step: 'TARGET',
+    getCandidates: gameState =>
+      allCardsOnField(gameState)
+        .filter(card => isNonGodUnit(card))
+        .map(card => ({ card, source: card.cardlocation as any }))
+  },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (!target || !isNonGodUnit(target) || !ownerUidOf(gameState, target)) return;

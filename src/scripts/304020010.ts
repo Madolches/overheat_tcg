@@ -11,7 +11,7 @@ const card: Card = {
   gamecardId: null as any,
   colorReq: { BLUE: 1 },
   faction: '无',
-  acValue: 0,
+  acValue: 2,
   godMark: false,
   displayState: 'FRONT_UPRIGHT',
   feijingMark: false,

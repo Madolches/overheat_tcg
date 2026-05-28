@@ -33,6 +33,21 @@ const cardEffects: CardEffect[] = [
         () => 'UNIT'
       );
     },
+    targetSpec: {
+      title: '选择破坏单位',
+      description: '选择你的战场上的1个非神蚀单位破坏。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'SELF',
+      step: 'DESTROY',
+      getCandidates: (_gameState, playerState, instance) =>
+        playerState.unitZone
+          .filter((unit): unit is Card =>
+            !!unit && unit.gamecardId !== instance.gamecardId && isNonGodUnit(unit)
+          )
+          .map(card => ({ card, source: 'UNIT' as const }))
+    },
     onQueryResolve: async (instance, gameState, playerState, selections, context) => {
       if (context?.step === 'DESTROY') {
         const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
