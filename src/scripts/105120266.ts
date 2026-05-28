@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, canPutUnitOntoBattlefield, createSelectCardQuery, enteredFromHand, isAlchemyCard, moveCard, putUnitOntoField } from './BaseUtil';
+import { AtomicEffectExecutor, canPutUnitOntoBattlefield, createSelectCardQuery, enteredFromHand, isAlchemyCard, moveCardAsCost, putUnitOntoField } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
   id: '105120266_reforge',
@@ -37,7 +37,7 @@ const cardEffects: CardEffect[] = [{
     if (context?.step === 'COST') {
       selections.forEach(id => {
         const cost = AtomicEffectExecutor.findCardById(gameState, id);
-        if (cost?.cardlocation === 'GRAVE') moveCard(gameState, playerState.uid, cost, 'EXILE', instance);
+        if (cost?.cardlocation === 'GRAVE') moveCardAsCost(gameState, playerState.uid, cost, 'EXILE', instance);
       });
       createSelectCardQuery(gameState, playerState.uid, playerState.deck.filter(card => card.type === 'UNIT' && isAlchemyCard(card) && !card.godMark && canPutUnitOntoBattlefield(playerState, card)), '选择炼金单位', '选择卡组中1张卡名含有《炼金》的非神蚀单位放置到战场。', 1, 1, {
         sourceCardId: instance.gamecardId,

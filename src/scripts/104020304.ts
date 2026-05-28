@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, canPutItemOntoBattlefield, cardsInZones, moveCard, selectFromEntries } from './BaseUtil';
+import { AtomicEffectExecutor, canPutItemOntoBattlefield, cardsInZones, exhaustCost, moveCard, selectFromEntries } from './BaseUtil';
 
 const KYUBI = '九尾商会联盟';
 
@@ -31,8 +31,8 @@ const cardEffects: CardEffect[] = [{
     instance.cardlocation === 'UNIT' &&
     !instance.isExhausted &&
     itemTargets(playerState).length > 0,
+  cost: exhaustCost,
   execute: async (instance, gameState, playerState) => {
-    instance.isExhausted = true;
     selectFromEntries(
       gameState,
       playerState.uid,

@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { createSelectCardQuery, getTopDeckCards, moveCard, moveCardsToTop } from './BaseUtil';
+import { createSelectCardQuery, getTopDeckCards, moveCardAsCost, moveCardsToTop } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
   id: '105000405_start_reorder_top_four',
@@ -51,7 +51,7 @@ const cardEffects: CardEffect[] = [{
     gameState.phase === 'MAIN' &&
     playerState.hand.length > 0 &&
     playerState.deck.length > 0,
-  execute: async (instance, gameState, playerState) => {
+  cost: async (gameState, playerState, instance) => {
     createSelectCardQuery(
       gameState,
       playerState.uid,
@@ -60,15 +60,19 @@ const cardEffects: CardEffect[] = [{
       '选择1张手牌放置到卡组底，之后抽1张卡。',
       1,
       1,
-      { sourceCardId: instance.gamecardId, effectId: '105000405_bottom_hand_draw' },
+      { sourceCardId: instance.gamecardId, effectId: '105000405_bottom_hand_draw', step: 'COST' },
       () => 'HAND'
     );
+    return true;
   },
-  onQueryResolve: async (instance, gameState, playerState, selections) => {
+  execute: async (instance, gameState, playerState) => {
+    await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'DRAW', value: 1 }, instance);
+  },
+  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step !== 'COST') return;
     const target = selections[0] ? playerState.hand.find((card: Card) => card.gamecardId === selections[0]) : undefined;
     if (!target) return;
-    moveCard(gameState, playerState.uid, target, 'DECK', instance, { insertAtBottom: true });
-    await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'DRAW', value: 1 }, instance);
+    moveCardAsCost(gameState, playerState.uid, target, 'DECK', instance, { insertAtBottom: true });
   }
 }];
 

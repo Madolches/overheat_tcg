@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { allCardsOnField, allUnitsOnField, backErosionCount, createSelectCardQuery, destroyByEffect, ensureData, getOpponentUid, moveTopDeckTo } from './BaseUtil';
+import { allCardsOnField, allUnitsOnField, backErosionCount, canPayAccessCost, createSelectCardQuery, destroyByEffect, ensureData, getOpponentUid, moveTopDeckTo, paymentCost } from './BaseUtil';
 
 const nonGodFieldCards = (gameState: any) => allCardsOnField(gameState).filter(card => !card.godMark);
 const hasDrawnByEffectThisTurn = (playerState: any, gameState: any) =>
@@ -21,7 +21,9 @@ const cardEffects: CardEffect[] = [{
     playerState.isTurn &&
     backErosionCount(playerState) >= 2 &&
     hasDrawnByEffectThisTurn(playerState, gameState) &&
-    nonGodFieldCards(gameState).length > 0,
+    nonGodFieldCards(gameState).length > 0 &&
+    canPayAccessCost(gameState, playerState, 2, instance.color, instance),
+  cost: paymentCost(2),
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,
