@@ -290,9 +290,10 @@ async function testPeonySnowModes(): Promise<ScenarioResult> {
   const name = 'SP03-W03 destroys paired targets and can set up Seiso recruit';
   const peony = cloneScriptCard(sp03W03 as Card, 'UNIT');
   const ownTarget = cloneScriptCard(sp03W01 as Card, 'UNIT');
+  const payer = testCard({ id: 'PEONY_PAYER', fullName: 'Peony Payer', cardlocation: 'UNIT' });
   const enemyTarget = testCard({ id: 'ENEMY_LOW', fullName: 'Enemy Low', acValue: 3, type: 'ITEM', godMark: false, cardlocation: 'ITEM' });
   const state = game({
-    unitZone: [peony, ownTarget, null, null, null, null],
+    unitZone: [peony, ownTarget, payer, null, null, null],
   }, {
     itemZone: [enemyTarget],
   });
@@ -307,6 +308,10 @@ async function testPeonySnowModes(): Promise<ScenarioResult> {
     return fail(name, `expected opponent target query, got ${state.pendingQuery?.context?.step || 'none'}`);
   }
   await answerPendingQuery(state, 'BOT', [enemyTarget.gamecardId]);
+  if (state.pendingQuery?.context?.step !== 'PAY_DESTROY_PAIR' || state.pendingQuery?.type !== 'SELECT_PAYMENT') {
+    return fail(name, `expected destroy payment query, got ${state.pendingQuery?.context?.step || state.pendingQuery?.type || 'none'}`);
+  }
+  await answerPendingQuery(state, 'BOT', [JSON.stringify({ exhaustUnitIds: [payer.gamecardId] })]);
 
   const pairDestroyed = state.players.BOT.grave.some((card: Card) => card.gamecardId === ownTarget.gamecardId) &&
     state.players.P1.grave.some((card: Card) => card.gamecardId === enemyTarget.gamecardId);

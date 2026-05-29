@@ -119,19 +119,41 @@ const testThunderPriestDiscount = () => {
     baseAcValue: 4,
     cardlocation: 'HAND'
   });
+  const redUnit = testCard({
+    id: 'RED_HAND_UNIT',
+    fullName: '红色非神蚀单位',
+    type: 'UNIT',
+    color: 'RED',
+    godMark: false,
+    acValue: 4,
+    baseAcValue: 4,
+    cardlocation: 'HAND'
+  });
+  const redStory = testCard({
+    id: 'RED_HAND_STORY',
+    fullName: '红色故事卡',
+    type: 'STORY',
+    color: 'RED',
+    godMark: false,
+    acValue: 4,
+    baseAcValue: 4,
+    cardlocation: 'HAND'
+  });
   const state = makeGame({
     unitZone: [priest, null, null, null, null, null],
-    hand: [handCard]
+    hand: [handCard, redUnit, redStory]
   });
   (state.players.BOT as any)[`soulDevourActivatedTurn_${state.turnCount}`] = 2;
 
   const details = GameService.getEffectivePlayCostDetails(state, state.players.BOT, handCard);
   assert(details.cost === 2, `expected effective cost 2, got ${details.cost}`);
   assert(details.sourceCardName === '炎雷祭司', `expected source 炎雷祭司, got ${details.sourceCardName}`);
+  assert(GameService.getEffectivePlayCostDetails(state, state.players.BOT, redUnit).cost === 2, 'red non-god unit should be discounted');
+  assert(GameService.getEffectivePlayCostDetails(state, state.players.BOT, redStory).cost === 4, 'red story should not be discounted');
 
   const effects = getPlayerOngoingEffects(state, 'BOT');
   assert(
-    effects.some(effect => effect.sourceCardName === '炎雷祭司' && effect.description.includes('ACCESS值-2')),
+    effects.some(effect => effect.sourceCardName === '炎雷祭司' && effect.description.includes('红色非神蚀单位卡ACCESS值-2')),
     `expected global ongoing discount ACCESS值-2, got ${effects.map(effect => effect.description).join(' | ')}`
   );
 };

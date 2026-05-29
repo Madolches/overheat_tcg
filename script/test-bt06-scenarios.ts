@@ -2013,10 +2013,27 @@ async function testYellowHighAlchemyChipAndGiant(): Promise<ScenarioResult> {
   };
   EventEngine.recalculateContinuousEffects(giantState);
   const giantBoosted = liveGiant?.power === 4000 && !!liveGiant?.isHeroic;
+  const giantOpponent = testCard({ id: 'Y07_OPPONENT', type: 'UNIT', cardlocation: 'GRAVE' });
+  giantState.players.P1.deck = deckCards(5, 'Y07_DAMAGE_FILL', 'BLUE');
+  giantState.battleState = {
+    attackers: [giant.gamecardId],
+    defender: giantOpponent.gamecardId,
+    isAlliance: false
+  } as any;
+  EventEngine.dispatchEvent(giantState, {
+    type: 'CARD_DESTROYED_BATTLE',
+    playerUid: 'P1',
+    targetCardId: giantOpponent.gamecardId,
+    data: { attackerIds: [giant.gamecardId], defenderId: giantOpponent.gamecardId, isAlliance: false }
+  } as any);
+  const giantDamageQueued = giantState.triggeredEffectsQueue?.some((entry: any) => entry.effect?.id === '105000354_battle_damage') ||
+    giantState.pendingQuery?.context?.effectId === '105000354_battle_damage';
+  await ServerGameService.checkTriggeredEffects(giantState);
+  const giantDealtThree = giantState.players.P1.erosionFront.filter((card: Card | null) => !!card).length === 3;
 
-  return chipPowered && chipCostExiled && chipOnlyAlchemyFeijingCost && chipCopyExhausted && chipCopyFromDeck && storyResolved && giantBoosted
-    ? pass(name, `chip=${chipPowered}, costFilter=${chipOnlyAlchemyFeijingCost}, copy=${chipCopyExhausted}, giant=${giantBoosted}`)
-    : fail(name, `chip=${chipPowered}, cost=${chipCostExiled}/${chipOnlyAlchemyFeijingCost}, copy=${chipCopyExhausted}/${chipCopyFromDeck}, story=${storyResolved}, giant=${giantBoosted}`);
+  return chipPowered && chipCostExiled && chipOnlyAlchemyFeijingCost && chipCopyExhausted && chipCopyFromDeck && storyResolved && giantBoosted && giantDealtThree
+    ? pass(name, `chip=${chipPowered}, costFilter=${chipOnlyAlchemyFeijingCost}, copy=${chipCopyExhausted}, giant=${giantBoosted}, damage=${giantDealtThree}`)
+    : fail(name, `chip=${chipPowered}, cost=${chipCostExiled}/${chipOnlyAlchemyFeijingCost}, copy=${chipCopyExhausted}/${chipCopyFromDeck}, story=${storyResolved}, giant=${giantBoosted}, queued=${giantDamageQueued}, damage=${giantDealtThree}`);
 }
 
 async function testAcademyFeijingMerchantLeaveTrigger(): Promise<ScenarioResult> {

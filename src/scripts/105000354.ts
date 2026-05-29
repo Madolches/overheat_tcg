@@ -26,6 +26,19 @@ const enteredFromDeckByEffect = (instance: Card) =>
   (instance as any).data?.lastMovedToZone === 'UNIT' &&
   (instance as any).data?.lastMovedByEffectTurn !== undefined;
 
+const enteredFromDeckByCardEffect = (instance: Card, gameState: any) =>
+  enteredFromDeckByEffect(instance) || enteredFromDeckByAlchemy(instance, gameState);
+
+const battleDestroyedOpponentUnitByThisCard = (playerState: any, instance: Card, event?: any) => {
+  if (event?.type !== 'CARD_DESTROYED_BATTLE' || !event.targetCardId) return false;
+  const participated =
+    event.data?.attackerIds?.includes(instance.gamecardId) ||
+    event.data?.defenderId === instance.gamecardId;
+  if (!participated) return false;
+  if (event.playerUid !== undefined) return event.playerUid !== playerState.uid;
+  return !playerState.unitZone.some((unit: Card | null) => unit?.gamecardId === event.targetCardId);
+};
+
 const effect_105000354_alchemy_bonus: CardEffect = {
   id: '105000354_alchemy_bonus',
   type: 'CONTINUOUS',
@@ -46,19 +59,15 @@ const effect_105000354_battle_damage: CardEffect = {
   type: 'TRIGGER',
   triggerLocation: ['UNIT'],
   triggerEvent: 'CARD_DESTROYED_BATTLE' as any,
+  isGlobal: true,
   isMandatory: true,
-  description: '由于卡效果从卡组进入战场的这张卡战斗破坏对手单位时，给予对手1点伤害。',
-  condition: (_gameState, playerState, instance, event) =>
+  description: '由于卡效果从卡组进入战场的这张卡战斗破坏对手单位时，给予对手3点伤害。',
+  condition: (gameState, playerState, instance, event) =>
     instance.cardlocation === 'UNIT' &&
-    enteredFromDeckByEffect(instance) &&
-    (
-      event?.data?.attackerIds?.includes(instance.gamecardId) ||
-      event?.data?.defenderId === instance.gamecardId
-    ) &&
-    !!event?.targetCardId &&
-    !playerState.unitZone.some((unit: Card | null) => unit?.gamecardId === event.targetCardId),
+    enteredFromDeckByCardEffect(instance, gameState) &&
+    battleDestroyedOpponentUnitByThisCard(playerState, instance, event),
   execute: async (instance, gameState, playerState) => {
-    await damagePlayerByEffect(gameState, playerState.uid, getOpponentUid(gameState, playerState.uid), 1, instance);
+    await damagePlayerByEffect(gameState, playerState.uid, getOpponentUid(gameState, playerState.uid), 3, instance);
   }
 };
 

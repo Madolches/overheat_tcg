@@ -134,7 +134,7 @@ const getEffectivePlayCostDetails = (gameState: GameState | null, player: Player
       card.fullName.includes('雷霆') ||
       !!card.specialName?.includes('雷霆')
     );
-  if (soulDevourDiscount > 0 && (isThunderUnit || (card.color === 'RED' && !card.godMark))) {
+  if (soulDevourDiscount > 0 && card.type === 'UNIT' && (isThunderUnit || (card.color === 'RED' && !card.godMark))) {
     return costDetails(
       baseCost,
       Math.max(0, baseCost - soulDevourDiscount),

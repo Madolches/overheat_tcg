@@ -2149,9 +2149,11 @@ async function testYellowPhantomBeastContinuous(): Promise<ScenarioResult> {
   });
   EventEngine.recalculateContinuousEffects(stateA);
   const bahamutProtected = (kode as any).battleImmuneByEffect === true &&
-    (kode as any).data?.cannotBeEffectTargetByOpponentAcLe === 4 &&
+    (kode as any).cannotBeEffectTargetByEffect === true &&
     (bahamut as any).battleImmuneByEffect === true &&
-    (crow as any).battleImmuneByEffect === true;
+    (bahamut as any).cannotBeEffectTargetByEffect === true &&
+    (crow as any).battleImmuneByEffect === true &&
+    (crow as any).cannotBeEffectTargetByEffect === true;
   const cannotDefend = (defender as any).data?.cannotDefendTurn === stateA.turnCount;
 
   const lost = testCard({ id: 'Y07_LOST', fullName: 'Y07 Lost', type: 'UNIT', color: 'RED', godMark: false, cardlocation: 'UNIT' });

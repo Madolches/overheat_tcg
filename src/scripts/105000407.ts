@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { addInfluence, ensureData, nameContains, ownUnits } from './BaseUtil';
+import { addInfluence, nameContains, ownUnits } from './BaseUtil';
 
 const isAlchemyBeast = (card?: Card | null) =>
   !!card && card.type === 'UNIT' && nameContains(card, '炼金幻兽');
@@ -23,7 +23,7 @@ const cardEffects: CardEffect[] = [{
   type: 'CONTINUOUS',
   triggerLocation: ['UNIT'],
   erosionTotalLimit: [3, 6],
-  description: '3~6：你的卡名含有《炼金幻兽》的单位不会被战斗破坏，不会成为对手ACCESS4以下卡效果的对象。',
+  description: '3~6：你的卡名含有《炼金幻兽》的单位不会被战斗破坏，也不能成为效果对象。',
   applyContinuous: (_gameState, instance) => {
     const owner = Object.values(_gameState.players).find((player: any) =>
       player.unitZone.some((unit: Card | null) => unit?.gamecardId === instance.gamecardId)
@@ -31,9 +31,8 @@ const cardEffects: CardEffect[] = [{
     if (!owner) return;
     ownUnits(owner).filter(isAlchemyBeast).forEach(unit => {
       (unit as any).battleImmuneByEffect = true;
-      const data = ensureData(unit);
-      data.cannotBeEffectTargetByOpponentAcLe = 4;
-      addInfluence(unit, instance, '不会被战斗破坏，不会成为对手ACCESS4以下卡效果的对象');
+      (unit as any).cannotBeEffectTargetByEffect = true;
+      addInfluence(unit, instance, '不会被战斗破坏，也不能成为效果对象');
     });
   }
 }];

@@ -118,6 +118,12 @@ const dynamicContinuousDescription = (
   if (effect.id === '102060321_hand_access_discount') {
     const soulDevourCount = Number((owner as any)[`soulDevourActivatedTurn_${gameState.turnCount}`] || 0);
     if (soulDevourCount <= 0) return undefined;
+    return `你的手牌中的<雷霆>单位卡和红色非神蚀单位卡ACCESS值-${soulDevourCount}（最低为0）。`;
+  }
+
+  if (effect.id === '102060321_hand_access_discount') {
+    const soulDevourCount = Number((owner as any)[`soulDevourActivatedTurn_${gameState.turnCount}`] || 0);
+    if (soulDevourCount <= 0) return undefined;
     return `你的手牌中的<雷霆>单位卡和红色非神蚀卡ACCESS值-${soulDevourCount}（最低为0）。`;
   }
 

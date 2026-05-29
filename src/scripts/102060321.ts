@@ -14,14 +14,14 @@ const cardEffects: CardEffect[] = [
     type: 'CONTINUOUS',
     triggerLocation: ['UNIT'],
     content: 'HAND_ACCESS_DISCOUNT_BY_SOUL_DEVOUR',
-    description: '你的手牌中的<雷霆>单位卡和红色非神蚀卡ACCESS值减少本回合发动过的噬魂次数，最低为0。',
+    description: '你的手牌中的<雷霆>单位卡和红色非神蚀单位卡ACCESS值减少本回合发动过的噬魂次数，最低为0。',
     applyContinuous: (gameState, instance) => {
       const owner = ownerOf(gameState, instance);
       if (!owner) return;
       const discount = soulDevourCountThisTurn(gameState, owner);
       if (discount <= 0) return;
       owner.hand
-        .filter(card => isThunderUnit(card) || (card.color === 'RED' && !card.godMark))
+        .filter(card => card.type === 'UNIT' && (isThunderUnit(card) || (card.color === 'RED' && !card.godMark)))
         .forEach(card => addTemporaryAccessDiscount(card, instance, discount));
     }
   }

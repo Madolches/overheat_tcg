@@ -2,6 +2,7 @@ import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import {
   canActivateDefaultTiming,
+  canPayAccessCost,
   canPutUnitOntoBattlefield,
   createChoiceQuery,
   createSelectCardQuery,
@@ -51,6 +52,19 @@ const opponentAccessThreeOrLessNonGodCards = (gameState: any, playerUid: string)
     !card.godMark &&
     Number(card.acValue || 0) <= 3
   );
+
+const isValidPeonyOwnTarget = (gameState: any, playerState: any, card?: Card) =>
+  !!card &&
+  card.cardlocation === 'UNIT' &&
+  ownerUidOf(gameState, card) === playerState.uid &&
+  isYellowOrGreenOrSeisoNonGodUnit(card);
+
+const isValidPeonyOpponentTarget = (gameState: any, playerState: any, card?: Card) =>
+  !!card &&
+  ['UNIT', 'ITEM'].includes(card.cardlocation || '') &&
+  ownerUidOf(gameState, card) !== playerState.uid &&
+  !card.godMark &&
+  Number(card.acValue || 0) <= 3;
 
 const effect_101000293_irodori_enter: CardEffect = {
   id: '101000293_irodori_enter',
@@ -129,8 +143,12 @@ const effect_101000293_seiso_modes: CardEffect = {
       }
 
       const options = [{ value: 'SETUP_RECRUIT', label: '被破坏时横置放置清霜单位' }];
-      if (gameState.phase === 'MAIN' && opponentAccessThreeOrLessNonGodCards(gameState, playerState.uid).length > 0) {
-        options.unshift({ value: 'DESTROY_PAIR', label: '支付创痕1并破坏双方目标' });
+      if (
+        gameState.phase === 'MAIN' &&
+        opponentAccessThreeOrLessNonGodCards(gameState, playerState.uid).length > 0 &&
+        canPayAccessCost(gameState, playerState, 1, undefined, instance)
+      ) {
+        options.unshift({ value: 'DESTROY_PAIR', label: '支付1费并破坏双方目标' });
       }
       createChoiceQuery(
         gameState,
@@ -190,19 +208,46 @@ const effect_101000293_seiso_modes: CardEffect = {
       return;
     }
 
-    if (context?.step !== 'OPP_TARGET') return;
+    if (context?.step === 'OPP_TARGET') {
+      const ownTarget = context.ownTargetId ? AtomicEffectExecutor.findCardById(gameState, context.ownTargetId) : undefined;
+      const oppTarget = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
+      if (!isValidPeonyOwnTarget(gameState, playerState, ownTarget) || !isValidPeonyOpponentTarget(gameState, playerState, oppTarget)) {
+        return;
+      }
+      if (!canPayAccessCost(gameState, playerState, 1, undefined, instance)) {
+        return;
+      }
+      gameState.pendingQuery = {
+        id: Math.random().toString(36).substring(7),
+        type: 'SELECT_PAYMENT',
+        playerUid: playerState.uid,
+        options: [],
+        title: '支付费用',
+        description: `支付1点费用以发动${instance.fullName}的破坏效果。`,
+        minSelections: 1,
+        maxSelections: 1,
+        callbackKey: 'ACTIVATE_COST_RESOLVE',
+        paymentCost: 1,
+        paymentColor: instance.color,
+        context: {
+          sourceCardId: instance.gamecardId,
+          effectId: '101000293_seiso_modes',
+          step: 'PAY_DESTROY_PAIR',
+          ownTargetId: ownTarget.gamecardId,
+          oppTargetId: oppTarget.gamecardId
+        }
+      };
+      return;
+    }
+
+    if (context?.step !== 'PAY_DESTROY_PAIR') return;
+    context.cancelActivation = true;
     const ownTarget = context.ownTargetId ? AtomicEffectExecutor.findCardById(gameState, context.ownTargetId) : undefined;
-    const oppTarget = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
-    if (ownTarget?.cardlocation === 'UNIT' && ownerUidOf(gameState, ownTarget) === playerState.uid) {
+    const oppTarget = context.oppTargetId ? AtomicEffectExecutor.findCardById(gameState, context.oppTargetId) : undefined;
+    if (isValidPeonyOwnTarget(gameState, playerState, ownTarget)) {
       destroyByEffect(gameState, ownTarget, instance);
     }
-    if (
-      oppTarget &&
-      ['UNIT', 'ITEM'].includes(oppTarget.cardlocation || '') &&
-      ownerUidOf(gameState, oppTarget) !== playerState.uid &&
-      !oppTarget.godMark &&
-      Number(oppTarget.acValue || 0) <= 3
-    ) {
+    if (isValidPeonyOpponentTarget(gameState, playerState, oppTarget)) {
       destroyByEffect(gameState, oppTarget, instance);
     }
   }

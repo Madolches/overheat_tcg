@@ -166,7 +166,7 @@ export const ServerGameService = {
         card.fullName.includes('雷霆') ||
         !!card.specialName?.includes('雷霆')
       );
-    if (soulDevourDiscount > 0 && (isThunderUnit || (card.color === 'RED' && !card.godMark))) {
+    if (soulDevourDiscount > 0 && card.type === 'UNIT' && (isThunderUnit || (card.color === 'RED' && !card.godMark))) {
       return Math.max(0, baseCost - soulDevourDiscount);
     }
     if (card.id === '101140062') {
@@ -948,6 +948,7 @@ export const ServerGameService = {
           execute: originalEffect.execute,
           cost: originalEffect.cost,
           onQueryResolve: originalEffect.onQueryResolve,
+          onCostResolve: originalEffect.onCostResolve,
           resolve: originalEffect.resolve,
           applyContinuous: originalEffect.applyContinuous,
           removeContinuous: originalEffect.removeContinuous,

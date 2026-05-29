@@ -4,6 +4,7 @@ import {
   createPlayerSelectQuery,
   damagePlayerByEffect,
   ensureData,
+  canMeetBattlefieldColorRequirement,
   getOpponentUid,
   ownerUidOf
 } from './BaseUtil';
@@ -59,7 +60,8 @@ const effect_202000147_main_start_damage: CardEffect = {
       playerState.isTurn &&
       instance.cardlocation === 'HAND' &&
       data.flameBombRevealedTurn === gameState.turnCount &&
-      data.flameBombRevealOwnerUid === playerState.uid;
+      data.flameBombRevealOwnerUid === playerState.uid &&
+      canMeetBattlefieldColorRequirement(playerState, instance);
   },
   execute: async (instance, gameState, playerState) => {
     createPlayerSelectQuery(

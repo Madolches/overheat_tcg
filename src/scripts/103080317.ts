@@ -53,7 +53,7 @@ const grienAwakenCost: CardEffect['cost'] = async (gameState, playerState, insta
 };
 (grienAwakenCost as any).paymentCost = 2;
 
-const cardEffects: (CardEffect & { onCostResolve?: (card: Card, gameState: any, playerState: any) => void | Promise<void> })[] = [
+const cardEffects: CardEffect[] = [
   {
     ...resonanceEffect('103080317_resonance'),
     cost: async (gameState, playerState, instance) => {

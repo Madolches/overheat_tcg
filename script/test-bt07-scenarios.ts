@@ -1,4 +1,5 @@
 import { ServerGameService } from '../server/ServerGameService';
+import { initServerCardLibrary } from '../server/card_loader';
 import { GameService } from '../src/services/gameService';
 import { EventEngine } from '../src/services/EventEngine';
 import { AtomicEffectExecutor } from '../src/services/AtomicEffectExecutor';
@@ -1630,21 +1631,24 @@ async function testGreenGrienOrderSanctuaryAndMessenger(): Promise<ScenarioResul
   const grienActive = cloneScriptCard(bt07G07 as Card, 'HAND', { gamecardId: 'G07_ACTIVE' });
   const awakenDeckUnit = cloneScriptCard(bt07G05 as Card, 'DECK', { gamecardId: 'G07_AWAKEN_TARGET' });
   const awakenTextOnlyUnit = cloneScriptCard(bt07G06 as Card, 'DECK', { gamecardId: 'G07_TEXT_ONLY_AWAKEN' });
+  const serializedGrien = JSON.parse(JSON.stringify(grienActive)) as Card;
   const awakenPutState = game({
-    hand: [grienActive],
+    hand: [serializedGrien],
     deck: [awakenDeckUnit, awakenTextOnlyUnit],
     unitZone: [testCard({ id: 'G07_PAY', color: 'GREEN', cardlocation: 'UNIT' }), null, null, null, null, null],
     erosionBack: [testCard({ id: 'G07_BACK', cardlocation: 'EROSION_BACK' })],
   });
+  ServerGameService.hydrateCard(serializedGrien);
   const awakenPutIndex = grienActive.effects?.findIndex(effect => effect.id === '103080317_put_awaken_unit') ?? -1;
+  const grienHydratedCostHook = typeof (serializedGrien.effects?.[awakenPutIndex] as any)?.onCostResolve === 'function';
   const grienScar1Valid = ServerGameService.checkEffectLimitsAndReqs(
     awakenPutState,
     'BOT',
-    grienActive,
-    grienActive.effects![awakenPutIndex],
+    serializedGrien,
+    serializedGrien.effects![awakenPutIndex],
     'HAND'
   ).valid;
-  await ServerGameService.activateEffect(awakenPutState, 'BOT', grienActive.gamecardId, awakenPutIndex);
+  await ServerGameService.activateEffect(awakenPutState, 'BOT', serializedGrien.gamecardId, awakenPutIndex);
   if (awakenPutState.pendingQuery?.type === 'SELECT_PAYMENT') {
     const payer = awakenPutState.players.BOT.unitZone.find((unit: Card | null) => unit?.id === 'G07_PAY');
     await answerPendingQuery(awakenPutState, 'BOT', [JSON.stringify({ exhaustUnitIds: payer ? [payer.gamecardId] : [] })]);
@@ -1659,8 +1663,9 @@ async function testGreenGrienOrderSanctuaryAndMessenger(): Promise<ScenarioResul
     await answerPendingQuery(awakenPutState, 'BOT', [awakenDeckUnit.gamecardId]);
   }
   const grienScar1Put = grienScar1Valid &&
+    grienHydratedCostHook &&
     grienOnlyTrueAwakenTargets &&
-    awakenPutState.players.BOT.grave.some((card: Card) => card.gamecardId === grienActive.gamecardId) &&
+    awakenPutState.players.BOT.grave.some((card: Card) => card.gamecardId === serializedGrien.gamecardId) &&
     awakenPutState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === awakenDeckUnit.gamecardId);
 
   const grienFieldActive = cloneScriptCard(bt07G07 as Card, 'UNIT', { gamecardId: 'G07_FIELD_ACTIVE' });
@@ -2633,6 +2638,8 @@ const scenarios: ScenarioRun[] = [
   testYellowGuardRawStoneAndStories,
   testYellowFortressBlueprintAnalysisAndImmortalStone,
 ];
+
+await initServerCardLibrary();
 
 const results: ScenarioResult[] = [];
 for (const scenario of scenarios) {

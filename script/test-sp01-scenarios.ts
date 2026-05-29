@@ -157,10 +157,15 @@ async function testFlameBombDrawRevealMainStartDamage(): Promise<ScenarioResult>
     cardlocation: 'EROSION_BACK' as TriggerLocation,
     displayState: 'BACK_UPRIGHT' as Card['displayState'],
   }));
+  const redUnits = deckCards(3, 'BOT_RED_SOURCE', 'RED').map(card => ({
+    ...card,
+    cardlocation: 'UNIT' as TriggerLocation,
+  }));
   const state = game(
     {
       deck: [...deckCards(3, 'BOT_DRAW_FILL'), bomb],
       erosionBack: backErosion,
+      unitZone: [redUnits[0], redUnits[1], redUnits[2], null, null, null],
     },
     {
       deck: deckCards(10, 'P1_DAMAGE_DECK'),
@@ -203,8 +208,39 @@ async function testFlameBombDrawRevealMainStartDamage(): Promise<ScenarioResult>
     : fail(name, `drew=${drewBomb}, main=${reachedMain}, revealed=${revealed}, damaged=${damaged}, used=${usedGlobal}, query=${state.pendingQuery?.callbackKey || 'none'}`);
 }
 
+async function testFlameBombRequiresThreeRed(): Promise<ScenarioResult> {
+  const name = 'SP01-R02 requires three red sources for main start damage';
+  const bomb = cloneScriptCard(flameBomb as Card, 'DECK', { gamecardId: 'FLAME_BOMB_NO_RED' });
+  const redUnits = deckCards(2, 'BOT_LOW_RED_SOURCE', 'RED').map(card => ({
+    ...card,
+    cardlocation: 'UNIT' as TriggerLocation,
+  }));
+  const state = game(
+    {
+      deck: [...deckCards(3, 'BOT_LOW_RED_FILL'), bomb],
+      unitZone: [redUnits[0], redUnits[1], null, null, null, null],
+    },
+    {},
+    {
+      phase: 'DRAW',
+      turnCount: 2,
+    }
+  );
+
+  await ServerGameService.executeDrawPhase(state, state.players.BOT);
+  await acceptOptionalTrigger(state, 'BOT');
+  await answerPendingQuery(state, 'BOT', ['YES']);
+
+  const noDamageTrigger = state.pendingQuery?.context?.effectId !== '202000147_main_start_damage' &&
+    !(state.triggeredEffectsQueue || []).some((record: any) => record.effect?.id === '202000147_main_start_damage');
+  return noDamageTrigger
+    ? pass(name, 'damage trigger not queued without 3 red')
+    : fail(name, `unexpected damage trigger: ${state.pendingQuery?.context?.effectId || state.pendingQuery?.callbackKey || 'queue'}`);
+}
+
 const scenarios: { name: string; run: ScenarioRun }[] = [
   { name: 'SP01-R02 reveals from draw and damages at main start', run: testFlameBombDrawRevealMainStartDamage },
+  { name: 'SP01-R02 requires three red sources for main start damage', run: testFlameBombRequiresThreeRed },
 ];
 
 async function main() {

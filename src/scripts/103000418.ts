@@ -17,8 +17,24 @@ const stackItemTargetsOwnField = (gameState: any, playerUid: string, item: any) 
   return [...declaredTargetIds, ...directTargetIds].some(id => ownFieldIds.has(id));
 };
 
-const containsDestroyEffect = (item: any) =>
-  /破坏|destroy/i.test(`${item.effect?.description || ''} ${item.effect?.content || ''} ${item.card?.fullName || ''}`);
+const stackItemEffect = (item: any) =>
+  item.effect ||
+  (item.effectIndex !== undefined && item.card?.effects?.[item.effectIndex]) ||
+  undefined;
+
+const stackItemText = (item: any) => {
+  const effect = stackItemEffect(item);
+  return [
+    effect?.description,
+    effect?.content,
+    effect?.id,
+    item.card?.fullName,
+    ...(item.card?.effects || []).map((effect: any) => `${effect?.description || ''} ${effect?.content || ''} ${effect?.id || ''}`)
+  ].join(' ');
+};
+
+const containsCounterableDestroyEffect = (item: any) =>
+  /破坏|鐮村潖|destroy/i.test(stackItemText(item));
 
 const isCounterableDestroyEffect = (gameState: any, playerUid: string, item: any) =>
   item?.ownerUid &&
@@ -26,10 +42,11 @@ const isCounterableDestroyEffect = (gameState: any, playerUid: string, item: any
   item.card &&
   (
     item.card.type === 'STORY' ||
-    item.effect?.type === 'ACTIVATE' ||
-    item.effect?.type === 'ACTIVATED'
+    stackItemEffect(item)?.type === 'ACTIVATE' ||
+    stackItemEffect(item)?.type === 'ACTIVATED'
   ) &&
-  containsDestroyEffect(item) &&
+  !item.isNegated &&
+  containsCounterableDestroyEffect(item) &&
   stackItemTargetsOwnField(gameState, playerUid, item);
 
 const counterableDestroyEffectTarget = (gameState: any, playerUid: string) =>

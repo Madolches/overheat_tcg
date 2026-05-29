@@ -272,6 +272,7 @@ export interface CardEffect {
 
   execute?: (card: Card, gameState: GameState, playerState: PlayerState, event?: GameEvent) => void | Promise<void>; // The function to execute when the effect is triggered
   onQueryResolve?: (card: Card, gameState: GameState, playerState: PlayerState, selections: string[], context?: any) => void | Promise<void>; // Resolve sequential steps after a query
+  onCostResolve?: (card: Card, gameState: GameState, playerState: PlayerState, selections: string[], context?: any) => void | Promise<void>; // Resolve custom costs after payment selection
   resolve?: (card: Card, gameState: GameState, playerState: PlayerState, event?: GameEvent) => void | Promise<void>; // Post-processing logic (e.g. end of turn)
   atomicEffects?: AtomicEffect[]; // Structured atomic effects
   targetSpec?: EffectTargetSpec;

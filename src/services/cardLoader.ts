@@ -28,7 +28,7 @@ export async function loadCardLibrary() {
 
 export function hydrateCard(card: Card | null) {
   if (!card || !card.id) return;
-  const masterCard = CARD_LIBRARY[card.id];
+  const masterCard = CARD_LIBRARY[card.uniqueId] || CARD_LIBRARY[card.id];
   if (!card.baseColorReq) {
     card.baseColorReq = { ...(masterCard?.colorReq || card.colorReq || {}) };
   }
@@ -54,6 +54,7 @@ export function hydrateCard(card: Card | null) {
         execute: originalEffect.execute,
         cost: originalEffect.cost,
         onQueryResolve: originalEffect.onQueryResolve,
+        onCostResolve: originalEffect.onCostResolve,
         resolve: originalEffect.resolve,
         targetSpec: originalEffect.targetSpec,
         applyContinuous: originalEffect.applyContinuous,
