@@ -7,7 +7,7 @@ import { getCardIdentity } from '../src/lib/utils';
 import { addBattleLog, addCardAddedToHandBattleLog, cardToBattleLogRef, describeBattleLogTarget } from '../src/lib/battleLog';
 import { SERVER_CARD_LIBRARY } from './card_loader';
 import { GameService } from '../src/services/gameService';
-import { grantedTotemReviveFromGrave, isAlchemyCard, isOpponentAcAtMost, isProtectedGraveCardFromOpponentEffect, standardizeChoiceOptions } from '../src/scripts/BaseUtil';
+import { getCurrentEffectResolutionBatchKey, grantedTotemReviveFromGrave, isAlchemyCard, isOpponentAcAtMost, isProtectedGraveCardFromOpponentEffect, standardizeChoiceOptions } from '../src/scripts/BaseUtil';
 import { BotDifficulty, DeckAiProfile } from './ai/types';
 import { getDeckAiProfile } from './ai/deckProfiles';
 import { inferPlayerDeckProfile } from './ai/playerDeckProfile';
@@ -1855,7 +1855,8 @@ export const ServerGameService = {
       sourceZone,
       targetZone,
       effectSourcePlayerUid: options?.effectSourcePlayerUid,
-      effectSourceCardId: options?.effectSourceCardId
+      effectSourceCardId: options?.effectSourceCardId,
+      effectResolutionBatchKey: getCurrentEffectResolutionBatchKey(gameState)
     });
     EventEngine.dispatchMovementSubEvents(gameState, {
       card,
@@ -5665,7 +5666,8 @@ export const ServerGameService = {
         data: {
           preventedCardId: gamecardId,
           destroySourcePlayerId: sourcePlayerId,
-          destroySourceCardId: gameState.currentProcessingItem?.card?.gamecardId
+          destroySourceCardId: gameState.currentProcessingItem?.card?.gamecardId,
+          preventBatchKey: getCurrentEffectResolutionBatchKey(gameState)
         }
       });
       return false;

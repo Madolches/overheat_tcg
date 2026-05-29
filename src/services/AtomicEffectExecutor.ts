@@ -15,6 +15,17 @@ const isAlchemySourceCard = (card?: Card | null) =>
     card.specialName?.includes('鐐奸噾')
   );
 
+const getCurrentEffectResolutionBatchKey = (gameState: GameState) => {
+  const currentItem = gameState.currentProcessingItem as any;
+  if (!currentItem) return undefined;
+  if (!currentItem.effectResolutionBatchKey) {
+    const nextSeq = ((gameState as any).effectResolutionBatchSeq || 0) + 1;
+    (gameState as any).effectResolutionBatchSeq = nextSeq;
+    currentItem.effectResolutionBatchKey = `effect:${gameState.turnCount}:${nextSeq}`;
+  }
+  return currentItem.effectResolutionBatchKey as string;
+};
+
 export class AtomicEffectExecutor {
   static beginRecalcBatch(gameState: GameState) {
     const state = gameState as any;
@@ -1543,7 +1554,8 @@ export class AtomicEffectExecutor {
         targetZone: toZone,
         effectSourcePlayerUid: options?.effectSourcePlayerUid,
         effectSourceCardId: options?.effectSourceCardId,
-        previousSourceCardId
+        previousSourceCardId,
+        effectResolutionBatchKey: getCurrentEffectResolutionBatchKey(gameState)
       });
       EventEngine.dispatchMovementSubEvents(gameState, {
         card,
@@ -1632,7 +1644,8 @@ export class AtomicEffectExecutor {
         sourceZone: from,
         targetZone: to,
         effectSourcePlayerUid: options?.effectSourcePlayerUid,
-        effectSourceCardId: options?.effectSourceCardId
+        effectSourceCardId: options?.effectSourceCardId,
+        effectResolutionBatchKey: getCurrentEffectResolutionBatchKey(gameState)
       });
     }
 

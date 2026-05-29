@@ -50,6 +50,24 @@ export const clearBattlefieldState = (card: Card) => {
     delete (card as any).data.cannotBeEffectTargetByOpponent;
     delete (card as any).data.cannotBeEffectTargetByOpponentSourceName;
   }
+  if ((card as any).data?.preventFirstDestroyEachTurnSourceName !== undefined) {
+    delete (card as any).data.preventFirstDestroyEachTurnSourceName;
+  }
+  if ((card as any).data?.preventFirstBattleDestroyEachTurnSourceName !== undefined) {
+    delete (card as any).data.preventFirstBattleDestroyEachTurnSourceName;
+  }
+  if ((card as any).data?.preventNextBattleDestroyContinuousSourceCardId !== undefined) {
+    delete (card as any).data.preventNextBattleDestroy;
+    delete (card as any).data.preventNextBattleDestroySourceName;
+    delete (card as any).data.preventNextBattleDestroyUntilTurn;
+    delete (card as any).data.preventNextBattleDestroyContinuousSourceCardId;
+  }
+  if ((card as any).data?.unaffectedByOpponentAcLe !== undefined) {
+    delete (card as any).data.unaffectedByOpponentAcLe;
+  }
+  if ((card as any).data?.cannotLeaveFieldByOpponentAcLe !== undefined) {
+    delete (card as any).data.cannotLeaveFieldByOpponentAcLe;
+  }
   delete (card as any).battleImmuneByEffect;
 
   card.declaredTargetMarkers = [];

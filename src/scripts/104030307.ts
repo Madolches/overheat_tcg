@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { addContinuousDamage, canPutUnitOntoBattlefield, discardHandCost, ensureData, moveCard, ownUnits, ownerOf, totalErosionCount } from './BaseUtil';
+import { addContinuousDamage, canPutUnitOntoBattlefield, discardHandCost, moveCard, ownUnits, ownerOf, totalErosionCount } from './BaseUtil';
 
 const ADVENTURER = '冒险家公会';
 
@@ -34,9 +34,7 @@ const cardEffects: CardEffect[] = [{
     const owner = ownerOf(gameState, instance);
     if (!owner || !hasHammo(owner)) return;
     addContinuousDamage(instance, instance, 2);
-    const data = ensureData(instance);
-    data.preventNextBattleDestroy = true;
-    data.preventNextBattleDestroySourceName = instance.fullName;
+    (instance as any).battleImmuneByEffect = true;
   }
 }, {
   id: '104030307_enter_from_erosion',

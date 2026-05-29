@@ -188,8 +188,54 @@ export class EventEngine {
         gameState.pendingQuery?.context?.event?.sourceCardId === event.sourceCardId &&
         gameState.pendingQuery?.context?.event?.targetCardId === event.targetCardId
       );
+      const hasQueuedSameResolutionBatch = !!(
+        event.data?.preventBatchKey &&
+        gameState.triggeredEffectsQueue?.some(item =>
+          item.playerUid === playerUid &&
+          (effect.limitNameType ? item.card?.id === card.id : item.card?.gamecardId === card.gamecardId) &&
+          (item.effect?.id || '') === (effect.id || '') &&
+          (effect.limitNameType || item.effectIndex === effectIndex) &&
+          item.event?.type === event.type &&
+          item.event?.sourceCardId === event.sourceCardId &&
+          item.event?.data?.preventBatchKey === event.data.preventBatchKey
+        )
+      );
+      const hasPendingSameResolutionBatch = !!(
+        event.data?.preventBatchKey &&
+        gameState.pendingQuery?.callbackKey === 'TRIGGER_CHOICE' &&
+        gameState.pendingQuery?.playerUid === playerUid &&
+        (effect.limitNameType ? pendingSourceCard?.id === card.id : gameState.pendingQuery?.context?.sourceCardId === card.gamecardId) &&
+        (effect.limitNameType || gameState.pendingQuery?.context?.effectIndex === effectIndex) &&
+        gameState.pendingQuery?.context?.event?.type === event.type &&
+        gameState.pendingQuery?.context?.event?.sourceCardId === event.sourceCardId &&
+        gameState.pendingQuery?.context?.event?.data?.preventBatchKey === event.data.preventBatchKey
+      );
+      const dedupeEventDataKey = effect.dedupeByEventDataKey;
+      const dedupeEventDataValue = dedupeEventDataKey ? event.data?.[dedupeEventDataKey] : undefined;
+      const hasQueuedSameEventDataKey = !!(
+        dedupeEventDataKey &&
+        dedupeEventDataValue !== undefined &&
+        gameState.triggeredEffectsQueue?.some(item =>
+          item.playerUid === playerUid &&
+          (effect.limitNameType ? item.card?.id === card.id : item.card?.gamecardId === card.gamecardId) &&
+          (item.effect?.id || '') === (effect.id || '') &&
+          (effect.limitNameType || item.effectIndex === effectIndex) &&
+          item.event?.type === event.type &&
+          item.event?.data?.[dedupeEventDataKey] === dedupeEventDataValue
+        )
+      );
+      const hasPendingSameEventDataKey = !!(
+        dedupeEventDataKey &&
+        dedupeEventDataValue !== undefined &&
+        gameState.pendingQuery?.callbackKey === 'TRIGGER_CHOICE' &&
+        gameState.pendingQuery?.playerUid === playerUid &&
+        (effect.limitNameType ? pendingSourceCard?.id === card.id : gameState.pendingQuery?.context?.sourceCardId === card.gamecardId) &&
+        (effect.limitNameType || gameState.pendingQuery?.context?.effectIndex === effectIndex) &&
+        gameState.pendingQuery?.context?.event?.type === event.type &&
+        gameState.pendingQuery?.context?.event?.data?.[dedupeEventDataKey] === dedupeEventDataValue
+      );
 
-      if (hasQueuedDuplicate || hasPendingDuplicate) {
+      if (hasQueuedDuplicate || hasPendingDuplicate || hasQueuedSameResolutionBatch || hasPendingSameResolutionBatch || hasQueuedSameEventDataKey || hasPendingSameEventDataKey) {
         continue;
       }
 
@@ -263,6 +309,24 @@ export class EventEngine {
           }
           if ((card as any).data?.cannotBeEffectTargetByOpponentAcLe !== undefined) {
             delete (card as any).data.cannotBeEffectTargetByOpponentAcLe;
+          }
+          if ((card as any).data?.preventFirstDestroyEachTurnSourceName !== undefined) {
+            delete (card as any).data.preventFirstDestroyEachTurnSourceName;
+          }
+          if ((card as any).data?.preventFirstBattleDestroyEachTurnSourceName !== undefined) {
+            delete (card as any).data.preventFirstBattleDestroyEachTurnSourceName;
+          }
+          if ((card as any).data?.preventNextBattleDestroyContinuousSourceCardId !== undefined) {
+            delete (card as any).data.preventNextBattleDestroy;
+            delete (card as any).data.preventNextBattleDestroySourceName;
+            delete (card as any).data.preventNextBattleDestroyUntilTurn;
+            delete (card as any).data.preventNextBattleDestroyContinuousSourceCardId;
+          }
+          if ((card as any).data?.unaffectedByOpponentAcLe !== undefined) {
+            delete (card as any).data.unaffectedByOpponentAcLe;
+          }
+          if ((card as any).data?.cannotLeaveFieldByOpponentAcLe !== undefined) {
+            delete (card as any).data.cannotLeaveFieldByOpponentAcLe;
           }
           if ((card as any).data?.cannotDefendContinuousSourceCardId !== undefined) {
             delete (card as any).data.cannotDefendTurn;
@@ -937,6 +1001,7 @@ export class EventEngine {
       effectSourcePlayerUid?: string;
       effectSourceCardId?: string;
       previousSourceCardId?: string;
+      effectResolutionBatchKey?: string;
     }
   ) {
     this.recalculateContinuousEffects(gameState);
@@ -953,7 +1018,8 @@ export class EventEngine {
         targetZone: options?.targetZone || zone,
         effectSourcePlayerUid: options?.effectSourcePlayerUid,
         effectSourceCardId: options?.effectSourceCardId,
-        previousSourceCardId: options?.previousSourceCardId
+        previousSourceCardId: options?.previousSourceCardId,
+        effectResolutionBatchKey: options?.effectResolutionBatchKey
       }
     });
   }

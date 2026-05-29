@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, addInfluence, createSelectCardQuery, erosionCost, moveCard, ownerOf, paymentCost, readyByEffect } from './BaseUtil';
+import { AtomicEffectExecutor, addInfluence, createSelectCardQuery, ensureData, erosionCost, moveCard, ownerOf, paymentCost, readyByEffect } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
     id: '101100096_alliance_protect',
@@ -13,10 +13,7 @@ const cardEffects: CardEffect[] = [{
         .filter((unit): unit is Card => !!unit && AtomicEffectExecutor.matchesColor(unit, 'WHITE'))
         .forEach(unit => {
           (unit as any).battleImmuneByEffect = true;
-          (unit as any).data = {
-            ...((unit as any).data || {}),
-            indestructibleByEffect: true
-          };
+          ensureData(unit).indestructibleByEffect = true;
           addInfluence(unit, instance, '联军攻击中不会被破坏');
         });
     }

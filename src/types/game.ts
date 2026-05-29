@@ -264,6 +264,7 @@ export interface CardEffect {
   modifiesPowerIncreaseAmount?: boolean; // Continuous marker: modifies how later positive power increases are applied.
   sourceSnapshotOnLeftField?: boolean; // Allows a left-field trigger to be queued from the source snapshot before refreshed instance IDs are applied.
   triggerPriority?: number; // Higher priority triggers are queued first for the same event.
+  dedupeByEventDataKey?: string; // If set, matching triggers from the same event.data key are queued once.
   continuousPriority?: number; // Higher priority continuous effects are applied first during recalculation.
   condition?: (gameState: GameState, playerState: PlayerState, card: Card, event?: GameEvent) => boolean;
   cost?: (gameState: GameState, playerState: PlayerState, card: Card) => boolean | Promise<boolean>;
