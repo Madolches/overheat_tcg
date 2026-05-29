@@ -22,6 +22,17 @@ export type ChoiceOptionInput = {
 export const getOpponentUid = (gameState: GameState, playerUid: string) =>
   Object.keys(gameState.players).find(uid => uid !== playerUid)!;
 
+export const getCurrentEffectResolutionBatchKey = (gameState: GameState) => {
+  const currentItem = gameState.currentProcessingItem as any;
+  if (!currentItem) return undefined;
+  if (!currentItem.effectResolutionBatchKey) {
+    const nextSeq = ((gameState as any).effectResolutionBatchSeq || 0) + 1;
+    (gameState as any).effectResolutionBatchSeq = nextSeq;
+    currentItem.effectResolutionBatchKey = `effect:${gameState.turnCount}:${nextSeq}`;
+  }
+  return currentItem.effectResolutionBatchKey as string;
+};
+
 export const getTopDeckCards = (player: PlayerState, count: number) =>
   player.deck.slice(-count).reverse();
 
@@ -1577,6 +1588,10 @@ export const markSpiritTargeted = (gameState: GameState, target: Card, source: C
   data.spiritTargetedSourceName = source.fullName;
   addInfluence(target, source, '被卡名含有《降灵》的效果选择');
   if (target.id === '103080185' && source.fullName.includes('降灵')) {
+    const sourceData = ensureData(source);
+    sourceData.spiritCostTarget103080185 = true;
+    sourceData.spiritCostTarget103080185Turn = gameState.turnCount;
+    sourceData.spiritCostTarget103080185TargetId = target.gamecardId;
     addInfluence(source, target, '指定天鬼图腾「暴龙」');
   }
   if (options?.dispatchEvent === false) return;
@@ -1918,7 +1933,8 @@ export const destroyByEffect = (gameState: GameState, target: Card, source: Card
       data: {
         preventedCardId: target.gamecardId,
         destroySourcePlayerId: sourceUid,
-        destroySourceCardId: source.gamecardId
+        destroySourceCardId: source.gamecardId,
+        preventBatchKey: getCurrentEffectResolutionBatchKey(gameState)
       }
     });
     return false;

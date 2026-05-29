@@ -35,8 +35,21 @@ const activation_104010221_1: CardEffect = {
       }
     };
   },
+  targetSpec: {
+    title: '选择要破坏的装备',
+    description: '选择这张卡装备着的1张装备卡，将其破坏。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['ITEM'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState, instance) =>
+      playerState.itemZone
+        .filter((card): card is Card => !!card && card.equipTargetId === instance.gamecardId)
+        .map(card => ({ card, source: 'ITEM' as any }))
+  },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
-    if (context.step === 1) {
+    if (context.step === 1 || context.step === 'TARGET') {
       const targetCardId = selections[0];
       const targetCard = playerState.itemZone.find(c => c?.gamecardId === targetCardId);
       if (targetCard) {

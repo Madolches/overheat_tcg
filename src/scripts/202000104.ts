@@ -30,6 +30,16 @@ const cardEffects: CardEffect[] = [{
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    title: '选择攻击目标',
+    description: '选择对手战场上的1个非神蚀单位，本回合中你的单位可以攻击被选择的单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    getCandidates: (gameState, playerState) =>
+      opponentNonGodUnits(gameState, playerState.uid).map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = opponentNonGodUnits(gameState, playerState.uid).find(unit => unit.gamecardId === selections[0]);
     if (!target) return;

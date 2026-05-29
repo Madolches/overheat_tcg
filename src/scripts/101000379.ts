@@ -105,6 +105,16 @@ const cardEffects: CardEffect[] = [{
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    title: '选择冻结目标',
+    description: '选择战场上1个ACCESS值+3以下的非神蚀单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    getCandidates: gameState =>
+      freezeTargets(gameState).map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (target?.cardlocation === 'UNIT' && !target.godMark && (target.acValue || 0) <= 3) {

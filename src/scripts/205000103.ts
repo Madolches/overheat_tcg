@@ -62,6 +62,17 @@ const effect_205000103_high_alchemy: CardEffect = {
       { sourceCardId: instance.gamecardId, effectId: '205000103_high_alchemy', step: 'SEND_FIELD' }
     );
   },
+  targetSpec: {
+    title: '选择炼金素材',
+    description: '选择你的战场上的2张以上的卡送入墓地。',
+    minSelections: 2,
+    maxSelections: 12,
+    zones: ['UNIT', 'ITEM'],
+    controller: 'SELF',
+    step: 'SEND_FIELD',
+    getCandidates: (_gameState, playerState) =>
+      ownFieldCards(playerState).map(card => ({ card, source: card.cardlocation as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'SEND_FIELD') {
       const selectedMaterials = selections

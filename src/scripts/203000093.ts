@@ -38,6 +38,17 @@ const cardEffects: CardEffect[] = [story('203000093_cliff_rescue', '创痕1：�
     gameState.phase === 'MAIN' &&
     graveUnitTargets(playerState).length > 0 &&
     playerState.hand.some(greenHandCards(instance)),
+  targetSpec: {
+    title: '选择救出单位',
+    description: '选择你墓地中的1张单位卡。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      graveUnitTargets(playerState).map((card: Card) => ({ card, source: 'GRAVE' as const }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'TARGET') {
       const targetId = selections[0];

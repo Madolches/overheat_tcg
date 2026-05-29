@@ -49,6 +49,16 @@ const cardEffects: CardEffect[] = [{
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    title: '选择加入手牌的单位',
+    description: '选择对手战场上的1个ACCESS值+3以下的非神蚀单位加入你的手牌。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    getCandidates: (gameState, playerState) =>
+      opponentTargets(gameState, playerState.uid).map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (!target || !opponentTargets(gameState, playerState.uid).some(unit => unit.gamecardId === target.gamecardId)) return;

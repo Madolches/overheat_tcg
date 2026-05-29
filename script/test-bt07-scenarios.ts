@@ -922,12 +922,18 @@ async function testPrFantasyStories(): Promise<ScenarioResult> {
   const thoughtsResolved = boostTarget.power === 1500 && boostTarget.isAnnihilation === true;
   const protectThoughts = cloneScriptCard(prConveyedThoughts as Card, 'PLAY', { gamecardId: 'PR_THOUGHTS_PROTECT' });
   const protectDiscard = testCard({ id: 'PR_THOUGHTS_PROTECT_DISCARD', cardlocation: 'HAND' });
+  const protectedA = testCard({ id: 'PR_THOUGHTS_PROTECTED_A', fullName: 'Protected A', cardlocation: 'UNIT' });
+  const protectedB = testCard({ id: 'PR_THOUGHTS_PROTECTED_B', fullName: 'Protected B', cardlocation: 'UNIT' });
+  const destroySource = testCard({ id: 'PR_THOUGHTS_DESTROY_SOURCE', fullName: 'Opponent Destroy Source', cardlocation: 'UNIT' });
   const drawA = testCard({ id: 'PR_THOUGHTS_DRAW_A', cardlocation: 'DECK' });
   const drawB = testCard({ id: 'PR_THOUGHTS_DRAW_B', cardlocation: 'DECK' });
   const protectState = game({
     hand: [protectDiscard],
     deck: [drawA, drawB],
     playZone: [protectThoughts],
+    unitZone: [protectedA, protectedB, null, null, null, null],
+  }, {
+    unitZone: [destroySource, null, null, null, null, null],
   });
   await protectThoughts.effects?.[0]?.execute?.(protectThoughts, protectState, protectState.players.BOT);
   if (protectState.pendingQuery?.context?.step === 'MODE') {
@@ -936,11 +942,33 @@ async function testPrFantasyStories(): Promise<ScenarioResult> {
   if (protectState.pendingQuery?.context?.step === 'DISCARD') {
     await answerPendingQuery(protectState, 'BOT', [protectDiscard.gamecardId]);
   }
+  protectState.currentProcessingItem = {
+    type: 'EFFECT',
+    card: destroySource,
+    ownerUid: 'P1',
+    effectIndex: 0,
+    timestamp: Date.now(),
+  };
+  const preventA = await ServerGameService.destroyUnit(protectState, 'BOT', protectedA.gamecardId, true, 'P1');
+  const preventB = await ServerGameService.destroyUnit(protectState, 'BOT', protectedB.gamecardId, true, 'P1');
+  protectState.currentProcessingItem = null;
+  const protectDrawQueueCount = protectState.triggeredEffectsQueue.filter((record: any) =>
+    record.effect?.id === '203000116_prevented_destroy_draw'
+  ).length;
+  await confirmTrigger(protectState, 'BOT');
   if (protectState.pendingQuery?.context?.step === 'DRAW_CHOICE') {
     await answerPendingQuery(protectState, 'BOT', [optionIdByValue(protectState, 'DRAW_TWO')]);
   }
+  await ServerGameService.checkTriggeredEffects(protectState);
   const thoughtsDraw = protectState.players.BOT.hand.some((card: Card) => card.gamecardId === drawA.gamecardId) &&
-    protectState.players.BOT.hand.some((card: Card) => card.gamecardId === drawB.gamecardId);
+    protectState.players.BOT.hand.some((card: Card) => card.gamecardId === drawB.gamecardId) &&
+    protectState.players.BOT.hand.length === 2 &&
+    protectState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === protectedA.gamecardId) &&
+    protectState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === protectedB.gamecardId) &&
+    preventA === false &&
+    preventB === false &&
+    protectDrawQueueCount === 1 &&
+    !protectState.pendingQuery;
 
   return snowResolved && otherworldResolved && deepSeaResolved && thoughtsResolved && thoughtsDraw
     ? pass(name, `snow=${snowResolved}, otherworld=${otherworldResolved}, deep=${deepSeaResolved}, thoughts=${thoughtsResolved}/${thoughtsDraw}`)
@@ -1059,9 +1087,14 @@ async function testBlueAdventurerSupportAndErosionEntry(): Promise<ScenarioResul
   });
   EventEngine.recalculateContinuousEffects(state);
   const amyDamage = amy.damage;
-  const amyBattleProtected = !!(amy as any).data?.preventNextBattleDestroy;
+  const amyBattleProtected = !!(amy as any).battleImmuneByEffect;
   const destroyed = await ServerGameService.destroyUnit(state, 'BOT', ally.gamecardId, true, 'P1');
   const allyProtected = destroyed === false && state.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === ally.gamecardId);
+  ServerGameService.moveCard(state, 'BOT', 'UNIT', 'BOT', 'GRAVE', hammo.gamecardId, { isEffect: true });
+  EventEngine.recalculateContinuousEffects(state);
+  const afterHammoLeft = await ServerGameService.destroyUnit(state, 'BOT', ally.gamecardId, true, 'P1');
+  const allyDestroyedAfterHammoLeft = afterHammoLeft === true &&
+    state.players.BOT.grave.some((card: Card) => card.gamecardId === ally.gamecardId);
 
   const erosionHammo = cloneScriptCard(bt07B03 as Card, 'EROSION_FRONT', { gamecardId: 'B03_EROSION_HAMMO' });
   const discard = testCard({ id: 'B03_DISCARD', cardlocation: 'HAND' });
@@ -1087,9 +1120,9 @@ async function testBlueAdventurerSupportAndErosionEntry(): Promise<ScenarioResul
   await ServerGameService.passConfrontation(entryState, entryState.priorityPlayerId);
   const entered = entryState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === erosionHammo.gamecardId);
 
-  return amyDamage === 3 && amyBattleProtected && allyProtected && entered
-    ? pass(name, `amyDamage=${amyDamage}, allyProtected=${allyProtected}, entered=${entered}`)
-    : fail(name, `amyDamage=${amyDamage}, battleProtected=${amyBattleProtected}, allyProtected=${allyProtected}, entered=${entered}`);
+  return amyDamage === 3 && amyBattleProtected && allyProtected && allyDestroyedAfterHammoLeft && entered
+    ? pass(name, `amyDamage=${amyDamage}, allyProtected=${allyProtected}, afterHammoLeft=${allyDestroyedAfterHammoLeft}, entered=${entered}`)
+    : fail(name, `amyDamage=${amyDamage}, battleProtected=${amyBattleProtected}, allyProtected=${allyProtected}, afterHammoLeft=${allyDestroyedAfterHammoLeft}, entered=${entered}`);
 }
 
 async function testBlueElenaReplacesDeckSearchAndTriggers(): Promise<ScenarioResult> {

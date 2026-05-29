@@ -99,6 +99,7 @@ const cardEffects: CardEffect[] = [story('204000115_deep_sea_fantasy', '选择1�
   triggerEvent: 'CARD_ENTERED_ZONE',
   isGlobal: true,
   isMandatory: false,
+  dedupeByEventDataKey: 'effectResolutionBatchKey',
   description: '深海幻想横置并失去能力后可以抽2张卡。',
   condition: (gameState, playerState, instance, event) =>
     event?.data?.targetZone === 'UNIT' &&

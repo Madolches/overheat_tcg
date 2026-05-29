@@ -18,6 +18,16 @@ const cardEffects: CardEffect[] = [story('204000091_meditation', '同名1回合1
   limitCount: 1,
   limitNameType: true,
   condition: gameState => allUnitsOnField(gameState).length > 0,
+  targetSpec: {
+    title: '选择冥想目标',
+    description: '选择战场上的1个单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    getCandidates: gameState =>
+      allUnitsOnField(gameState).map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (!target || target.cardlocation !== 'UNIT') return;

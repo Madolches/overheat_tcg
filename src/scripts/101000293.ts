@@ -66,6 +66,10 @@ const isValidPeonyOpponentTarget = (gameState: any, playerState: any, card?: Car
   !card.godMark &&
   Number(card.acValue || 0) <= 3;
 
+const isPeonyMainPhaseModeTiming = (gameState: any) =>
+  gameState.phase === 'MAIN' ||
+  (gameState.phase === 'COUNTERING' && gameState.previousPhase === 'MAIN');
+
 const effect_101000293_irodori_enter: CardEffect = {
   id: '101000293_irodori_enter',
   type: 'ACTIVATE',
@@ -144,7 +148,7 @@ const effect_101000293_seiso_modes: CardEffect = {
 
       const options = [{ value: 'SETUP_RECRUIT', label: '被破坏时横置放置清霜单位' }];
       if (
-        gameState.phase === 'MAIN' &&
+        isPeonyMainPhaseModeTiming(gameState) &&
         opponentAccessThreeOrLessNonGodCards(gameState, playerState.uid).length > 0 &&
         canPayAccessCost(gameState, playerState, 1, undefined, instance)
       ) {

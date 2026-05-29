@@ -109,6 +109,19 @@ const effect_102060290_irodori_destroy: CardEffect = {
       card => card.cardlocation as any
     );
   },
+  targetSpec: {
+    title: '选择破坏目标',
+    description: '选择战场上的1张非神蚀卡。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT', 'ITEM'],
+    controller: 'ANY',
+    step: 'TARGET',
+    getCandidates: gameState =>
+      allCardsOnField(gameState)
+        .filter(card => !card.godMark && (card.type === 'UNIT' || card.type === 'ITEM' || card.isEquip))
+        .map(card => ({ card, source: card.cardlocation as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'TARGET') {
       const targetId = selections[0];

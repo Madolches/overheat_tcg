@@ -78,6 +78,17 @@ const effect_103000301_recover_kuya_from_erosion: CardEffect = {
       () => 'EROSION_FRONT'
     );
   },
+  targetSpec: {
+    title: '选择九夜卡',
+    description: '选择侵蚀区中的1张卡名含有《九夜》的正面卡。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['EROSION_FRONT'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      faceUpErosion(playerState).filter(isKuyaCard).map(card => ({ card, source: 'EROSION_FRONT' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'TARGET') {
       createSelectCardQuery(
@@ -132,6 +143,17 @@ const effect_103000301_transform_unit: CardEffect = {
       { sourceCardId: instance.gamecardId, effectId: '103000301_transform_unit', step: 'TARGET' },
       () => 'UNIT'
     );
+  },
+  targetSpec: {
+    title: '选择强化单位',
+    description: '选择你的战场上的1个非神蚀单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      ownUnits(playerState).filter(unit => !unit.godMark).map(card => ({ card, source: 'UNIT' as any }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'TARGET') {
