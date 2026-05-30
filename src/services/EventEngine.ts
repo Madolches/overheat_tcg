@@ -317,6 +317,9 @@ export class EventEngine {
           if ((card as any).data?.preventFirstDestroyEachTurnSourceName !== undefined) {
             delete (card as any).data.preventFirstDestroyEachTurnSourceName;
           }
+          if ((card as any).data?.preventFirstOpponentEffectDestroyEachTurnSourceName !== undefined) {
+            delete (card as any).data.preventFirstOpponentEffectDestroyEachTurnSourceName;
+          }
           if ((card as any).data?.preventFirstAnyDestroyEachTurnSourceName !== undefined) {
             delete (card as any).data.preventFirstAnyDestroyEachTurnSourceName;
           }
@@ -617,6 +620,13 @@ export class EventEngine {
           card.influencingEffects.push({
             sourceCardName: (card as any).data.preventFirstDestroyEachTurnSourceName,
             description: '每回合第一次将被破坏时防止'
+          });
+        }
+        if (card && (card as any).data?.preventFirstOpponentEffectDestroyEachTurnSourceName) {
+          if (!card.influencingEffects) card.influencingEffects = [];
+          card.influencingEffects.push({
+            sourceCardName: (card as any).data.preventFirstOpponentEffectDestroyEachTurnSourceName,
+            description: '每回合第一次将被对手的卡的效果破坏时防止'
           });
         }
         if (card && (card as any).data?.preventFirstAnyDestroyEachTurnSourceName) {

@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { addContinuousPower, ownUnits, preventFirstDestroyEachTurn, totalErosionCount } from './BaseUtil';
+import { addContinuousPower, ownUnits, preventFirstOpponentEffectDestroyEachTurn, totalErosionCount } from './BaseUtil';
 
 type ZoneOwner = {
   unitZone: (Card | null)[];
@@ -23,7 +23,7 @@ const cardEffects: CardEffect[] = [{
     [
       ...owner.unitZone.filter((card: Card | null): card is Card => !!card && isHolyKingdomCard(card)),
       ...owner.itemZone.filter((card: Card | null): card is Card => !!card && isHolyKingdomCard(card))
-    ].forEach(card => preventFirstDestroyEachTurn(card, instance));
+    ].forEach(card => preventFirstOpponentEffectDestroyEachTurn(card, instance));
   }
 }, {
   id: '301130066_low_erosion_holy_kingdom_power',

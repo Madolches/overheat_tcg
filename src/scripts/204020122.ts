@@ -1,17 +1,27 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor, createSelectCardQuery, getOpponentUid, millTop, moveCardAsCost, moveRandomGraveToDeckBottom, story, wealthCount } from './BaseUtil';
 
-const canDrawToFour = (playerState: any) =>
-  playerState.hand.length < 4 && playerState.deck.length > 0;
+const handAfterPlaying = (playerState: any, instance?: Card) =>
+  playerState.hand.filter((card: Card) => card.gamecardId !== instance?.gamecardId);
 
-const canRecoverMill = (gameState: any, playerState: any) =>
-  playerState.hand.length >= 2 &&
+const canDrawToFour = (playerState: any, instance?: Card) =>
+  handAfterPlaying(playerState, instance).length < 4 && playerState.deck.length > 0;
+
+const recoverMillDiscardCandidates = (playerState: any, instance?: Card) =>
+  handAfterPlaying(playerState, instance);
+
+const canRecoverMill = (gameState: any, playerState: any, instance?: Card) =>
+  recoverMillDiscardCandidates(playerState, instance).length >= 2 &&
+  playerState.grave.length >= 3 &&
+  gameState.players[getOpponentUid(gameState, playerState.uid)].deck.length >= 3;
+
+const canResolveRecoverMill = (gameState: any, playerState: any) =>
   playerState.grave.length >= 3 &&
   gameState.players[getOpponentUid(gameState, playerState.uid)].deck.length >= 3;
 
 const discardTwoHands = (gameState: any, playerState: any, instance: Card, selections: string[]) => {
   const discards = selections
-    .map(id => playerState.hand.find((card: Card) => card.gamecardId === id))
+    .map(id => recoverMillDiscardCandidates(playerState, instance).find((card: Card) => card.gamecardId === id))
     .filter((card: Card | undefined): card is Card => !!card);
   if (discards.length !== 2 || new Set(discards.map(card => card.gamecardId)).size !== 2) return false;
   discards.forEach(card => moveCardAsCost(gameState, playerState.uid, card, 'GRAVE', instance));
@@ -19,11 +29,12 @@ const discardTwoHands = (gameState: any, playerState: any, instance: Card, selec
 };
 
 const createDiscardTwoHandQuery = (gameState: any, playerState: any, instance: Card) => {
-  if (playerState.hand.length < 2) return false;
+  const candidates = recoverMillDiscardCandidates(playerState, instance);
+  if (candidates.length < 2) return false;
   createSelectCardQuery(
     gameState,
     playerState.uid,
-    playerState.hand,
+    candidates,
     '选择舍弃手牌',
     '选择2张手牌舍弃，之后恢复3并将对手卡组顶3张送入墓地。',
     2,
@@ -44,10 +55,10 @@ const cardEffects: CardEffect[] = [story('204020122_money_dream_modes', '同名1
 }, {
   limitCount: 1,
   limitNameType: true,
-  condition: (gameState, playerState) =>
+  condition: (gameState, playerState, instance) =>
     playerState.isTurn &&
     wealthCount(playerState, gameState) >= 3 &&
-    (canDrawToFour(playerState) || canRecoverMill(gameState, playerState)),
+    (canDrawToFour(playerState, instance) || canRecoverMill(gameState, playerState, instance)),
   targetSpec: {
     modeTitle: '选择金钱美梦',
     modeDescription: '选择要执行的效果。',
@@ -58,7 +69,7 @@ const cardEffects: CardEffect[] = [story('204020122_money_dream_modes', '同名1
       description: '将手牌抽到4张为止。',
       minSelections: 0,
       maxSelections: 0,
-      condition: (_gameState, playerState) => canDrawToFour(playerState)
+      condition: (_gameState, playerState, instance) => canDrawToFour(playerState, instance)
     }, {
       id: 'RECOVER_MILL',
       label: '恢复并送墓',
@@ -66,7 +77,7 @@ const cardEffects: CardEffect[] = [story('204020122_money_dream_modes', '同名1
       description: '舍弃2张手牌作为费用，恢复3并将对手卡组顶3张送入墓地。',
       minSelections: 0,
       maxSelections: 0,
-      condition: (gameState, playerState) => canRecoverMill(gameState, playerState)
+      condition: (gameState, playerState, instance) => canRecoverMill(gameState, playerState, instance)
     }]
   },
   cost: async (gameState, playerState, instance, options?: any) => {
@@ -87,7 +98,7 @@ const cardEffects: CardEffect[] = [story('204020122_money_dream_modes', '同名1
       return;
     }
 
-    if (modeId !== 'RECOVER_MILL' || !canRecoverMill(gameState, playerState)) return;
+    if (modeId !== 'RECOVER_MILL' || !canResolveRecoverMill(gameState, playerState)) return;
     const recoverCount = Math.min(3, playerState.grave.length);
     moveRandomGraveToDeckBottom(gameState, playerState.uid, recoverCount, instance);
     millTop(gameState, getOpponentUid(gameState, playerState.uid), 3, instance);

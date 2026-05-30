@@ -1,26 +1,7 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, addTempPower, canActivateDefaultTiming, canPutUnitOntoBattlefield, createSelectCardQuery, ensureDeckHasCardsForMove, getOpponentUid, getTopDeckCards, isNonGodUnit, moveCard, nameContains, ownUnits, readyByEffect } from './BaseUtil';
+import { AtomicEffectExecutor, addTempPower, canActivateDefaultTiming, createPlayerSelectQuery, createSelectCardQuery, ensureDeckHasCardsForMove, getOpponentUid, getTopDeckCards, isNonGodUnit, moveCard, ownUnits, readyByEffect } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
-  id: '101130441_track_hall_attack',
-  type: 'TRIGGER',
-  triggerEvent: 'CARD_ATTACK_DECLARED',
-  triggerLocation: ['UNIT'],
-  isGlobal: true,
-  isMandatory: true,
-  description: '记录本回合卡名含有《殿堂》的单位参与攻击次数。',
-  condition: (gameState, playerState, _instance, event) => {
-    if (event?.playerUid !== playerState.uid) return false;
-    const attackers = (event.data?.attackerIds || [])
-      .map((id: string) => AtomicEffectExecutor.findCardById(gameState, id))
-      .filter((card: Card | undefined): card is Card => !!card);
-    return attackers.some(unit => nameContains(unit, '殿堂'));
-  },
-  execute: async (_instance, gameState, playerState) => {
-    (playerState as any).hallAttackCountTurn = gameState.turnCount;
-    (playerState as any).hallAttackCount = Number((playerState as any).hallAttackCount || 0) + 1;
-  }
-}, {
   id: '101130441_reset_boost',
   type: 'ACTIVATE',
   triggerLocation: ['UNIT'],
@@ -61,12 +42,22 @@ const cardEffects: CardEffect[] = [{
   triggerLocation: ['UNIT'],
   erosionTotalLimit: [10, 10],
   limitCount: 1,
-  description: '10+：本回合进行过10次以上卡名含有《殿堂》的单位参与的攻击时，将对手卡组顶5张正面放逐。',
+  description: '10+：本回合进行过10次以上卡名含有《殿堂》的单位参与的攻击时，选择1名对手，将他的卡组顶5张正面放逐。',
   condition: (gameState, playerState) =>
     canActivateDefaultTiming(gameState, playerState) &&
     (playerState as any).hallAttackCountTurn === gameState.turnCount &&
     Number((playerState as any).hallAttackCount || 0) >= 10,
   execute: async (instance, gameState, playerState) => {
+    createPlayerSelectQuery(
+      gameState,
+      playerState.uid,
+      '选择对手',
+      '选择1名对手，将他的卡组顶5张卡放逐。',
+      { sourceCardId: instance.gamecardId, effectId: '101130441_ten_mill_exile' },
+      { includeSelf: false, includeOpponent: true }
+    );
+  },
+  onQueryResolve: async (instance, gameState, playerState) => {
     const opponentUid = getOpponentUid(gameState, playerState.uid);
     if (!ensureDeckHasCardsForMove(gameState, opponentUid, 5, instance)) return;
     getTopDeckCards(gameState.players[opponentUid], 5).forEach(card => moveCard(gameState, opponentUid, card, 'EXILE', instance));

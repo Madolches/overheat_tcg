@@ -7,9 +7,9 @@ import {
   createChoiceQuery,
   createSelectCardQuery,
   destroyByEffect,
+  backErosionCount,
   isNonGodFieldCard,
   isSameFactionCard,
-  totalErosionCount,
   wasPlacedByPromotionThisTurn
 } from './BaseUtil';
 
@@ -29,7 +29,7 @@ const cardEffects: CardEffect[] = [{
     canActivateDefaultTiming(gameState, playerState) &&
     wasPlacedByPromotionThisTurn(gameState, instance) &&
     sameFactionHandCosts(playerState, instance).length > 0 &&
-    (nonGodTargets(gameState).length > 0 || (totalErosionCount(playerState) >= 3 && godTargets(gameState).length > 0)),
+    (nonGodTargets(gameState).length > 0 || (backErosionCount(playerState) >= 3 && godTargets(gameState).length > 0)),
   cost: async (gameState, playerState, instance) => {
     const costs = sameFactionHandCosts(playerState, instance);
     if (costs.length === 0) return false;
@@ -53,7 +53,7 @@ const cardEffects: CardEffect[] = [{
   execute: async (instance, gameState, playerState) => {
     const options = [];
     if (nonGodTargets(gameState).length > 0) options.push({ value: 'NON_GOD', label: '破坏最多2张非神蚀卡' });
-    if (totalErosionCount(playerState) >= 3 && godTargets(gameState).length > 0) options.push({ value: 'GOD', label: '破坏1张神蚀卡' });
+    if (backErosionCount(playerState) >= 3 && godTargets(gameState).length > 0) options.push({ value: 'GOD', label: '创痕3：破坏1张神蚀卡' });
     createChoiceQuery(
       gameState,
       playerState.uid,
@@ -89,7 +89,7 @@ const cardEffects: CardEffect[] = [{
       zones: ['UNIT', 'ITEM'],
       controller: 'ANY',
       step: 'GOD',
-      condition: (gameState, playerState) => totalErosionCount(playerState) >= 3 && godTargets(gameState).length > 0,
+      condition: (gameState, playerState) => backErosionCount(playerState) >= 3 && godTargets(gameState).length > 0,
       getCandidates: gameState =>
         godTargets(gameState).map(card => ({ card, source: card.cardlocation as any }))
     }]

@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, canPutCardOntoBattlefieldByEffect, createChoiceQuery, getOpponentUid, moveCard, moveRandomGraveToDeckBottom, putCardOntoField, wealthCount } from './BaseUtil';
+import { AtomicEffectExecutor, canPutCardOntoBattlefieldByEffect, getOpponentUid, moveCard, moveRandomGraveToDeckBottom, putCardOntoField, wealthCount } from './BaseUtil';
 
 const disableMode = (instance: Card, gameState: any, mode: string) => {
   (instance as any).data = {
@@ -31,78 +31,65 @@ const cardEffects: CardEffect[] = [{
       (modeEnabled(instance, gameState, 'PUT_EROSION') && erosionPutTargets(playerState).length > 0) ||
       (modeEnabled(instance, gameState, 'OPP_RUMMAGE') && gameState.players[getOpponentUid(gameState, playerState.uid)].deck.length >= 3)
     ),
-  execute: async (instance, gameState, playerState) => {
-    const options = [
-      {
-        id: 'RECOVER_DRAW',
-        label: '恢复抽牌',
-        disabled: !modeEnabled(instance, gameState, 'RECOVER_DRAW') || playerState.deck.length < 2,
-        disabledReason: '该模式暂时失去或卡组不足'
-      },
-      {
-        id: 'PUT_EROSION',
-        label: '侵蚀登场',
-        disabled: !modeEnabled(instance, gameState, 'PUT_EROSION') || erosionPutTargets(playerState).length === 0,
-        disabledReason: '该模式暂时失去或没有可放置目标'
-      },
-      {
-        id: 'OPP_RUMMAGE',
-        label: '对手滤牌',
-        disabled: !modeEnabled(instance, gameState, 'OPP_RUMMAGE') || gameState.players[getOpponentUid(gameState, playerState.uid)].deck.length < 3,
-        disabledReason: '该模式暂时失去或对手卡组不足'
-      }
-    ];
-    createChoiceQuery(
-      gameState,
-      playerState.uid,
-      '选择阿克蒂的记录',
-      '选择要执行的一项效果。',
-      options,
-      { sourceCardId: instance.gamecardId, effectId: '204000098_record_modes', step: 'MODE' }
-    );
+  targetSpec: {
+    modeTitle: '选择阿克蒂的记录',
+    modeDescription: '选择要执行的一项效果。',
+    modeOptions: [{
+      id: 'RECOVER_DRAW',
+      label: '恢复抽牌',
+      title: '恢复抽牌',
+      description: '恢复2，之后抽2张卡。',
+      minSelections: 0,
+      maxSelections: 0,
+      condition: (gameState, playerState, instance) =>
+        modeEnabled(instance, gameState, 'RECOVER_DRAW') && playerState.deck.length >= 2
+    }, {
+      id: 'PUT_EROSION',
+      label: '侵蚀登场',
+      title: '选择侵蚀区卡',
+      description: '选择你的侵蚀区中的1张非神蚀卡放置到战场上。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['EROSION_FRONT'],
+      controller: 'SELF',
+      step: 'PUT',
+      condition: (gameState, playerState, instance) =>
+        modeEnabled(instance, gameState, 'PUT_EROSION') && erosionPutTargets(playerState).length > 0,
+      getCandidates: (_gameState, playerState) =>
+        erosionPutTargets(playerState).map(card => ({ card, source: 'EROSION_FRONT' as any }))
+    }, {
+      id: 'OPP_RUMMAGE',
+      label: '对手滤牌',
+      title: '对手滤牌',
+      description: '对手抽3张卡，之后舍弃3张卡。',
+      minSelections: 0,
+      maxSelections: 0,
+      condition: (gameState, playerState, instance) =>
+        modeEnabled(instance, gameState, 'OPP_RUMMAGE') &&
+        gameState.players[getOpponentUid(gameState, playerState.uid)].deck.length >= 3
+    }]
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context?.step === 'MODE') {
-      const mode = selections[0];
-      if (mode === 'RECOVER_DRAW') {
-        moveRandomGraveToDeckBottom(gameState, playerState.uid, 2, instance);
-        await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'DRAW', value: 2 }, instance);
-        disableMode(instance, gameState, mode);
-        return;
-      }
-      if (mode === 'OPP_RUMMAGE') {
-        const opponentUid = getOpponentUid(gameState, playerState.uid);
-        await AtomicEffectExecutor.execute(gameState, opponentUid, { type: 'DRAW', value: 3 }, instance);
-        const opponent = gameState.players[opponentUid];
-        opponent.hand.slice(0, Math.min(3, opponent.hand.length)).forEach((card: Card) => {
-          moveCard(gameState, opponentUid, card, 'GRAVE', instance);
-        });
-        disableMode(instance, gameState, mode);
-        return;
-      }
-      if (mode === 'PUT_EROSION') {
-        const targets = erosionPutTargets(playerState);
-        if (targets.length === 0) return;
-        gameState.pendingQuery = {
-          id: Math.random().toString(36).substring(7),
-          type: 'SELECT_CARD',
-          playerUid: playerState.uid,
-          options: AtomicEffectExecutor.enrichQueryOptions(
-            gameState,
-            playerState.uid,
-            targets.map(card => ({ card, source: 'EROSION_FRONT' as const }))
-          ),
-          title: '选择侵蚀区卡',
-          description: '选择你的侵蚀区中的1张非神蚀卡放置到战场上。',
-          minSelections: 1,
-          maxSelections: 1,
-          callbackKey: 'EFFECT_RESOLVE',
-          context: { sourceCardId: instance.gamecardId, effectId: '204000098_record_modes', step: 'PUT' }
-        };
-        return;
-      }
+    const mode = context?.modeId || context?.selectedModeId || selections[0];
+    if (mode === 'RECOVER_DRAW') {
+      moveRandomGraveToDeckBottom(gameState, playerState.uid, 2, instance);
+      await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'DRAW', value: 2 }, instance);
+      disableMode(instance, gameState, mode);
+      return;
     }
-    if (context?.step !== 'PUT') return;
+
+    if (mode === 'OPP_RUMMAGE') {
+      const opponentUid = getOpponentUid(gameState, playerState.uid);
+      await AtomicEffectExecutor.execute(gameState, opponentUid, { type: 'DRAW', value: 3 }, instance);
+      const opponent = gameState.players[opponentUid];
+      opponent.hand.slice(0, Math.min(3, opponent.hand.length)).forEach((card: Card) => {
+        moveCard(gameState, opponentUid, card, 'GRAVE', instance);
+      });
+      disableMode(instance, gameState, mode);
+      return;
+    }
+
+    if (mode !== 'PUT_EROSION' && context?.step !== 'PUT') return;
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (target && target.cardlocation === 'EROSION_FRONT' && !target.godMark) {
       putCardOntoField(gameState, playerState.uid, target, instance);

@@ -3,8 +3,6 @@ import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import {
   canActivateDefaultTiming,
   canPutUnitOntoBattlefield,
-  createChoiceQuery,
-  createPlayerSelectQuery,
   createSelectCardQuery,
   damagePlayerByEffect,
   getOpponentUid,
@@ -69,10 +67,9 @@ const canDamageOpponent = (gameState: any, playerState: any) =>
   (gameState.phase === 'MAIN' || (gameState.phase === 'COUNTERING' && gameState.previousPhase === 'MAIN')) &&
   !!getOpponentUid(gameState, playerState.uid);
 
-const modeOptions = (gameState: any, playerState: any) => [
-  ...(canDamageOpponent(gameState, playerState) ? [{ value: 'DAMAGE_EXILE', label: '给予对手2点伤害并放逐其墓地最多2张卡' }] : []),
-  ...(canCounterOpponentColoredNonGodCard(gameState, playerState) ? [{ value: 'COUNTER', label: '反击有颜色限制的非神蚀卡' }] : []),
-];
+const hasModeOption = (gameState: any, playerState: any) =>
+  canDamageOpponent(gameState, playerState) ||
+  canCounterOpponentColoredNonGodCard(gameState, playerState);
 
 const effect_104000368_irodori_enter: CardEffect = {
   id: '104000368_irodori_enter',
@@ -131,7 +128,30 @@ const effect_104000368_modes: CardEffect = {
     instance.cardlocation === 'UNIT' &&
     canActivateDefaultTiming(gameState, playerState) &&
     playerState.hand.some(isKuyaDiscardCost) &&
-    modeOptions(gameState, playerState).length > 0,
+    hasModeOption(gameState, playerState),
+  targetSpec: {
+    modeTitle: '选择效果',
+    modeDescription: '选择要执行的效果。',
+    modeOptions: [{
+      id: 'DAMAGE_EXILE',
+      label: '给予对手2点伤害并放逐其墓地最多2张卡',
+      title: '给予对手伤害',
+      description: '给予对手2点伤害，并放逐其墓地最多2张卡。',
+      minSelections: 0,
+      maxSelections: 0,
+      step: 'DAMAGE_EXILE',
+      condition: canDamageOpponent
+    }, {
+      id: 'COUNTER',
+      label: '反击有颜色限制的非神蚀卡',
+      title: '反击卡',
+      description: '反击对手使用的有颜色限制的非神蚀卡。',
+      minSelections: 0,
+      maxSelections: 0,
+      step: 'COUNTER',
+      condition: canCounterOpponentColoredNonGodCard
+    }]
+  },
   cost: async (gameState, playerState, instance) => {
     createSelectCardQuery(
       gameState,
@@ -151,9 +171,9 @@ const effect_104000368_modes: CardEffect = {
     );
     return true;
   },
-  execute: async (instance, gameState, playerState) => {
-    const options = modeOptions(gameState, playerState);
-    if (options.length === 1 && options[0].value === 'COUNTER') {
+  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    const selectedMode = context?.modeId || context?.selectedModeId || selections[0];
+    if (selectedMode === 'COUNTER') {
       const target = findOpponentColoredNonGodStackItem(gameState, playerState.uid);
       if (target) {
         target.isNegated = true;
@@ -161,51 +181,9 @@ const effect_104000368_modes: CardEffect = {
       }
       return;
     }
-    if (options.length === 1 && options[0].value === 'DAMAGE_EXILE') {
-      createPlayerSelectQuery(
-        gameState,
-        playerState.uid,
-        '选择对手',
-        '选择1名对手，给予其2点伤害。',
-        { sourceCardId: instance.gamecardId, effectId: '104000368_modes', step: 'PLAYER' },
-        { includeSelf: false, includeOpponent: true }
-      );
-      return;
-    }
-    createChoiceQuery(
-      gameState,
-      playerState.uid,
-      '选择效果',
-      '选择要执行的效果。',
-      options,
-      { sourceCardId: instance.gamecardId, effectId: '104000368_modes', step: 'MODE' }
-    );
-  },
-  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context?.step === 'MODE') {
-      if (selections[0] === 'COUNTER') {
-        const target = findOpponentColoredNonGodStackItem(gameState, playerState.uid);
-        if (target) {
-          target.isNegated = true;
-          gameState.logs.push(`[${instance.fullName}] 反击了 [${target.card?.fullName || '对手使用的卡'}]。`);
-        }
-        return;
-      }
-      createPlayerSelectQuery(
-        gameState,
-        playerState.uid,
-        '选择对手',
-        '选择1名对手，给予其2点伤害。',
-        { sourceCardId: instance.gamecardId, effectId: '104000368_modes', step: 'PLAYER' },
-        { includeSelf: false, includeOpponent: true }
-      );
-      return;
-    }
 
-    if (context?.step === 'PLAYER') {
-      const targetUid = selections[0] === 'PLAYER_OPPONENT'
-        ? getOpponentUid(gameState, playerState.uid)
-        : selections[0];
+    if (selectedMode === 'DAMAGE_EXILE') {
+      const targetUid = getOpponentUid(gameState, playerState.uid);
       if (!targetUid || !gameState.players[targetUid]) return;
       await damagePlayerByEffect(gameState, playerState.uid, targetUid, 2, instance);
       const graveTargets = gameState.players[targetUid].grave.filter((card: Card) => !!card);

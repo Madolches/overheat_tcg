@@ -2753,9 +2753,10 @@ async function testAnnihilationAngelsCombatDamageTriggerFinishesBattle(): Promis
   EventEngine.recalculateContinuousEffects(sacrificeState);
 
   await ServerGameService.resolveDamage(sacrificeState);
-  const askedSacrifice = sacrificeState.pendingQuery?.callbackKey === 'ALLIANCE_DESTRUCTION_RESOLVE';
+  const askedSacrifice = sacrificeState.pendingQuery?.callbackKey === 'ALLIANCE_DESTRUCTION_RESOLVE' &&
+    sacrificeState.pendingQuery.playerUid === 'P1';
   if (askedSacrifice) {
-    await ServerGameService.handleQueryChoice(sacrificeState, 'BOT', sacrificeState.pendingQuery.id, [sacrificeAlly.gamecardId]);
+    await ServerGameService.handleQueryChoice(sacrificeState, 'P1', sacrificeState.pendingQuery.id, [sacrificeAlly.gamecardId]);
   }
   const sacrificeAskedTrigger = sacrificeState.pendingQuery?.context?.effectId === '101130104_damage_bottom';
   const sacrificeDamage = sacrificeState.players.P1.erosionFront.length === 2;

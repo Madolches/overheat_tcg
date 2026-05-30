@@ -7,7 +7,7 @@ import { getCardIdentity } from '../src/lib/utils';
 import { addBattleLog, addCardAddedToHandBattleLog, cardToBattleLogRef, describeBattleLogTarget } from '../src/lib/battleLog';
 import { SERVER_CARD_LIBRARY } from './card_loader';
 import { GameService } from '../src/services/gameService';
-import { getCurrentEffectResolutionBatchKey, grantedTotemReviveFromGrave, isAlchemyCard, isOpponentAcAtMost, isProtectedGraveCardFromOpponentEffect, standardizeChoiceOptions } from '../src/scripts/BaseUtil';
+import { getCurrentEffectResolutionBatchKey, grantedTotemReviveFromGrave, isAlchemyCard, isOpponentAcAtMost, isProtectedGraveCardFromOpponentEffect, nameContains, standardizeChoiceOptions } from '../src/scripts/BaseUtil';
 import { BotDifficulty, DeckAiProfile } from './ai/types';
 import { getDeckAiProfile } from './ai/deckProfiles';
 import { inferPlayerDeckProfile } from './ai/playerDeckProfile';
@@ -1981,7 +1981,7 @@ export const ServerGameService = {
     return true;
   },
 
-  canPlayCard(gameState: GameState, player: PlayerState, card: Card): { canPlay: boolean; reason?: string } {
+  canPlayCard(gameState: GameState, player: PlayerState, card: Card, options?: { skipPlayEffectRequirementCheck?: boolean }): { canPlay: boolean; reason?: string } {
     if (player.negatedNames && player.negatedNames.includes(card.fullName)) {
       return { canPlay: false, reason: `该卡牌 [${card.fullName}] 在本回合已被禁止打出或发动` };
     }
@@ -2148,7 +2148,7 @@ export const ServerGameService = {
 
     // 5. Specific Effect Limits & Requirements (using comprehensive check)
     const playEffect = card.effects?.find(e => e.type === 'ACTIVATE' || e.type === 'TRIGGER' || e.type === 'ALWAYS');
-    if (playEffect) {
+    if (playEffect && !options?.skipPlayEffectRequirementCheck) {
       const isStory = card.type === 'STORY';
       const isAlways = playEffect.type === 'ALWAYS';
       const shouldValidate = isStory || isAlways;
@@ -2639,7 +2639,9 @@ export const ServerGameService = {
       if (opened) return gameState;
     }
 
-    const canPlay = ServerGameService.canPlayCard(gameState, player, card);
+    const canPlay = ServerGameService.canPlayCard(gameState, player, card, {
+      skipPlayEffectRequirementCheck: !!options?.effectCostResolved || (!!options?.resumeFromQuery && !!declaredTargets)
+    });
     if (!canPlay.canPlay) throw new Error(canPlay.reason);
 
     const usesSpiritDiscount = ServerGameService.isSpiritDiscountFromDeclaredTargets(gameState, card, declaredTargets);
@@ -3742,6 +3744,41 @@ export const ServerGameService = {
       const mode = effect.targetSpec.modeOptions.find(option => option.id === modeId);
       if (!mode) throw new Error('指定对象失败：选择的模式无效');
       const activationPlayerUid = query.context?.activationPlayerUid || playerUid;
+      const modeTargetShapes = mode.targetGroups?.length ? mode.targetGroups : [mode];
+      const needsTargetSelection = modeTargetShapes.some(shape => (shape.maxSelections ?? shape.minSelections ?? 0) > 0);
+      if (!needsTargetSelection) {
+        const declaredTargets = [] as DeclaredEffectTarget[];
+        (declaredTargets as any).declaredModeId = modeId;
+
+        if (query.context?.pendingAction === 'PLAY_CARD') {
+          await ServerGameService.playCard(
+            gameState,
+            activationPlayerUid,
+            query.context.cardId,
+            query.context.paymentSelection || {},
+            declaredTargets,
+            {
+              resumeFromQuery: true,
+              paymentSelectionResolved: !!query.context?.paymentSelectionResolved,
+              declaredModeId: modeId,
+              effectCostResolved: !!query.context?.effectCostResolved
+            }
+          );
+          return gameState;
+        }
+
+        if (query.context?.pendingAction === 'ACTIVATE_EFFECT') {
+          await ServerGameService.activateEffect(
+            gameState,
+            activationPlayerUid,
+            query.context.cardId,
+            effectIndex,
+            declaredTargets,
+            { resumeFromQuery: true, declaredModeId: modeId }
+          );
+          return gameState;
+        }
+      }
       const opened = ServerGameService.createDeclareTargetQuery(gameState, activationPlayerUid, sourceCard, effect, effectIndex, {
         ...query.context,
         modeId,
@@ -4421,7 +4458,7 @@ export const ServerGameService = {
         const destroyed = await ServerGameService.destroyUnit(gameState, attackerId, selectedId);
         if (destroyed === undefined) return gameState;
         if (destroyed !== false) {
-          gameState.logs.push(`[联军结算] ${attacker.displayName} 选择了牺牲 ${selectedUnit.fullName}。`);
+          gameState.logs.push(`[联军结算] ${defender.displayName} 选择破坏进攻单位 ${selectedUnit.fullName}。`);
           if (!gameState.battleState.resolvedUnitIds?.includes(selectedId)) {
             gameState.battleState.resolvedUnitIds = gameState.battleState.resolvedUnitIds || [];
             gameState.battleState.resolvedUnitIds.push(selectedId);
@@ -4451,8 +4488,8 @@ export const ServerGameService = {
         if (unit) ServerGameService.exhaustCard(unit, gameState);
       });
 
-      // Annihilation for survivor
-      const survivors = attackingUnits.filter(u => u.gamecardId !== selectedId);
+      // Annihilation is based on attackers that actually survived destruction/prevention.
+      const survivors = ServerGameService.getSurvivingAllianceAttackers(gameState, attackerId, attackerIds);
       ServerGameService.applyAllianceAnnihilationDamage(gameState, defenderId, survivors);
       await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
       if (gameState.pendingQuery) {
@@ -4852,6 +4889,14 @@ export const ServerGameService = {
       }
     }
 
+    if (attackers.some(unit => nameContains(unit, '殿堂'))) {
+      if ((player as any).hallAttackCountTurn !== gameState.turnCount) {
+        (player as any).hallAttackCount = 0;
+      }
+      (player as any).hallAttackCountTurn = gameState.turnCount;
+      (player as any).hallAttackCount = Number((player as any).hallAttackCount || 0) + 1;
+    }
+
     gameState.battleState = {
       attackers: attackerIds,
       isAlliance,
@@ -5241,8 +5286,6 @@ export const ServerGameService = {
         });
         const aHigher = powerA > defenderPower;
         const bHigher = powerB > defenderPower;
-        const aLower = powerA < defenderPower;
-        const bLower = powerB < defenderPower;
 
         const destroyAttacker = async (unit: Card) => {
           const already = gameState.battleState!.resolvedUnitIds.includes(unit.gamecardId);
@@ -5287,7 +5330,11 @@ export const ServerGameService = {
           const defenderResult = await destroyDefender();
           if (defenderResult !== false) {
             gameState.logs.push(`${defendingUnit.fullName} 被联军破坏`);
-            ServerGameService.applyAllianceAnnihilationDamage(gameState, defenderId, attackingUnits);
+            ServerGameService.applyAllianceAnnihilationDamage(
+              gameState,
+              defenderId,
+              ServerGameService.getSurvivingAllianceAttackers(gameState, attackerId, gameState.battleState.attackers)
+            );
           }
           if (defenderResult === undefined) return gameState;
         } else if (aHigher || bHigher) {
@@ -5297,17 +5344,21 @@ export const ServerGameService = {
           const attackerResult = await destroyAttacker(sacrificedUnit);
           if (defenderResult !== false && attackerResult !== false) {
             gameState.logs.push(`${defendingUnit.fullName} 与 ${sacrificedUnit.fullName} 被破坏，${survivingUnit.fullName} 留在场上`);
-            ServerGameService.applyAllianceAnnihilationDamage(gameState, defenderId, [survivingUnit]);
+            ServerGameService.applyAllianceAnnihilationDamage(
+              gameState,
+              defenderId,
+              ServerGameService.getSurvivingAllianceAttackers(gameState, attackerId, gameState.battleState.attackers)
+            );
           }
           if (defenderResult === undefined || attackerResult === undefined) return gameState;
-        } else if (aLower && bLower) {
+        } else if (!aHigher && !bHigher) {
           gameState.pendingQuery = {
             id: Math.random().toString(36).substring(7),
             type: 'SELECT_CARD',
-            playerUid: attackerId,
+            playerUid: defenderId,
             options: attackingUnits.map(u => ({ card: u, source: 'UNIT' as TriggerLocation })),
-            title: '联军牺牲选择',
-            description: `联军总力量 (${totalAttackerPower}) 高于防御单位 (${defenderPower})，请选择一个攻击单位与防御单位一同被破坏。`,
+            title: '联军破坏选择',
+            description: `联军总力量 (${totalAttackerPower}) 高于防御单位 (${defenderPower})，且联军单位力量均不高于防御单位。请选择1个进攻单位破坏。`,
             minSelections: 1,
             maxSelections: 1,
             callbackKey: 'ALLIANCE_DESTRUCTION_RESOLVE',
@@ -5317,8 +5368,8 @@ export const ServerGameService = {
               defenderPlayerId: defenderId
             }
           };
-          gameState.priorityPlayerId = attackerId;
-          gameState.logs.push(`等待 ${attacker.displayName} 选择联军中要被破坏的单位...`);
+          gameState.priorityPlayerId = defenderId;
+          gameState.logs.push(`等待 ${defender.displayName} 选择联军中要被破坏的进攻单位...`);
           return gameState;
         } else {
           const sacrificedUnit = powerA <= powerB ? attackerA : attackerB;
@@ -5327,7 +5378,11 @@ export const ServerGameService = {
           const attackerResult = await destroyAttacker(sacrificedUnit);
           if (defenderResult !== false && attackerResult !== false) {
             gameState.logs.push(`${defendingUnit.fullName} 与 ${sacrificedUnit.fullName} 被破坏，${survivingUnit.fullName} 留在场上`);
-            ServerGameService.applyAllianceAnnihilationDamage(gameState, defenderId, [survivingUnit]);
+            ServerGameService.applyAllianceAnnihilationDamage(
+              gameState,
+              defenderId,
+              ServerGameService.getSurvivingAllianceAttackers(gameState, attackerId, gameState.battleState.attackers)
+            );
           }
           if (defenderResult === undefined || attackerResult === undefined) return gameState;
         }
@@ -5618,6 +5673,14 @@ export const ServerGameService = {
     }
   },
 
+  getSurvivingAllianceAttackers(gameState: GameState, attackerPlayerId: string, attackerIds?: string[]) {
+    const attacker = gameState.players[attackerPlayerId];
+    if (!attacker) return [];
+    return (attackerIds || gameState.battleState?.attackers || [])
+      .map(id => attacker.unitZone.find(unit => unit?.gamecardId === id))
+      .filter((unit): unit is Card => !!unit);
+  },
+
   triggerGoddessTransformation(gameState: GameState, playerId: string) {
     const player = gameState.players[playerId];
     if (player.isGoddessMode) return;
@@ -5765,6 +5828,18 @@ export const ServerGameService = {
     ) {
       (unit as any).data.preventFirstDestroyEachTurnUsedTurn = gameState.turnCount;
       gameState.logs.push(`[${(unit as any).data.preventFirstDestroyEachTurnSourceName}] 防止了 [${unit.fullName}] 本回合第一次将被破坏。`);
+      return false;
+    }
+
+    if (
+      isEffect &&
+      sourcePlayerId &&
+      sourcePlayerId !== playerId &&
+      (unit as any).data?.preventFirstOpponentEffectDestroyEachTurnSourceName &&
+      (unit as any).data.preventFirstOpponentEffectDestroyEachTurnUsedTurn !== gameState.turnCount
+    ) {
+      (unit as any).data.preventFirstOpponentEffectDestroyEachTurnUsedTurn = gameState.turnCount;
+      gameState.logs.push(`[${(unit as any).data.preventFirstOpponentEffectDestroyEachTurnSourceName}] 防止了 [${unit.fullName}] 本回合第一次将被对手的卡的效果破坏。`);
       return false;
     }
 

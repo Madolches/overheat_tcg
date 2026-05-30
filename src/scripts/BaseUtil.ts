@@ -1633,6 +1633,12 @@ export const preventFirstDestroyEachTurn = (target: Card, source: Card) => {
   addInfluence(target, source, '每回合第一次将被破坏时防止');
 };
 
+export const preventFirstOpponentEffectDestroyEachTurn = (target: Card, source: Card) => {
+  const data = ensureData(target);
+  data.preventFirstOpponentEffectDestroyEachTurnSourceName = source.fullName;
+  addInfluence(target, source, '每回合第一次将被对手的卡的效果破坏时防止');
+};
+
 export const preventFirstAnyDestroyEachTurn = (target: Card, source: Card) => {
   const data = ensureData(target);
   data.preventFirstAnyDestroyEachTurnSourceName = source.fullName;
@@ -1933,6 +1939,17 @@ export const destroyByEffect = (gameState: GameState, target: Card, source: Card
   if (data.preventFirstDestroyEachTurnSourceName && data.preventFirstDestroyEachTurnUsedTurn !== gameState.turnCount) {
     data.preventFirstDestroyEachTurnUsedTurn = gameState.turnCount;
     gameState.logs.push(`[${data.preventFirstDestroyEachTurnSourceName}] 防止了 [${target.fullName}] 本回合第一次将被破坏。`);
+    return false;
+  }
+
+  if (
+    sourceUid &&
+    sourceUid !== uid &&
+    data.preventFirstOpponentEffectDestroyEachTurnSourceName &&
+    data.preventFirstOpponentEffectDestroyEachTurnUsedTurn !== gameState.turnCount
+  ) {
+    data.preventFirstOpponentEffectDestroyEachTurnUsedTurn = gameState.turnCount;
+    gameState.logs.push(`[${data.preventFirstOpponentEffectDestroyEachTurnSourceName}] 防止了 [${target.fullName}] 本回合第一次将被对手的卡的效果破坏。`);
     return false;
   }
 

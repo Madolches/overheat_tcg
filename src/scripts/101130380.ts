@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { allCardsOnField, attackingUnits, backErosionCount, createSelectCardQuery, destroyByEffect, ensureData, isBattleFreeContext, untilOpponentEndTurn } from './BaseUtil';
+import { allCardsOnField, attackingUnits, backErosionCount, createSelectCardQuery, destroyByEffect, ensureData, isBattleFreeContext } from './BaseUtil';
 
 const HOLY_KINGDOM = '圣王国';
 
@@ -35,9 +35,8 @@ const cardEffects: CardEffect[] = [{
     !!event.data?.isAlliance,
   execute: async (instance, gameState, playerState) => {
     const data = ensureData(instance);
-    data.preventNextBattleDestroy = true;
-    data.preventNextBattleDestroyUntilTurn = untilOpponentEndTurn(gameState, playerState.uid);
-    data.preventNextBattleDestroySourceName = instance.fullName;
+    data.combatImmuneUntilOwnNextTurnStartUid = playerState.uid;
+    data.combatImmuneSourceName = instance.fullName;
   }
 }, {
   id: '101130380_alliance_destroy',
