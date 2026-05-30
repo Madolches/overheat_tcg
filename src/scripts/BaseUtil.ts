@@ -1464,7 +1464,7 @@ export const genericSoulDevourPowerEffect = (id: string): CardEffect => ({
     playerState.isTurn &&
     gameState.phase === 'MAIN' &&
     ownUnits(playerState).some(unit => unit.gamecardId !== instance.gamecardId && !unit.godMark),
-  execute: async (instance, gameState, playerState) => {
+  cost: async (gameState, playerState, instance) => {
     createSelectCardQuery(
       gameState,
       playerState.uid,
@@ -1473,11 +1473,18 @@ export const genericSoulDevourPowerEffect = (id: string): CardEffect => ({
       '选择这个单位以外的己方1个非神蚀单位送入墓地作为费用。',
       1,
       1,
-      { sourceCardId: instance.gamecardId, effectId: id, step: 'SOUL_DEVOUR_COST' },
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: id,
+        step: 'SOUL_DEVOUR_COST',
+        costType: 'CUSTOM_CARD_COST',
+        skipEffectResolveAfterCost: true
+      },
       () => 'UNIT'
     );
+    return true;
   },
-  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+  onCostResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step !== 'SOUL_DEVOUR_COST') return;
     const costUnit = playerState.unitZone.find(unit =>
       unit?.gamecardId === selections[0] &&
@@ -1488,6 +1495,8 @@ export const genericSoulDevourPowerEffect = (id: string): CardEffect => ({
     moveCardAsCost(gameState, playerState.uid, costUnit, 'GRAVE', instance);
     recordUnitSentFromFieldToGrave(gameState, playerState.uid, costUnit);
     recordSoulDevourActivation(gameState, playerState);
+  },
+  execute: async (instance, gameState, playerState) => {
     ownUnits(playerState).forEach(unit => addTempPowerUntilEndOfTurn(unit, instance, 500, gameState));
   }
 });
@@ -1621,6 +1630,12 @@ export const preventNextDestroy = (target: Card, source: Card, untilTurn?: numbe
 export const preventFirstDestroyEachTurn = (target: Card, source: Card) => {
   const data = ensureData(target);
   data.preventFirstDestroyEachTurnSourceName = source.fullName;
+  addInfluence(target, source, '每回合第一次将被破坏时防止');
+};
+
+export const preventFirstAnyDestroyEachTurn = (target: Card, source: Card) => {
+  const data = ensureData(target);
+  data.preventFirstAnyDestroyEachTurnSourceName = source.fullName;
   addInfluence(target, source, '每回合第一次将被破坏时防止');
 };
 
@@ -1906,6 +1921,12 @@ export const destroyByEffect = (gameState: GameState, target: Card, source: Card
     delete data.preventNextDestroy;
     delete data.preventNextDestroySourceName;
     delete data.preventNextDestroyUntilTurn;
+    return false;
+  }
+
+  if (data.preventFirstAnyDestroyEachTurnSourceName && data.preventFirstAnyDestroyEachTurnUsedTurn !== gameState.turnCount) {
+    data.preventFirstAnyDestroyEachTurnUsedTurn = gameState.turnCount;
+    gameState.logs.push(`[${data.preventFirstAnyDestroyEachTurnSourceName}] 防止了 [${target.fullName}] 本回合第一次将被破坏。`);
     return false;
   }
 

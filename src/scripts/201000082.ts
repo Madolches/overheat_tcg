@@ -15,6 +15,16 @@ const cardEffects: CardEffect[] = [story('201000082_sacrifice', '选择你的1�
     () => 'UNIT'
   );
 }, {
+  targetSpec: {
+    title: '选择放逐的单位',
+    description: '选择你的1个单位，将其放逐。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'UNIT',
+    getCandidates: (_gameState, playerState) => ownUnits(playerState).map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, gameState, _playerState, selections, context) => {
     if (context?.step === 'ITEMS') {
       selections.forEach(id => {

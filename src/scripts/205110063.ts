@@ -27,6 +27,21 @@ const effect_205110063_activate: CardEffect = {
   triggerLocation: ['PLAY'],
   description: '从你的卡组选择1个‘瓦尔基里’单位放置到战场。',
   condition: (_gameState, playerState) => playerState.unitZone.some(card => card === null) && playerState.deck.some(isValkyrieUnit),
+  targetSpec: {
+    title: '选择瓦尔基里',
+    description: '从你的卡组选择1个“瓦尔基里”单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['DECK'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) =>
+      playerState.deck
+        .filter(card =>
+          isValkyrieUnit(card) &&
+          (!card.specialName || !playerState.unitZone.some(unit => unit?.specialName === card.specialName))
+        )
+        .map(card => ({ card, source: 'DECK' as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     const candidates = playerState.deck.filter(card =>
       isValkyrieUnit(card) &&

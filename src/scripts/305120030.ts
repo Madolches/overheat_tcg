@@ -1,7 +1,7 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import { EventEngine } from '../services/EventEngine';
-import { createSelectCardQuery, isYellowHandCard, moveCard } from './BaseUtil';
+import { createSelectCardQuery, isYellowHandCard, moveCard, moveCardAsCost } from './BaseUtil';
 
 const effect_305120030_activate: CardEffect = {
   id: '305120030_activate',
@@ -13,8 +13,9 @@ const effect_305120030_activate: CardEffect = {
     !instance.isExhausted &&
     playerState.hand.some(isYellowHandCard) &&
     playerState.unitZone.some(card => card !== null),
-  execute: async (instance, gameState, playerState) => {
+  cost: async (gameState, playerState, instance) => {
     const yellowHand = playerState.hand.filter(isYellowHandCard);
+    if (instance.isExhausted || yellowHand.length === 0) return false;
     createSelectCardQuery(
       gameState,
       playerState.uid,
@@ -23,36 +24,45 @@ const effect_305120030_activate: CardEffect = {
       '舍弃1张黄色手牌。',
       1,
       1,
-      { sourceCardId: instance.gamecardId, effectId: '305120030_activate', step: 'DISCARD' },
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '305120030_activate',
+        step: 'DISCARD_AND_EXHAUST_COST',
+        costType: 'CUSTOM_CARD_COST',
+        skipEffectResolveAfterCost: true
+      },
       () => 'HAND'
+    );
+    return true;
+  },
+  onCostResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step !== 'DISCARD_AND_EXHAUST_COST') return;
+    const discard = selections[0] ? playerState.hand.find((card: Card) => card.gamecardId === selections[0] && isYellowHandCard(card)) : undefined;
+    if (!discard || instance.isExhausted) {
+      context.cancelActivation = true;
+      return;
+    }
+    moveCardAsCost(gameState, playerState.uid, discard, 'GRAVE', instance);
+    await AtomicEffectExecutor.execute(gameState, playerState.uid, {
+      type: 'ROTATE_HORIZONTAL',
+      targetFilter: { gamecardId: instance.gamecardId }
+    }, instance);
+  },
+  execute: async (instance, gameState, playerState) => {
+    const ownUnits = playerState.unitZone.filter((card): card is Card => !!card);
+    if (ownUnits.length === 0) return;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      ownUnits,
+      '选择单位',
+      '将我方1个单位送入墓地。',
+      1,
+      1,
+      { sourceCardId: instance.gamecardId, effectId: '305120030_activate', step: 'SEND_UNIT' }
     );
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context.step === 'DISCARD') {
-      await AtomicEffectExecutor.execute(gameState, playerState.uid, {
-        type: 'DISCARD_CARD',
-        targetFilter: { gamecardId: selections[0] }
-      }, instance);
-
-      await AtomicEffectExecutor.execute(gameState, playerState.uid, {
-        type: 'ROTATE_HORIZONTAL',
-        targetFilter: { gamecardId: instance.gamecardId }
-      }, instance);
-
-      const ownUnits = playerState.unitZone.filter((card): card is Card => !!card);
-      createSelectCardQuery(
-        gameState,
-        playerState.uid,
-        ownUnits,
-        '选择单位',
-        '将我方1个单位送入墓地。',
-        1,
-        1,
-        { sourceCardId: instance.gamecardId, effectId: '305120030_activate', step: 'SEND_UNIT' }
-      );
-      return;
-    }
-
     if (context.step === 'SEND_UNIT') {
       const target = AtomicEffectExecutor.findCardById(gameState, selections[0]);
       if (!target) return;

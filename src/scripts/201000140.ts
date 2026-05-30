@@ -35,6 +35,15 @@ const cardEffects: CardEffect[] = [{
   limitCount: 1,
   limitNameType: true,
   condition: (_gameState, playerState) => playerState.grave.length >= 8,
+  targetSpec: {
+    title: '选择墓地的卡',
+    description: '选择你的墓地中的8张卡，将其放置到卡组底。',
+    minSelections: 8,
+    maxSelections: 8,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) => playerState.grave.map(card => ({ card, source: 'GRAVE' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const cards = selections.map(id => playerState.grave.find(card => card.gamecardId === id)).filter((card): card is Card => !!card);
     moveCardsToBottom(gameState, playerState.uid, cards, instance);

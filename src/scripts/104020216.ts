@@ -1,5 +1,6 @@
 import { Card, CardEffect, GameEvent, GameState, PlayerState } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import { createSelectCardQuery, moveCardAsCost } from './BaseUtil';
 
 const getValidBattleDestroyers = (gameState: GameState, playerState: PlayerState, event?: GameEvent) => {
   if (!event || event.type !== 'CARD_DESTROYED_BATTLE') return [] as Card[];
@@ -89,49 +90,39 @@ const activate_104020216_power_up: CardEffect = {
   condition: (_gameState: GameState, playerState: PlayerState) => {
     return playerState.hand.some(card => card.feijingMark);
   },
-  execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
+  cost: async (gameState: GameState, playerState: PlayerState, instance: Card) => {
     const feijingCards = playerState.hand.filter(card => card.feijingMark);
-    if (feijingCards.length === 0) {
-      gameState.logs.push(`[${instance.fullName}] 手牌中没有可舍弃的菲晶卡。`);
-      return;
-    }
-
-    gameState.pendingQuery = {
-      id: Math.random().toString(36).substring(7),
-      type: 'SELECT_CARD',
-      playerUid: playerState.uid,
-      options: AtomicEffectExecutor.enrichQueryOptions(
-        gameState,
-        playerState.uid,
-        feijingCards.map(card => ({ card, source: 'HAND' as any }))
-      ),
-      title: '选择要舍弃的菲晶卡',
-      description: '请选择1张带有菲晶的手牌舍弃，使这个单位本回合力量值+1000。',
-      minSelections: 1,
-      maxSelections: 1,
-      callbackKey: 'EFFECT_RESOLVE',
-      context: {
+    if (feijingCards.length === 0) return false;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      feijingCards,
+      '选择要舍弃的菲晶卡',
+      '请选择1张带有菲晶的手牌舍弃，作为发动费用。',
+      1,
+      1,
+      {
         sourceCardId: instance.gamecardId,
-        effectIndex: 1,
-        step: 'DISCARD_FEIJING'
-      }
-    };
+        effectId: '104020216_power_up_activate',
+        step: 'DISCARD_FEIJING_COST',
+        skipEffectResolveAfterCost: true
+      },
+      () => 'HAND'
+    );
+    return !!gameState.pendingQuery;
   },
-  onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
-    if (context?.step !== 'DISCARD_FEIJING' || selections.length === 0) return;
-
+  onCostResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
     const discardId = selections[0];
     const discardCard = playerState.hand.find(card => card.gamecardId === discardId && card.feijingMark);
     if (!discardCard) {
-      gameState.logs.push(`[${instance.fullName}] 选择的菲晶手牌已不合法，效果中止。`);
+      context.cancelActivation = true;
+      gameState.logs.push(`[${instance.fullName}] 选择的菲晶手牌已不合法，发动中止。`);
       return;
     }
-
-    await AtomicEffectExecutor.execute(gameState, playerState.uid, {
-      type: 'DISCARD_CARD',
-      targetFilter: { gamecardId: discardId }
-    }, instance);
-
+    moveCardAsCost(gameState, playerState.uid, discardCard, 'GRAVE', instance);
+    gameState.logs.push(`[${instance.fullName}] 舍弃了 [${discardCard.fullName}] 作为费用。`);
+  },
+  execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
     await AtomicEffectExecutor.execute(gameState, playerState.uid, {
       type: 'CHANGE_POWER',
       targetFilter: { gamecardId: instance.gamecardId },
@@ -139,7 +130,7 @@ const activate_104020216_power_up: CardEffect = {
       turnDuration: 1
     }, instance);
 
-    gameState.logs.push(`[${instance.fullName}] 舍弃了 [${discardCard.fullName}]，本回合力量值+1000。`);
+    gameState.logs.push(`[${instance.fullName}] 本回合力量值+1000。`);
   }
 };
 

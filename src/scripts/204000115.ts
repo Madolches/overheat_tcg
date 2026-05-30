@@ -5,16 +5,29 @@ import {
   createSelectCardQuery,
   getOpponentUid,
   markCanAttackAnyUnit,
-  moveCard,
+  moveCardAsCost,
   ownUnits,
   story
 } from './BaseUtil';
+
+const MODE_LOCK = 'LOCK_OPPONENT_PUT_UNITS';
+const MODE_ATTACK = 'BLUE_ATTACK_UNITS';
+
+const selectedModeFromContext = (context?: any) =>
+  context?.declaredModeId ||
+  context?.selectedModeId ||
+  context?.modeId ||
+  context?.declaredTargets?.[0]?.modeId ||
+  context?.declaredTargets?.declaredModeId;
 
 const anyDiscardCandidates = (playerState: any, instance: Card) =>
   playerState.hand.filter((card: Card) => card.gamecardId !== instance.gamecardId);
 
 const blueDiscardCandidates = (playerState: any, instance: Card) =>
   anyDiscardCandidates(playerState, instance).filter((card: Card) => card.color === 'BLUE');
+
+const discardCandidatesForMode = (playerState: any, instance: Card, mode: string) =>
+  mode === MODE_ATTACK ? blueDiscardCandidates(playerState, instance) : anyDiscardCandidates(playerState, instance);
 
 const markBlueUnitsCanAttackOpponentUnits = (gameState: any, playerState: any, source: Card) => {
   ownUnits(playerState)
@@ -27,58 +40,85 @@ const markBlueUnitsCanAttackOpponentUnits = (gameState: any, playerState: any, s
     });
 };
 
-const cardEffects: CardEffect[] = [story('204000115_deep_sea_fantasy', '选择1项：舍弃1张手牌，本回合中对手的卡的效果将对手的单位放置到战场上时，那些单位横置并失去所有能力，然后你可以抽2张卡；或舍弃1张蓝色手牌，本回合中你的蓝色单位可以攻击对手的单位。', async (instance, gameState, playerState) => {
-  const options = [];
-  if (anyDiscardCandidates(playerState, instance).length > 0) {
-    options.push({ id: 'LOCK_OPPONENT_PUT_UNITS', label: '效果登场横置失能' });
-  }
-  if (blueDiscardCandidates(playerState, instance).length > 0) {
-    options.push({ id: 'BLUE_ATTACK_UNITS', label: '蓝色单位可攻击单位' });
-  }
-  if (options.length === 0) return;
-  createChoiceQuery(
+const openDiscardCostQuery = (gameState: any, playerState: any, instance: Card, mode: string) => {
+  const candidates = discardCandidatesForMode(playerState, instance, mode);
+  if (candidates.length === 0) return false;
+  createSelectCardQuery(
     gameState,
     playerState.uid,
-    '选择效果',
-    '选择1项效果执行。',
-    options,
-    { sourceCardId: instance.gamecardId, effectId: '204000115_deep_sea_fantasy', step: 'MODE' }
+    candidates,
+    '支付舍弃费用',
+    mode === MODE_ATTACK ? '选择1张蓝色手牌舍弃，作为发动费用。' : '选择1张手牌舍弃，作为发动费用。',
+    1,
+    1,
+    {
+      sourceCardId: instance.gamecardId,
+      effectId: '204000115_deep_sea_fantasy',
+      step: 'DISCARD_COST',
+      mode,
+      skipEffectResolveAfterCost: true
+    },
+    () => 'HAND'
   );
-}, {
+  return !!gameState.pendingQuery;
+};
+
+const cardEffects: CardEffect[] = [story('204000115_deep_sea_fantasy', '选择1项：舍弃1张手牌，本回合中对手的卡的效果将对手的单位放置到战场上时，那些单位横置并失去所有能力，然后你可以抽2张卡；或舍弃1张蓝色手牌，本回合中你的蓝色单位可以攻击对手的单位。', async () => {}, {
   condition: (_gameState, playerState, instance) =>
     anyDiscardCandidates(playerState, instance).length > 0,
+  targetSpec: {
+    modeTitle: '选择效果',
+    modeDescription: '选择1项效果执行。',
+    modeOptions: [{
+      id: MODE_LOCK,
+      label: '效果登场横置失能',
+      title: '确认效果登场横置失能',
+      description: '舍弃1张手牌，本回合中对手的卡的效果将对手的单位放置到战场上时，将那些单位横置并失去所有能力。',
+      minSelections: 0,
+      maxSelections: 0,
+      zones: [],
+      step: MODE_LOCK,
+      condition: (_gameState, playerState, instance) => anyDiscardCandidates(playerState, instance).length > 0,
+      getCandidates: () => [] as any[]
+    }, {
+      id: MODE_ATTACK,
+      label: '蓝色单位可攻击单位',
+      title: '确认蓝色单位可攻击单位',
+      description: '舍弃1张蓝色手牌，本回合中你的蓝色单位可以攻击对手的单位。',
+      minSelections: 0,
+      maxSelections: 0,
+      zones: [],
+      step: MODE_ATTACK,
+      condition: (_gameState, playerState, instance) => blueDiscardCandidates(playerState, instance).length > 0,
+      getCandidates: () => [] as any[]
+    }]
+  },
+  cost: async (gameState, playerState, instance, context?: any) => {
+    const mode = selectedModeFromContext(context);
+    if (!mode) return false;
+    return openDiscardCostQuery(gameState, playerState, instance, mode);
+  },
+  onCostResolve: async (instance, gameState, playerState, selections, context) => {
+    const mode = context?.mode;
+    const discarded = selections[0]
+      ? discardCandidatesForMode(playerState, instance, mode).find((card: Card) => card.gamecardId === selections[0])
+      : undefined;
+    if (!discarded) {
+      context.cancelActivation = true;
+      gameState.logs.push(`[${instance.fullName}] 舍弃费用不合法，发动中止。`);
+      return;
+    }
+    moveCardAsCost(gameState, playerState.uid, discarded, 'GRAVE', instance);
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context?.step === 'MODE') {
-      const mode = selections[0];
-      const candidates = mode === 'BLUE_ATTACK_UNITS'
-        ? blueDiscardCandidates(playerState, instance)
-        : anyDiscardCandidates(playerState, instance);
-      if (candidates.length === 0) return;
-      createSelectCardQuery(
-        gameState,
-        playerState.uid,
-        candidates,
-        '支付舍弃费用',
-        mode === 'BLUE_ATTACK_UNITS' ? '选择1张蓝色手牌舍弃。' : '选择1张手牌舍弃。',
-        1,
-        1,
-        { sourceCardId: instance.gamecardId, effectId: '204000115_deep_sea_fantasy', step: 'DISCARD', mode },
-        () => 'HAND'
-      );
+    const mode = context?.mode || selectedModeFromContext(context);
+
+    if (mode === MODE_ATTACK) {
+      markBlueUnitsCanAttackOpponentUnits(gameState, playerState, instance);
       return;
     }
 
-    if (context?.step === 'DISCARD') {
-      const discarded = selections[0] ? playerState.hand.find((card: Card) => card.gamecardId === selections[0]) : undefined;
-      if (!discarded) return;
-      if (context.mode === 'BLUE_ATTACK_UNITS' && discarded.color !== 'BLUE') return;
-      moveCard(gameState, playerState.uid, discarded, 'GRAVE', instance);
-
-      if (context.mode === 'BLUE_ATTACK_UNITS') {
-        markBlueUnitsCanAttackOpponentUnits(gameState, playerState, instance);
-        return;
-      }
-
+    if (mode === MODE_LOCK) {
       const opponentUid = getOpponentUid(gameState, playerState.uid);
       const opponent = gameState.players[opponentUid] as any;
       opponent.ownEffectPlacedUnitsEnterExhaustedSilencedTurn = gameState.turnCount;
@@ -137,13 +177,13 @@ const cardEffects: CardEffect[] = [story('204000115_deep_sea_fantasy', '选择1�
  * Card2 Row: 592
  * Card Row: 475
  * Source CardNo: BT07-04B
- * Package: PR(2017年3月)
+ * Package: PR(2017年7月?)
  * ID Source: card-xlsx
  * Keywords: N/A
  * Card Detail:
  * 选择下列的1项效果执行：
- * ◆[舍弃1张手牌]：本回合中，对手的卡的效果将对手的单位放置到战场上时，将那些单位横置，本回合中，失去所有能力。之后，你可以抽2张卡。
- * ◆[舍弃1张蓝色手牌]：本回合中，你的蓝色单位可以攻击对手的单位。
+ * ●[舍弃1张手牌]：本回合中，对手的卡的效果将对手的单位放置到战场上时，将那些单位横置，本回合中，失去所有能力。之后，你可以抽2张卡。
+ * ●[舍弃1张蓝色手牌]：本回合中，你的蓝色单位可以攻击对手的单位。
  * TODO: confirm ID / godMark / rarity variants and implement effects.
  */
 const card: Card = {

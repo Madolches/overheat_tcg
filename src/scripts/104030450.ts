@@ -1,5 +1,6 @@
 import { Card, GameState, PlayerState, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import { paymentCost } from './BaseUtil';
 
 const getErosionCount = (player: PlayerState) => {
   const front = player.erosionFront.filter(c => c !== null).length;
@@ -92,80 +93,61 @@ const activateSwapEffect: CardEffect = {
   description: '【启动】【同名回合一次】侵蚀区处于3-7张且在你的回合，支付1费，将这个单位正面表示置入侵蚀前区。之后选择你侵蚀前区一张「文」以外的「冒险家公会」单位卡，将其放置进入单位区。',
   condition: (_gameState, playerState, instance) => {
     if (!playerState.isTurn || instance.cardlocation !== 'UNIT') return false;
-    return true;
+    return getSwapTargets(playerState, instance).length > 0;
   },
+  cost: paymentCost(1, 'BLUE'),
   execute: async (card, gameState, playerState) => {
+    const sourcePlayer = gameState.players[playerState.uid];
+    const sourceUnitIndex = sourcePlayer.unitZone.findIndex(c => c?.gamecardId === card.gamecardId);
+    if (sourceUnitIndex < 0) {
+      gameState.logs.push(`[${card.fullName}] 结算时已不在单位区，效果失败。`);
+      return;
+    }
+
+    await AtomicEffectExecutor.execute(gameState, playerState.uid, {
+      type: 'MOVE_FROM_FIELD',
+      destinationZone: 'EROSION_FRONT',
+      targetFilter: { gamecardId: card.gamecardId }
+    }, card);
+
+    const movedSelf = sourcePlayer.erosionFront.find(c => c?.gamecardId === card.gamecardId);
+    if (movedSelf) {
+      movedSelf.displayState = 'FRONT_UPRIGHT';
+    }
+
+    const validTargets = getSwapTargets(sourcePlayer, card);
+    if (validTargets.length === 0) {
+      gameState.logs.push(`[${card.fullName}] 已正面进入侵蚀前区，但当前没有可放置到单位区的合法目标。`);
+      return;
+    }
+
     gameState.pendingQuery = {
       id: Math.random().toString(36).substring(7),
-      type: 'SELECT_PAYMENT',
+      type: 'SELECT_CARD',
       playerUid: playerState.uid,
-      options: [],
-      title: `支付 [${card.fullName}] 的费用`,
-      description: '请支付1点费用以发动效果。',
+      options: AtomicEffectExecutor.enrichQueryOptions(
+        gameState,
+        playerState.uid,
+        validTargets.map(u => ({ card: u, source: 'EROSION_FRONT' as any }))
+      ),
+      title: '选择侵蚀卡进入战场',
+      description: '请选择一张侵蚀前区正面表示的「冒险家公会」单位（非文），其将进入战场。',
       minSelections: 1,
       maxSelections: 1,
       callbackKey: 'EFFECT_RESOLVE',
-      paymentCost: 1,
-      paymentColor: card.color,
       context: {
         sourceCardId: card.gamecardId,
         effectIndex: 1,
-        step: 1
+        step: 2,
+        sourceUnitIndex
       }
     };
-    gameState.logs.push(`[${card.fullName}] 等待 ${playerState.displayName} 支付 1 点费用...`);
   },
   onQueryResolve: async (card, gameState, playerState, selections, context) => {
-    const step = context?.step || 1;
+    const step = context?.step || 2;
     const sourcePlayer = gameState.players[playerState.uid];
 
-    if (step === 1) {
-      const sourceUnitIndex = sourcePlayer.unitZone.findIndex(c => c?.gamecardId === card.gamecardId);
-      if (sourceUnitIndex < 0) {
-        gameState.logs.push(`[${card.fullName}] 结算时已不在单位区，效果失败。`);
-        return;
-      }
-      gameState.logs.push(`[${card.fullName}] 费用支付成功。`);
-
-      await AtomicEffectExecutor.execute(gameState, playerState.uid, {
-        type: 'MOVE_FROM_FIELD',
-        destinationZone: 'EROSION_FRONT',
-        targetFilter: { gamecardId: card.gamecardId }
-      }, card);
-
-      const movedSelf = sourcePlayer.erosionFront.find(c => c?.gamecardId === card.gamecardId);
-      if (movedSelf) {
-        movedSelf.displayState = 'FRONT_UPRIGHT';
-      }
-
-      const validTargets = getSwapTargets(sourcePlayer, card);
-      if (validTargets.length === 0) {
-        gameState.logs.push(`[${card.fullName}] 已正面进入侵蚀前区，但当前没有可放置到单位区的合法目标。`);
-        return;
-      }
-
-      gameState.pendingQuery = {
-        id: Math.random().toString(36).substring(7),
-        type: 'SELECT_CARD',
-        playerUid: playerState.uid,
-        options: AtomicEffectExecutor.enrichQueryOptions(
-          gameState,
-          playerState.uid,
-          validTargets.map(u => ({ card: u, source: 'EROSION_FRONT' as any }))
-        ),
-        title: '选择侵蚀卡进入战场',
-        description: '请选择一张侵蚀前区正面表示的「冒险家公会」单位（非文），其将进入战场。',
-        minSelections: 1,
-        maxSelections: 1,
-        callbackKey: 'EFFECT_RESOLVE',
-        context: {
-          sourceCardId: card.gamecardId,
-          effectIndex: 1,
-          step: 2,
-          sourceUnitIndex
-        }
-      };
-    } else if (step === 2) {
+    if (step === 2) {
       const targetId = selections[0];
       const targetCard = sourcePlayer.erosionFront.find(c => c?.gamecardId === targetId);
 

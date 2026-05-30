@@ -50,6 +50,16 @@ const cardEffects: CardEffect[] = [{
     erosionTotalLimit: [10, 10],
     description: '10+，1游戏1次，侵蚀1：选择墓地6张卡放到卡组底。',
     cost: erosionCost(1),
+    condition: (_gameState, playerState) => playerState.grave.length >= 6,
+    targetSpec: {
+      title: '选择放回卡组底的卡',
+      description: '选择你的墓地中的6张卡，放置到卡组底。',
+      minSelections: 6,
+      maxSelections: 6,
+      zones: ['GRAVE'],
+      controller: 'SELF',
+      getCandidates: (_gameState, playerState) => playerState.grave.map(card => ({ card, source: 'GRAVE' as any }))
+    },
     execute: async (instance, gameState, playerState) => {
       if (playerState.grave.length === 0) return;
       const count = Math.min(6, playerState.grave.length);

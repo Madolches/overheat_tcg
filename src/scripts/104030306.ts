@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { canPutUnitOntoBattlefield, discardHandCost, moveCard, ownUnits, ownerOf, preventFirstDestroyEachTurn, totalErosionCount } from './BaseUtil';
+import { canPutUnitOntoBattlefield, discardHandCost, moveCard, ownUnits, ownerOf, preventFirstAnyDestroyEachTurn, totalErosionCount } from './BaseUtil';
 
 const ADVENTURER = '冒险家公会';
 
@@ -33,7 +33,7 @@ const cardEffects: CardEffect[] = [{
   applyContinuous: (gameState, instance) => {
     const owner = ownerOf(gameState, instance);
     if (!owner || !hasAmy(owner)) return;
-    ownUnits(owner).filter(isAdventurerUnit).forEach(unit => preventFirstDestroyEachTurn(unit, instance));
+    ownUnits(owner).filter(isAdventurerUnit).forEach(unit => preventFirstAnyDestroyEachTurn(unit, instance));
   }
 }, {
   id: '104030306_enter_from_erosion',

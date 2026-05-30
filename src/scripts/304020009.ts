@@ -11,8 +11,8 @@ const activate_304020009: CardEffect = {
   condition: (gameState: GameState, playerState: PlayerState, instance: Card) => {
     return !instance.isExhausted;
   },
-  execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
-    // 1. Cost: Payment loop
+  cost: async (gameState: GameState, playerState: PlayerState, instance: Card) => {
+    if (instance.isExhausted) return false;
     gameState.pendingQuery = {
       id: Math.random().toString(36).substring(7),
       type: 'SELECT_PAYMENT',
@@ -28,50 +28,58 @@ const activate_304020009: CardEffect = {
       context: {
         sourceCardId: instance.gamecardId,
         effectId: '304020009_activate',
-        step: 'PICK_PLAYER'
+        step: 'PAY_AND_EXHAUST_COST',
+        skipEffectResolveAfterCost: true
+      }
+    };
+    return true;
+  },
+  onCostResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, _selections: string[], context: any) => {
+    if (context?.step !== 'PAY_AND_EXHAUST_COST') return;
+    if (instance.isExhausted) {
+      context.cancelActivation = true;
+      return;
+    }
+    await AtomicEffectExecutor.execute(gameState, playerState.uid, {
+      type: 'ROTATE_HORIZONTAL',
+      targetFilter: { gamecardId: instance.gamecardId }
+    }, instance);
+  },
+  execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
+    const options: any[] = Object.values(gameState.players).map(p => {
+      const isMe = p.uid === playerState.uid;
+      return {
+        card: {
+          gamecardId: isMe ? 'PLAYER_SELF' : 'PLAYER_OPPONENT',
+          id: isMe ? 'PLAYER_SELF' : 'PLAYER_OPPONENT',
+          fullName: isMe ? '我方玩家' : '对手玩家',
+          type: 'UNIT',
+          color: 'NONE',
+          rarity: 'C'
+        },
+        source: 'HAND' as any
+      };
+    });
+
+    gameState.pendingQuery = {
+      id: Math.random().toString(36).substring(7),
+      type: 'SELECT_CARD',
+      playerUid: playerState.uid,
+      options: options,
+      title: '选择执行效果的玩家',
+      description: '请选择一名玩家进行抽牌与充能。',
+      minSelections: 1,
+      maxSelections: 1,
+      callbackKey: 'EFFECT_RESOLVE',
+      context: {
+        sourceCardId: instance.gamecardId,
+        effectId: '304020009_activate',
+        step: 'EXECUTE_EFFECT'
       }
     };
   },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
-    if (context.step === 'PICK_PLAYER') {
-      // After payment, exhaust the card
-      await AtomicEffectExecutor.execute(gameState, playerState.uid, {
-        type: 'ROTATE_HORIZONTAL',
-        targetFilter: { gamecardId: instance.gamecardId }
-      }, instance);
-
-      // Select target player
-      const options: any[] = Object.values(gameState.players).map(p => {
-        const isMe = p.uid === playerState.uid;
-        return {
-          card: {
-            gamecardId: isMe ? 'PLAYER_SELF' : 'PLAYER_OPPONENT',
-            id: isMe ? 'PLAYER_SELF' : 'PLAYER_OPPONENT',
-            fullName: isMe ? '我方玩家' : '对手玩家',
-            type: 'UNIT',
-            color: 'NONE',
-            rarity: 'C'
-          },
-          source: 'HAND' as any
-        };
-      });
-
-      gameState.pendingQuery = {
-        id: Math.random().toString(36).substring(7),
-        type: 'SELECT_CARD',
-        playerUid: playerState.uid,
-        options: options,
-        title: '选择执行效果的玩家',
-        description: '请选择一名玩家进行抽牌与充能。',
-        minSelections: 1,
-        maxSelections: 1,
-        callbackKey: 'EFFECT_RESOLVE',
-        context: {
-          ...context,
-          step: 'EXECUTE_EFFECT'
-        }
-      };
-    } else if (context.step === 'EXECUTE_EFFECT') {
+    if (context.step === 'EXECUTE_EFFECT') {
       const selectedGamecardId = selections[0];
       const targetUid = selectedGamecardId === 'PLAYER_SELF' ? playerState.uid : Object.keys(gameState.players).find(uid => uid !== playerState.uid)!;
       const targetPlayer = gameState.players[targetUid];

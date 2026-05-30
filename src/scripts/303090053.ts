@@ -81,6 +81,16 @@ const cardEffects: CardEffect[] = [{
     !instance.isExhausted &&
     nonGodUnitCandidates(gameState).length > 0,
   cost: exhaustCost,
+  targetSpec: {
+    title: '选择单位',
+    description: '选择战场上1个非神蚀单位，本回合中将其1个【启】或【诱】能力无效。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    step: 'TARGET',
+    getCandidates: gameState => nonGodUnitCandidates(gameState).map(card => ({ card, source: 'UNIT' as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,

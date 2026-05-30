@@ -1,15 +1,22 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor, addTempDamage, addTempPower, canPutUnitOntoBattlefield, createSelectCardQuery, erosionCost, moveCard, ownUnits } from './BaseUtil';
 
+const boostCostUnits = (gameState: any, playerState: any) =>
+  ownUnits(playerState).filter(unit =>
+    !unit.isExhausted &&
+    !((unit as any).data?.cannotExhaustUntilTurn >= gameState.turnCount)
+  );
+
 const cardEffects: CardEffect[] = [{
   id: '103090180_exhaust_boost',
   type: 'ACTIVATE',
   triggerLocation: ['UNIT'],
   limitCount: 1,
   description: '横置你的X个单位：选择你的1个单位，本回合伤害+X、力量+X000。X不能小于2。',
-  condition: (_gameState, playerState) => ownUnits(playerState).filter(unit => !unit.isExhausted).length >= 2 && ownUnits(playerState).length > 0,
-  execute: async (instance, gameState, playerState) => {
-    const candidates = ownUnits(playerState).filter(unit => !unit.isExhausted);
+  condition: (gameState, playerState) => boostCostUnits(gameState, playerState).length >= 2 && ownUnits(playerState).length > 0,
+  cost: async (gameState, playerState, instance) => {
+    const candidates = boostCostUnits(gameState, playerState);
+    if (candidates.length < 2) return false;
     createSelectCardQuery(
       gameState,
       playerState.uid,
@@ -18,11 +25,55 @@ const cardEffects: CardEffect[] = [{
       '选择要横置的X个单位。X不能小于2。',
       2,
       candidates.length,
-      { sourceCardId: instance.gamecardId, effectId: '103090180_exhaust_boost', step: 'COST' },
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '103090180_exhaust_boost',
+        step: 'EXHAUST_COST',
+        costType: 'CUSTOM_CARD_COST',
+        skipEffectResolveAfterCost: true
+      },
+      () => 'UNIT'
+    );
+    return true;
+  },
+  onCostResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step !== 'EXHAUST_COST') return;
+    const selected = selections
+      .map(id => boostCostUnits(gameState, playerState).find(unit => unit.gamecardId === id))
+      .filter((unit): unit is Card => !!unit);
+    if (selected.length !== selections.length || selected.length < 2 || new Set(selected.map(unit => unit.gamecardId)).size !== selected.length) {
+      context.cancelActivation = true;
+      return;
+    }
+
+    selected.forEach(unit => { unit.isExhausted = true; });
+    (instance as any).data = {
+      ...((instance as any).data || {}),
+      exhaustBoostCostX: selected.length,
+      exhaustBoostCostTurn: gameState.turnCount
+    };
+  },
+  execute: async (instance, gameState, playerState) => {
+    const data = (instance as any).data || {};
+    const x = data.exhaustBoostCostTurn === gameState.turnCount ? Number(data.exhaustBoostCostX || 0) : 0;
+    if ((instance as any).data) {
+      delete (instance as any).data.exhaustBoostCostX;
+      delete (instance as any).data.exhaustBoostCostTurn;
+    }
+    if (x < 2) return;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      ownUnits(playerState),
+      '选择获得增益的单位',
+      `选择你的1个单位，本回合伤害+${x}、力量+${x * 1000}。`,
+      1,
+      1,
+      { sourceCardId: instance.gamecardId, effectId: '103090180_exhaust_boost', step: 'TARGET', x },
       () => 'UNIT'
     );
   },
-  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+  onQueryResolve: async (instance, gameState, _playerState, selections, context) => {
     if (context?.step === 'TARGET') {
       const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
       const x = context.x || 0;
@@ -32,21 +83,6 @@ const cardEffects: CardEffect[] = [{
       }
       return;
     }
-    const exhausted = selections
-      .map(id => ownUnits(playerState).find(unit => unit.gamecardId === id && !unit.isExhausted))
-      .filter((unit): unit is Card => !!unit);
-    exhausted.forEach(unit => { unit.isExhausted = true; });
-    createSelectCardQuery(
-      gameState,
-      playerState.uid,
-      ownUnits(playerState),
-      '选择获得增益的单位',
-      `选择你的1个单位，本回合伤害+${exhausted.length}、力量+${exhausted.length * 1000}。`,
-      1,
-      1,
-      { sourceCardId: instance.gamecardId, effectId: '103090180_exhaust_boost', step: 'TARGET', x: exhausted.length },
-      () => 'UNIT'
-    );
   }
 }, {
   id: '103090180_ten_revive',
@@ -59,6 +95,18 @@ const cardEffects: CardEffect[] = [{
     playerState.grave.some(card => card.type === 'UNIT' && card.faction === '瑟诺布' && (card.power || card.basePower || 0) <= 2000) &&
     playerState.unitZone.some(slot => slot === null),
   cost: erosionCost(3),
+  targetSpec: {
+    title: '选择放置到战场的单位',
+    description: '选择墓地中的最多2张力量2000以下<瑟诺布>单位卡，放置到战场。',
+    minSelections: 0,
+    maxSelections: 2,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) =>
+      playerState.grave
+        .filter(card => card.type === 'UNIT' && card.faction === '瑟诺布' && (card.power || card.basePower || 0) <= 2000)
+        .map(card => ({ card, source: 'GRAVE' as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     const emptySlots = playerState.unitZone.filter(slot => slot === null).length;
     const targets = playerState.grave.filter(card => card.type === 'UNIT' && card.faction === '瑟诺布' && (card.power || card.basePower || 0) <= 2000);

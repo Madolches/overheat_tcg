@@ -100,7 +100,7 @@ const cardEffects: CardEffect[] = [{
     }]
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context?.declaredTargets?.length) {
+    if (context?.selectedModeId || context?.modeId || context?.declaredTargets?.length) {
       await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'DRAW', value: 1 }, instance);
     }
 

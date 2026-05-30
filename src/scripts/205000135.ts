@@ -18,6 +18,19 @@ const effect_205000135_activate: CardEffect = {
       card.fullName !== loneGodmark.fullName
     );
   },
+  targetSpec: {
+    title: '选择你的单位',
+    description: '选择要返回卡组的有特殊名称的神蚀单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'RETURN_UNIT',
+    getCandidates: (_gameState, playerState) => {
+      const loneGodmark = getOnlyGodMarkUnit(playerState);
+      return loneGodmark?.specialName ? [{ card: loneGodmark, source: 'UNIT' as any }] : [];
+    }
+  },
   execute: async (instance, gameState, playerState) => {
     const loneGodmark = getOnlyGodMarkUnit(playerState);
     if (!loneGodmark?.specialName) return;

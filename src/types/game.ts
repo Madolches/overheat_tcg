@@ -157,6 +157,7 @@ export interface EffectTargetModeOption extends EffectTargetShape {
   label: string;
   modeDescription?: string;
   condition?: (gameState: GameState, playerState: PlayerState, card: Card) => boolean;
+  targetGroups?: EffectTargetShape[];
 }
 
 export interface EffectTargetSpec extends Partial<EffectTargetShape> {
@@ -432,6 +433,7 @@ export interface StackItem {
   isAlliance?: boolean; // For ATTACK
   data?: any; // Generic data for effects (e.g. query results)
   declaredTargets?: DeclaredEffectTarget[];
+  declaredModeId?: string;
   timestamp: number;
   isNegated?: boolean;
   isInterrupted?: boolean;

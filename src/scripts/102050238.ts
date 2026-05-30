@@ -51,6 +51,18 @@ const cardEffects: CardEffect[] = [{
     playerState.isTurn &&
     ownUnits(playerState).filter(unit => isFaction(unit, '伊列宇王国')).length >= 4 &&
     ownUnits(gameState.players[getOpponentUid(gameState, playerState.uid)]).some(isNonGodUnit),
+  targetSpec: {
+    title: '选择破坏目标',
+    description: '选择对手的1个非神蚀单位破坏。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    getCandidates: (gameState, playerState) => {
+      const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
+      return ownUnits(opponent).filter(isNonGodUnit).map(card => ({ card, source: 'UNIT' as any }));
+    }
+  },
   execute: async (instance, gameState, playerState) => {
     const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
     createSelectCardQuery(

@@ -1,6 +1,7 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { canPutUnitOntoBattlefield, createSelectCardQuery } from './BaseUtil';
+import { canPutUnitOntoBattlefield, createSelectCardQuery, exhaustCost } from './BaseUtil';
+import { satisfiesHighAlchemyEntryRestriction } from '../lib/highAlchemy';
 
 const effect_305000073_continuous: CardEffect = {
   id: '305000073_continuous',
@@ -33,6 +34,19 @@ const effect_305000073_continuous: CardEffect = {
   }
 };
 
+const hasFreeUnitSlotAfterSendingTargets = (playerState: { unitZone: (Card | null)[] }, selectedCount: number) =>
+  playerState.unitZone.some(slot => slot === null) || selectedCount > 0;
+
+const canPutWorkshopAlchemyUnit = (playerState: { unitZone: (Card | null)[] }, card: Card, selectedCount: number) =>
+  card.type === 'UNIT' &&
+  card.fullName.includes('炼金') &&
+  hasFreeUnitSlotAfterSendingTargets(playerState, selectedCount) &&
+  (!card.specialName || !playerState.unitZone.some(unit =>
+    unit?.specialName === card.specialName &&
+    (unit as any).data?.lastMovedFromZone !== 'DECK'
+  )) &&
+  satisfiesHighAlchemyEntryRestriction(card);
+
 const effect_305000073_activate: CardEffect = {
   id: '305000073_activate',
   type: 'ACTIVATE',
@@ -43,41 +57,40 @@ const effect_305000073_activate: CardEffect = {
   condition: (_gameState, playerState, instance) =>
     !instance.isExhausted &&
     playerState.unitZone.filter(unit => unit && (unit as any).data?.lastMovedFromZone === 'DECK').length >= 3 &&
-    playerState.deck.some(card => card.type === 'UNIT' && card.fullName.includes('炼金') && canPutUnitOntoBattlefield(playerState, card)),
-  execute: async (instance, gameState, playerState) => {
-    await AtomicEffectExecutor.execute(gameState, playerState.uid, {
-      type: 'ROTATE_HORIZONTAL',
-      targetFilter: { gamecardId: instance.gamecardId }
-    }, instance);
-
-    const targets = playerState.unitZone.filter((unit): unit is Card =>
-      !!unit && (unit as any).data?.lastMovedFromZone === 'DECK'
-    );
-    createSelectCardQuery(
-      gameState,
-      playerState.uid,
-      targets,
-      '选择3个单位',
-      '选择你的3个从卡组放置到战场的单位。',
-      3,
-      3,
-      { sourceCardId: instance.gamecardId, effectId: '305000073_activate', step: 'SEND_UNITS' }
-    );
+    playerState.deck.some(card => canPutWorkshopAlchemyUnit(playerState, card, 3)),
+  targetSpec: {
+    title: '选择3个单位',
+    description: '选择你的3个从卡组放置到战场的单位。',
+    minSelections: 3,
+    maxSelections: 3,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'SEND_UNITS',
+    getCandidates: (_gameState, playerState) => {
+      return playerState.unitZone
+        .filter((unit): unit is Card => !!unit && (unit as any).data?.lastMovedFromZone === 'DECK')
+        .map(card => ({ card, source: 'UNIT' as any }));
+    }
   },
+  cost: exhaustCost,
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context.step === 'SEND_UNITS') {
-      for (const targetId of selections) {
+      const selectedUnits = selections
+        .map(id => playerState.unitZone.find(unit => unit?.gamecardId === id && (unit as any).data?.lastMovedFromZone === 'DECK'))
+        .filter((card): card is Card => !!card);
+      if (selectedUnits.length === 0) return;
+
+      for (const target of selectedUnits) {
         await AtomicEffectExecutor.execute(gameState, playerState.uid, {
           type: 'MOVE_FROM_FIELD',
-          targetFilter: { gamecardId: targetId, type: 'UNIT' },
+          targetFilter: { gamecardId: target.gamecardId, type: 'UNIT' },
           destinationZone: 'GRAVE'
         }, instance);
       }
 
       const candidates = playerState.deck.filter(card =>
-        card.type === 'UNIT' &&
-        card.fullName.includes('炼金') &&
-        canPutUnitOntoBattlefield(playerState, card)
+        canPutUnitOntoBattlefield(playerState, card) &&
+        card.fullName.includes('炼金')
       );
       if (candidates.length === 0) return;
 

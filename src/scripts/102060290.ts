@@ -8,7 +8,8 @@ import {
   destroyByEffect,
   moveCardAsCost,
   ownUnits,
-  putUnitOntoField
+  putUnitOntoField,
+  recordUnitSentFromFieldToGrave
 } from './BaseUtil';
 
 const differentColorNonGodUnitsInGrave = (playerState: any) =>
@@ -37,13 +38,16 @@ const isSacrificeCostUnit = (card: Card) =>
     AtomicEffectExecutor.matchesColor(card, 'BLUE')
   );
 
+const nonGodFieldTargets = (gameState: any) =>
+  allCardsOnField(gameState).filter(card => !card.godMark && (card.type === 'UNIT' || card.type === 'ITEM' || card.isEquip));
+
 const effect_102060290_irodori_enter: CardEffect = {
   id: '102060290_irodori_enter',
   type: 'ACTIVATE',
   triggerLocation: ['HAND'],
   limitCount: 1,
   limitNameType: true,
-  description: '异彩2：将墓地2种颜色的非神蚀单位卡各1张放逐，将手牌中的这张卡放置到战场上。',
+  description: '异彩2：将墓地2种颜色的非神蚀单位卡各1张放逐作为费用，将手牌中的这张卡放置到战场上。',
   condition: (_gameState, playerState, instance) =>
     instance.cardlocation === 'HAND' &&
     playerState.isTurn &&
@@ -58,10 +62,22 @@ const effect_102060290_irodori_enter: CardEffect = {
       '选择墓地中2种颜色的非神蚀单位卡各1张放逐。',
       2,
       2,
-      { sourceCardId: instance.gamecardId, effectId: '102060290_irodori_enter', costType: 'SP03_R03_IRODORI2' },
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '102060290_irodori_enter',
+        step: 'IRODORI2_COST',
+        costType: 'CUSTOM_CARD_COST',
+        skipEffectResolveAfterCost: true
+      },
       () => 'GRAVE'
     );
     return true;
+  },
+  onCostResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step !== 'IRODORI2_COST') return;
+    if (!payIrodoriCost(gameState, playerState, instance, selections, 2)) {
+      context.cancelActivation = true;
+    }
   },
   execute: async (instance, gameState, playerState) => {
     (instance as any).data = {
@@ -74,12 +90,6 @@ const effect_102060290_irodori_enter: CardEffect = {
         enteredByIrodoriTurn: gameState.turnCount
       };
     }
-  },
-  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context?.costType !== 'SP03_R03_IRODORI2') return;
-    if (!payIrodoriCost(gameState, playerState, instance, selections, 2)) {
-      context.cancelActivation = true;
-    }
   }
 };
 
@@ -89,26 +99,46 @@ const effect_102060290_irodori_destroy: CardEffect = {
   triggerLocation: ['UNIT'],
   limitCount: 1,
   limitNameType: true,
-  description: '同名1回合1次：这个单位通过异彩进入战场的回合，选择战场上1张非神蚀卡，送墓己方红/黄/蓝非神蚀单位后破坏它。',
+  description: '同名1回合1次：通过异彩进入战场的回合，选择1张非神蚀卡，将己方红/黄/蓝非神蚀单位送墓作为费用后破坏它。',
   condition: (gameState, playerState, instance) =>
     instance.cardlocation === 'UNIT' &&
     canActivateDefaultTiming(gameState, playerState) &&
     (instance as any).data?.enteredByIrodoriTurn === gameState.turnCount &&
-    allCardsOnField(gameState).some(card => !card.godMark && (card.type === 'UNIT' || card.type === 'ITEM' || card.isEquip)) &&
+    nonGodFieldTargets(gameState).length > 0 &&
     ownUnits(playerState).some(isSacrificeCostUnit),
-  execute: async (instance, gameState, playerState) => {
+  cost: async (gameState, playerState, instance) => {
+    const costs = ownUnits(playerState).filter(isSacrificeCostUnit);
+    if (costs.length === 0) return false;
     createSelectCardQuery(
       gameState,
       playerState.uid,
-      allCardsOnField(gameState).filter(card => !card.godMark && (card.type === 'UNIT' || card.type === 'ITEM' || card.isEquip)),
-      '选择破坏目标',
-      '选择战场上的1张非神蚀卡。',
+      costs,
+      '选择送墓费用',
+      '选择己方战场上的1个红色、黄色或蓝色非神蚀单位送入墓地作为费用。',
       1,
       1,
-      { sourceCardId: instance.gamecardId, effectId: '102060290_irodori_destroy', step: 'TARGET' },
-      card => card.cardlocation as any
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '102060290_irodori_destroy',
+        step: 'SACRIFICE_COST',
+        costType: 'CUSTOM_CARD_COST',
+        skipEffectResolveAfterCost: true
+      },
+      () => 'UNIT'
     );
+    return true;
   },
+  onCostResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step !== 'SACRIFICE_COST') return;
+    const cost = ownUnits(playerState).find(unit => unit.gamecardId === selections[0] && isSacrificeCostUnit(unit));
+    if (!cost) {
+      context.cancelActivation = true;
+      return;
+    }
+    moveCardAsCost(gameState, playerState.uid, cost, 'GRAVE', instance);
+    recordUnitSentFromFieldToGrave(gameState, playerState.uid, cost);
+  },
+  execute: async () => {},
   targetSpec: {
     title: '选择破坏目标',
     description: '选择战场上的1张非神蚀卡。',
@@ -118,61 +148,17 @@ const effect_102060290_irodori_destroy: CardEffect = {
     controller: 'ANY',
     step: 'TARGET',
     getCandidates: gameState =>
-      allCardsOnField(gameState)
-        .filter(card => !card.godMark && (card.type === 'UNIT' || card.type === 'ITEM' || card.isEquip))
-        .map(card => ({ card, source: card.cardlocation as any }))
+      nonGodFieldTargets(gameState).map(card => ({ card, source: card.cardlocation as any }))
   },
-  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context?.step === 'TARGET') {
-      const targetId = selections[0];
-      const target = targetId ? AtomicEffectExecutor.findCardById(gameState, targetId) : undefined;
-      if (!target || target.godMark || !['UNIT', 'ITEM'].includes(target.cardlocation || '')) return;
-      createSelectCardQuery(
-        gameState,
-        playerState.uid,
-        ownUnits(playerState).filter(isSacrificeCostUnit),
-        '选择送墓费用',
-        '选择己方战场上的1个红色、黄色或蓝色非神蚀单位送入墓地作为费用。',
-        1,
-        1,
-        { sourceCardId: instance.gamecardId, effectId: '102060290_irodori_destroy', step: 'COST', targetId },
-        () => 'UNIT'
-      );
-      return;
-    }
-
-    if (context?.step !== 'COST') return;
-    const cost = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
-    if (
-      !cost ||
-      cost.cardlocation !== 'UNIT' ||
-      AtomicEffectExecutor.findCardOwnerKey(gameState, cost.gamecardId) !== playerState.uid ||
-      !isSacrificeCostUnit(cost)
-    ) {
-      return;
-    }
-    moveCardAsCost(gameState, playerState.uid, cost, 'GRAVE', instance);
-
-    const target = context.targetId ? AtomicEffectExecutor.findCardById(gameState, context.targetId) : undefined;
+  onQueryResolve: async (instance, gameState, _playerState, selections, context) => {
+    if (context?.step !== 'TARGET') return;
+    const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (target && !target.godMark && ['UNIT', 'ITEM'].includes(target.cardlocation || '')) {
       destroyByEffect(gameState, target, instance);
     }
   }
 };
 
-/**
- * Auto-generated from Card.xlsx + Card2.xlsx.
- * Source CardID: 102060290
- * Card2 Row: 515
- * Card Row: 338
- * Source CardNo: SP03-R03
- * Package: SP03(SR,XSR)
- * ID Source: card-xlsx
- * Keywords: N/A
- * Card Detail:
- * 【启】异彩2。
- * 【启】〖同名一回合一次〗{这个单位通过异彩能力进入战场的回合中，选择战场上的1张非神蚀卡}[将你战场的1张红色、黄色或蓝色的非神蚀单位送入墓地]：将选择的卡牌破坏。
- */
 const card: Card = {
   id: '102060290',
   fullName: '炽月·炎雷「蕾」',
@@ -182,7 +168,7 @@ const card: Card = {
   gamecardId: null as any,
   colorReq: { RED: 2 },
   baseColorReq: { RED: 2 },
-  faction: '雷霆',
+  faction: '闆烽渾',
   acValue: 3,
   power: 2500,
   basePower: 2500,

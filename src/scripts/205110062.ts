@@ -10,6 +10,19 @@ const effect_205110062_activate: CardEffect = {
   condition: (_gameState, playerState) =>
     [...playerState.unitZone, ...playerState.itemZone].some(card => card?.godMark) &&
     playerState.deck.some(isTruthOrHickUnit),
+  targetSpec: {
+    title: '选择神蚀卡',
+    description: '选择我方1张神蚀卡。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT', 'ITEM'],
+    controller: 'SELF',
+    step: 'BOTTOM_GODMARK',
+    getCandidates: (_gameState, playerState) =>
+      [...playerState.unitZone, ...playerState.itemZone]
+        .filter((card): card is Card => !!card && !!card.godMark)
+        .map(card => ({ card, source: card.cardlocation as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     const ownGodMarks = [...playerState.unitZone, ...playerState.itemZone].filter((card): card is Card => !!card && !!card.godMark);
     createSelectCardQuery(

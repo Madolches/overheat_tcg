@@ -23,16 +23,18 @@ const markPlacedByShingi = (gameState: any, target: Card, source: Card) => {
 };
 
 const cardEffects: CardEffect[] = [story('201140119_baptism', '同名1回合1次：你的主要阶段，若你的战场上只有白色单位，放逐你战场上的单位直到ACCESS值合计5以上，将卡组中1张ACCESS值5的白色单位放置到战场。这张卡不能用于对抗。', async (instance, gameState, playerState) => {
+  const candidates = baptismTargets(playerState);
+  if (candidates.length === 0) return;
   createSelectCardQuery(
     gameState,
     playerState.uid,
-    ownUnits(playerState),
-    '选择神仪费用',
-    '选择你战场上的单位放逐作为费用，所选单位ACCESS值合计需为5以上。',
+    candidates,
+    '选择白色单位',
+    '选择卡组中的1张ACCESS值5的白色单位放置到战场。',
     1,
-    ownUnits(playerState).length,
-    { sourceCardId: instance.gamecardId, effectId: '201140119_baptism', step: 'EXILE_UNITS' },
-    () => 'UNIT'
+    1,
+    { sourceCardId: instance.gamecardId, effectId: '201140119_baptism', step: 'PUT_UNIT' },
+    () => 'DECK'
   );
 }, {
   limitCount: 1,
@@ -44,29 +46,45 @@ const cardEffects: CardEffect[] = [story('201140119_baptism', '同名1回合1次
     ownUnits(playerState).every(isWhiteUnit) &&
     selectedAccessTotal(ownUnits(playerState)) >= 5 &&
     baptismTargets(playerState).length > 0,
-  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context?.step === 'EXILE_UNITS') {
-      const selected = selections
-        .map(id => ownUnits(playerState).find(unit => unit.gamecardId === id))
-        .filter((card: Card | undefined): card is Card => !!card);
-      if (selected.length === 0 || selectedAccessTotal(selected) < 5) return;
-      selected.forEach(unit => moveCardAsCost(gameState, playerState.uid, unit, 'EXILE', instance));
-      const candidates = baptismTargets(playerState);
-      if (candidates.length === 0) return;
-      createSelectCardQuery(
-        gameState,
-        playerState.uid,
-        candidates,
-        '选择白色单位',
-        '选择卡组中的1张ACCESS值5的白色单位放置到战场。',
-        1,
-        1,
-        { sourceCardId: instance.gamecardId, effectId: '201140119_baptism', step: 'PUT_UNIT' },
-        () => 'DECK'
-      );
+  cost: async (gameState, playerState, instance) => {
+    const costs = ownUnits(playerState);
+    if (selectedAccessTotal(costs) < 5) return false;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      costs,
+      '选择神仪费用',
+      '选择你战场上的单位放逐作为费用，所选单位ACCESS值合计需为5以上。',
+      1,
+      costs.length,
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '201140119_baptism',
+        step: 'EXILE_UNITS_COST',
+        costType: 'CUSTOM_CARD_COST',
+        skipEffectResolveAfterCost: true
+      },
+      () => 'UNIT'
+    );
+    return true;
+  },
+  onCostResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step !== 'EXILE_UNITS_COST') return;
+    const selected = selections
+      .map(id => ownUnits(playerState).find(unit => unit.gamecardId === id))
+      .filter((card: Card | undefined): card is Card => !!card);
+    if (
+      selected.length === 0 ||
+      selected.length !== selections.length ||
+      new Set(selected.map(card => card.gamecardId)).size !== selected.length ||
+      selectedAccessTotal(selected) < 5
+    ) {
+      context.cancelActivation = true;
       return;
     }
-
+    selected.forEach(unit => moveCardAsCost(gameState, playerState.uid, unit, 'EXILE', instance));
+  },
+  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step !== 'PUT_UNIT') return;
     const target = selections[0] ? playerState.deck.find((card: Card) => card.gamecardId === selections[0]) : undefined;
     if (!target || !baptismTargets(playerState).some((card: Card) => card.gamecardId === target.gamecardId)) return;

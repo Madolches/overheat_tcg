@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, canPutUnitOntoBattlefield, createSelectCardQuery, enteredFromHand, isAlchemyCard, moveCard, putUnitOntoField } from './BaseUtil';
+import { AtomicEffectExecutor, canPutUnitOntoBattlefield, createSelectCardQuery, enteredFromHand, isAlchemyCard, moveCardAsCost, putUnitOntoField } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
   id: '105120266_reforge',
@@ -26,26 +26,32 @@ const cardEffects: CardEffect[] = [{
       playerState.grave.filter(card => isAlchemyCard(card)).length >= 3 &&
       playerState.deck.some(card => card.type === 'UNIT' && isAlchemyCard(card) && !card.godMark && canPutUnitOntoBattlefield(playerState, card));
   },
-  execute: async (instance, gameState, playerState) => {
+  cost: async (gameState, playerState, instance) => {
     createSelectCardQuery(gameState, playerState.uid, playerState.grave.filter(card => isAlchemyCard(card)), '选择放逐费用', '选择墓地中的3张卡名含有《炼金》的卡放逐作为费用。', 3, 3, {
       sourceCardId: instance.gamecardId,
       effectId: '105120266_reforge',
-      step: 'COST'
+      step: 'COST',
+      skipEffectResolveAfterCost: true
     }, () => 'GRAVE');
+    return true;
   },
-  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+  onCostResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'COST') {
       selections.forEach(id => {
         const cost = AtomicEffectExecutor.findCardById(gameState, id);
-        if (cost?.cardlocation === 'GRAVE') moveCard(gameState, playerState.uid, cost, 'EXILE', instance);
+        if (cost?.cardlocation === 'GRAVE') moveCardAsCost(gameState, playerState.uid, cost, 'EXILE', instance);
       });
+    }
+  },
+  execute: async (instance, gameState, playerState) => {
       createSelectCardQuery(gameState, playerState.uid, playerState.deck.filter(card => card.type === 'UNIT' && isAlchemyCard(card) && !card.godMark && canPutUnitOntoBattlefield(playerState, card)), '选择炼金单位', '选择卡组中1张卡名含有《炼金》的非神蚀单位放置到战场。', 1, 1, {
         sourceCardId: instance.gamecardId,
         effectId: '105120266_reforge',
         step: 'UNIT'
       }, () => 'DECK');
-      return;
-    }
+  },
+  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step !== 'UNIT') return;
     const selected = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (selected?.cardlocation !== 'DECK') return;
     putUnitOntoField(gameState, playerState.uid, selected, instance);

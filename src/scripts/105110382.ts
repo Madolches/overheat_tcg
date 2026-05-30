@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { backErosionCount, canPutUnitOntoBattlefield, createSelectCardQuery, putUnitOntoField } from './BaseUtil';
+import { backErosionCount, canPutUnitOntoBattlefield, createSelectCardQuery, paymentCost, putUnitOntoField } from './BaseUtil';
 
 const recruitCandidates = (playerState: any) =>
   playerState.deck.filter((card: Card) =>
@@ -35,6 +35,7 @@ const cardEffects: CardEffect[] = [{
     backErosionCount(playerState) >= 1 &&
     opponentPutUnitFromGraveByEffect(playerState.uid, event) &&
     recruitCandidates(playerState).length > 0,
+  cost: paymentCost(1, 'YELLOW'),
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,

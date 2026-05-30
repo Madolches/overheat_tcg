@@ -1,116 +1,117 @@
-import { Card, GameState, PlayerState, CardEffect, GameEvent } from '../types/game';
+import { Card, CardEffect, GameEvent, GameState, PlayerState } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import { moveCardAsCost } from './BaseUtil';
+
+const blueFaceUpErosionCosts = (playerState: PlayerState) =>
+  playerState.erosionFront.filter((card): card is Card =>
+    !!card &&
+    card.displayState === 'FRONT_UPRIGHT' &&
+    AtomicEffectExecutor.matchesColor(card, 'BLUE')
+  );
+
+const opponentNonGodUnits = (gameState: GameState, playerState: PlayerState) => {
+  const opponentId = Object.keys(gameState.players).find(id => id !== playerState.uid);
+  if (!opponentId) return [] as Card[];
+  return gameState.players[opponentId].unitZone.filter((card): card is Card => !!card && !card.godMark);
+};
 
 const trigger_104020477: CardEffect = {
   id: '104020477_trigger',
   type: 'TRIGGER',
-  description: '【诱发】：当这个单位进入单位区时，若对手的单位比你多2个或以上：将侵蚀位前区两张蓝色的正面卡牌送去墓地，之后选择对手单位区中最多两名非神蚀单位返回持有者手牌。',
+  description: '【诱】：这个单位进入战场时，若对手单位比你的单位多2个以上，将你的侵蚀区中的2张蓝色正面卡送入墓地作为费用，选择对手场上的最多2个非神蚀单位返回手牌。',
   triggerLocation: ['UNIT'],
   triggerEvent: 'CARD_ENTERED_ZONE',
   isMandatory: true,
   condition: (gameState: GameState, playerState: PlayerState, instance: Card, event?: GameEvent) => {
-    // 1. Check if this card entered the UNIT zone
     const isSelfEntering = event?.type === 'CARD_ENTERED_ZONE' &&
       (event.sourceCardId === instance.gamecardId || event.sourceCard === instance) &&
       event.data?.zone === 'UNIT';
     if (!isSelfEntering) return false;
 
-    // 2. Check unit count difference (Opponent - Me >= 2)
-    const opponentId = Object.keys(gameState.players).find(id => id !== playerState.uid)!;
-    const opponent = gameState.players[opponentId];
-    const opponentUnitCount = opponent.unitZone.filter(u => u !== null).length;
-    const myUnitCount = playerState.unitZone.filter(u => u !== null).length;
-    
-    if (opponentUnitCount - myUnitCount < 2) return false;
+    const opponentId = Object.keys(gameState.players).find(id => id !== playerState.uid);
+    if (!opponentId) return false;
+    const opponentUnitCount = gameState.players[opponentId].unitZone.filter(Boolean).length;
+    const myUnitCount = playerState.unitZone.filter(Boolean).length;
 
-    // 3. Check for at least 2 blue face-up cards in erosion front
-    const blueErosionCount = playerState.erosionFront.filter(c => 
-      c && c.displayState === 'FRONT_UPRIGHT' && AtomicEffectExecutor.matchesColor(c, 'BLUE')
-    ).length;
-
-    return blueErosionCount >= 2;
+    return opponentUnitCount - myUnitCount >= 2 &&
+      blueFaceUpErosionCosts(playerState).length >= 2;
   },
-  execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
-    const blueErosionCards = playerState.erosionFront.filter(c => 
-      c && c.displayState === 'FRONT_UPRIGHT' && AtomicEffectExecutor.matchesColor(c, 'BLUE')
-    ) as Card[];
-
-    // Step 1: Select 2 blue erosion cards to sacrifice
+  cost: async (gameState: GameState, playerState: PlayerState, instance: Card) => {
+    const costs = blueFaceUpErosionCosts(playerState);
+    if (costs.length < 2) return false;
     gameState.pendingQuery = {
       id: Math.random().toString(36).substring(7),
       type: 'SELECT_CARD',
       playerUid: playerState.uid,
-      options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, blueErosionCards.map(c => ({ card: c, source: 'EROSION_FRONT' }))),
-      title: '牺牲侵蚀卡牌 (代价)',
-      description: '请选择侵蚀前区的两张蓝色正面卡牌送去墓地以发动效果',
+      options: AtomicEffectExecutor.enrichQueryOptions(
+        gameState,
+        playerState.uid,
+        costs.map(card => ({ card, source: 'EROSION_FRONT' as const }))
+      ),
+      title: '选择费用',
+      description: '选择侵蚀区中的2张蓝色正面卡送入墓地作为费用。',
       minSelections: 2,
       maxSelections: 2,
       callbackKey: 'EFFECT_RESOLVE',
       context: {
         sourceCardId: instance.gamecardId,
         effectId: '104020477_trigger',
-        step: 1
+        step: 'COST',
+        skipEffectResolveAfterCost: true
+      }
+    };
+    return true;
+  },
+  onCostResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
+    if (context?.step !== 'COST') return;
+    selections.forEach(id => {
+      const cost = blueFaceUpErosionCosts(playerState).find(card => card.gamecardId === id);
+      if (cost) moveCardAsCost(gameState, playerState.uid, cost, 'GRAVE', instance);
+    });
+  },
+  execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
+    const targets = opponentNonGodUnits(gameState, playerState);
+    if (targets.length === 0) return;
+    gameState.pendingQuery = {
+      id: Math.random().toString(36).substring(7),
+      type: 'SELECT_CARD',
+      playerUid: playerState.uid,
+      options: AtomicEffectExecutor.enrichQueryOptions(
+        gameState,
+        playerState.uid,
+        targets.map(card => ({ card, source: 'UNIT' as const }))
+      ),
+      title: '选择回手单位',
+      description: '选择对手场上的最多2个非神蚀单位返回手牌。',
+      minSelections: 0,
+      maxSelections: 2,
+      callbackKey: 'EFFECT_RESOLVE',
+      context: {
+        sourceCardId: instance.gamecardId,
+        effectId: '104020477_trigger',
+        step: 'BOUNCE'
       }
     };
   },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
-    if (context.step === 1) {
-      // Resolve sacrificial cost
-      for (const targetId of selections) {
-        await AtomicEffectExecutor.execute(gameState, playerState.uid, {
-          type: 'MOVE_FROM_EROSION',
-          targetFilter: { gamecardId: targetId },
-          destinationZone: 'GRAVE'
-        }, instance);
-      }
-      gameState.logs.push(`[${instance.fullName}] 消耗了两张侵蚀卡牌作为代价。`);
-
-      // Step 2: Select up to 2 non-godmark units from opponent
-      const opponentId = Object.keys(gameState.players).find(id => id !== playerState.uid)!;
-      const opponent = gameState.players[opponentId];
-      const targets = opponent.unitZone.filter(c => c && !c.godMark) as Card[];
-
-      if (targets.length > 0) {
-        gameState.pendingQuery = {
-          id: Math.random().toString(36).substring(7),
-          type: 'SELECT_CARD',
-          playerUid: playerState.uid,
-          options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, targets.map(c => ({ card: c, source: 'UNIT' }))),
-          title: '选择回手单位',
-          description: '请选择对手单位区最多两名非神蚀单位返回手牌',
-          minSelections: 0,
-          maxSelections: 2,
-          callbackKey: 'EFFECT_RESOLVE',
-          context: {
-            sourceCardId: instance.gamecardId,
-            effectId: '104020477_trigger',
-            step: 2
-          }
-        };
-      } else {
-        gameState.logs.push(`[${instance.fullName}] 没有有效的对手单位可供选择。`);
-      }
-    } else if (context.step === 2) {
-      // Resolve bounce effect
-      const opponentId = Object.keys(gameState.players).find(id => id !== playerState.uid)!;
-      for (const targetId of selections) {
-        await AtomicEffectExecutor.execute(gameState, playerState.uid, {
-          type: 'MOVE_FROM_FIELD',
-          targetFilter: { gamecardId: targetId },
-          destinationZone: 'HAND'
-        }, instance);
-      }
-      
-      if (selections.length > 0) {
-        gameState.logs.push(`[${instance.fullName}] 将对手的 ${selections.length} 个单位遣回了手牌。`);
-      }
+    if (context?.step !== 'BOUNCE') return;
+    const opponentId = Object.keys(gameState.players).find(id => id !== playerState.uid);
+    if (!opponentId) return;
+    for (const targetId of selections) {
+      const target = gameState.players[opponentId].unitZone.find(card => card?.gamecardId === targetId && !card.godMark);
+      if (!target) continue;
+      await AtomicEffectExecutor.execute(gameState, playerState.uid, {
+        type: 'MOVE_FROM_FIELD',
+        targetFilter: { gamecardId: targetId },
+        destinationZone: 'HAND'
+      }, instance);
     }
   }
 };
 
 const card: Card = {
   id: '104020477',
-  fullName: '私服【阿克蒂】',
+  fullName: '私服「阿克蒂」',
   specialName: '阿克蒂',
   type: 'UNIT',
   color: 'BLUE',
@@ -133,7 +134,7 @@ const card: Card = {
   rarity: 'R',
   availableRarities: ['R'],
   cardPackage: 'BT02',
-  uniqueId: null,
+  uniqueId: null
 };
 
 export default card;

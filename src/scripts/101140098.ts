@@ -55,6 +55,18 @@ const cardEffects: CardEffect[] = [{
     erosionTotalLimit: [10, 10],
     description: '10+，侵蚀2：选择战场上1张卡破坏。',
     cost: erosionCost(2),
+    targetSpec: {
+      title: '选择破坏对象',
+      description: '选择战场上的1张卡，将其破坏。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT', 'ITEM'],
+      controller: 'ANY',
+      getCandidates: (gameState, _playerState, instance) =>
+        allCardsOnField(gameState)
+          .filter(card => card.gamecardId !== instance.gamecardId)
+          .map(card => ({ card, source: card.cardlocation as any }))
+    },
     execute: async (instance, gameState, playerState) => {
       const candidates = allCardsOnField(gameState).filter(card => card.gamecardId !== instance.gamecardId);
       if (candidates.length === 0) return;

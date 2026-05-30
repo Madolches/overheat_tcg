@@ -16,7 +16,8 @@ const effect_305000017_activate: CardEffect = {
   condition: (_gameState, playerState, instance) => {
     return !instance.isExhausted && playerState.unitZone.some(unit => unit !== null);
   },
-  execute: async (instance, gameState, playerState) => {
+  cost: async (gameState, playerState, instance) => {
+    if (instance.isExhausted) return false;
     gameState.pendingQuery = {
       id: Math.random().toString(36).substring(7),
       type: 'SELECT_PAYMENT',
@@ -32,42 +33,49 @@ const effect_305000017_activate: CardEffect = {
       context: {
         sourceCardId: instance.gamecardId,
         effectId: '305000017_activate',
-        step: 'SELECT_TARGET'
+        step: 'PAY_AND_EXHAUST_COST',
+        skipEffectResolveAfterCost: true
+      }
+    };
+    return true;
+  },
+  onCostResolve: async (instance, gameState, playerState, _selections, context) => {
+    if (context?.step !== 'PAY_AND_EXHAUST_COST') return;
+    if (instance.isExhausted) {
+      context.cancelActivation = true;
+      return;
+    }
+    await AtomicEffectExecutor.execute(gameState, playerState.uid, {
+      type: 'ROTATE_HORIZONTAL',
+      targetFilter: { gamecardId: instance.gamecardId }
+    }, instance);
+  },
+  execute: async (instance, gameState, playerState) => {
+    const ownUnits = playerState.unitZone.filter((unit): unit is Card => !!unit);
+    if (ownUnits.length === 0) return;
+
+    gameState.pendingQuery = {
+      id: Math.random().toString(36).substring(7),
+      type: 'SELECT_CARD',
+      playerUid: playerState.uid,
+      options: AtomicEffectExecutor.enrichQueryOptions(
+        gameState,
+        playerState.uid,
+        ownUnits.map(unit => ({ card: unit, source: 'UNIT' as const }))
+      ),
+      title: '选择单位',
+      description: '选择一个单位，这个单位本回合如果要被破坏，改为返回手牌。',
+      minSelections: 1,
+      maxSelections: 1,
+      callbackKey: 'EFFECT_RESOLVE',
+      context: {
+        sourceCardId: instance.gamecardId,
+        effectId: '305000017_activate',
+        step: 'APPLY_TARGET'
       }
     };
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context.step === 'SELECT_TARGET') {
-      await AtomicEffectExecutor.execute(gameState, playerState.uid, {
-        type: 'ROTATE_HORIZONTAL',
-        targetFilter: { gamecardId: instance.gamecardId }
-      }, instance);
-
-      const ownUnits = playerState.unitZone.filter((unit): unit is Card => !!unit);
-      if (ownUnits.length === 0) return;
-
-      gameState.pendingQuery = {
-        id: Math.random().toString(36).substring(7),
-        type: 'SELECT_CARD',
-        playerUid: playerState.uid,
-        options: AtomicEffectExecutor.enrichQueryOptions(
-          gameState,
-          playerState.uid,
-          ownUnits.map(unit => ({ card: unit, source: 'UNIT' as const }))
-        ),
-        title: '选择单位',
-        description: '选择一个单位，这个单位本回合如果要被破坏，改为返回手牌。',
-        minSelections: 1,
-        maxSelections: 1,
-        callbackKey: 'EFFECT_RESOLVE',
-        context: {
-          sourceCardId: instance.gamecardId,
-          effectId: '305000017_activate',
-          step: 'APPLY_TARGET'
-        }
-      };
-      return;
-    }
 
     if (context.step === 'APPLY_TARGET') {
       const target = AtomicEffectExecutor.findCardById(gameState, selections[0]);

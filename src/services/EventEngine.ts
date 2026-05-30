@@ -131,11 +131,15 @@ export class EventEngine {
               }
 
               // Robust Self-Identification
+              const isAttackParticipant = event.type === 'CARD_ATTACK_DECLARED' &&
+                Array.isArray(event.data?.attackerIds) &&
+                event.data.attackerIds.includes(card.gamecardId);
               const isEventSelf = (event.sourceCard === card) ||
                 (event.sourceCard?.runtimeFingerprint && event.sourceCard.runtimeFingerprint === card.runtimeFingerprint) ||
                 (event.sourceCardId && event.sourceCardId === card.gamecardId) ||
                 (event.data?.previousSourceCardId && event.data.previousSourceCardId === card.gamecardId) ||
-                (event.targetCardId && event.targetCardId === card.gamecardId);
+                (event.targetCardId && event.targetCardId === card.gamecardId) ||
+                isAttackParticipant;
 
               // Guard: For specific card-entry/action events, default to self-trigger unless explicitly global
               const isMovementEvent = ['CARD_ENTERED_ZONE', 'CARD_LEFT_ZONE', 'CARD_LEFT_FIELD', 'CARD_PLAYED', 'CARD_ATTACK_DECLARED', 'CARD_DESTROYED_BATTLE', 'CARD_DESTROYED_EFFECT'].includes(event.type);
@@ -312,6 +316,9 @@ export class EventEngine {
           }
           if ((card as any).data?.preventFirstDestroyEachTurnSourceName !== undefined) {
             delete (card as any).data.preventFirstDestroyEachTurnSourceName;
+          }
+          if ((card as any).data?.preventFirstAnyDestroyEachTurnSourceName !== undefined) {
+            delete (card as any).data.preventFirstAnyDestroyEachTurnSourceName;
           }
           if ((card as any).data?.preventFirstBattleDestroyEachTurnSourceName !== undefined) {
             delete (card as any).data.preventFirstBattleDestroyEachTurnSourceName;
@@ -609,6 +616,13 @@ export class EventEngine {
           if (!card.influencingEffects) card.influencingEffects = [];
           card.influencingEffects.push({
             sourceCardName: (card as any).data.preventFirstDestroyEachTurnSourceName,
+            description: '每回合第一次将被破坏时防止'
+          });
+        }
+        if (card && (card as any).data?.preventFirstAnyDestroyEachTurnSourceName) {
+          if (!card.influencingEffects) card.influencingEffects = [];
+          card.influencingEffects.push({
+            sourceCardName: (card as any).data.preventFirstAnyDestroyEachTurnSourceName,
             description: '每回合第一次将被破坏时防止'
           });
         }

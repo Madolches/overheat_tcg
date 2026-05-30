@@ -15,6 +15,20 @@ const cardEffects: CardEffect[] = [{
     instance.isExhausted = true;
     return true;
   },
+  targetSpec: {
+    title: '选择神蚀单位',
+    description: '选择对手的1个神蚀单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    getCandidates: (gameState, playerState) => {
+      const opponentUid = gameState.playerIds.find(uid => uid !== playerState.uid)!;
+      return gameState.players[opponentUid].unitZone
+        .filter((unit): unit is Card => !!unit && unit.godMark)
+        .map(card => ({ card, source: 'UNIT' as any }));
+    }
+  },
   execute: async (instance, gameState, playerState) => {
     const opponentUid = gameState.playerIds.find(uid => uid !== playerState.uid)!;
     const targets = gameState.players[opponentUid].unitZone.filter((unit): unit is Card => !!unit && unit.godMark);
@@ -41,6 +55,19 @@ const cardEffects: CardEffect[] = [{
   description: '10+：侵蚀2，选择正在攻击的神蚀单位放到卡组底。',
   condition: gameState => isBattleFreeContext(gameState) && !!gameState.battleState?.attackers?.some(id => AtomicEffectExecutor.findCardById(gameState, id)?.godMark),
   cost: erosionCost(2),
+  targetSpec: {
+    title: '选择攻击单位',
+    description: '选择战场上的1个正在进行攻击的神蚀单位放到卡组底。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    getCandidates: gameState =>
+      (gameState.battleState?.attackers || [])
+        .map(id => AtomicEffectExecutor.findCardById(gameState, id))
+        .filter((card): card is Card => !!card && card.godMark)
+        .map(card => ({ card, source: 'UNIT' as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     const targets = (gameState.battleState?.attackers || []).map(id => AtomicEffectExecutor.findCardById(gameState, id)).filter((card): card is Card => !!card && card.godMark);
     createSelectCardQuery(gameState, playerState.uid, targets, '选择攻击单位', '选择战场上的1个正在进行攻击的神蚀单位放到卡组底。', 1, 1, { sourceCardId: instance.gamecardId, effectId: '101140152_bottom_attacker' }, () => 'UNIT');

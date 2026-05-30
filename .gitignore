@@ -12,3 +12,8 @@ guest*/
 android/
 .idea/
 deploy/nginx-overheat.conf
+Card.xlsx
+Card2.xlsx
+Card3.xlsx
+Carddetail.xlsx
+script/audit-text-implementation-drift.ts

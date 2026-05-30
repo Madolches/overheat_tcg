@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { canMeetBattlefieldColorRequirement, canPayAccessCost, canPutUnitOntoBattlefield, cardsInZones, hasAwakenAbility, millTop, moveCardAsCost, putUnitOntoField, resonanceEffect, selectFromEntries } from './BaseUtil';
+import { canMeetBattlefieldColorRequirement, canPayAccessCost, canPutUnitOntoBattlefield, cardsInZones, hasAwakenAbility, millTop, moveCardAsCost, putUnitOntoField, selectFromEntries } from './BaseUtil';
 
 const awakenUnitEntries = (playerState: any) =>
   cardsInZones(playerState, ['DECK', 'GRAVE'])
@@ -54,20 +54,6 @@ const grienAwakenCost: CardEffect['cost'] = async (gameState, playerState, insta
 (grienAwakenCost as any).paymentCost = 2;
 
 const cardEffects: CardEffect[] = [
-  {
-    ...resonanceEffect('103080317_resonance'),
-    cost: async (gameState, playerState, instance) => {
-      if (playerState.deck.length < 2) return false;
-      millTop(gameState, playerState.uid, 2, instance);
-      return true;
-    },
-    condition: (gameState, playerState, instance) =>
-      instance.cardlocation === 'UNIT' &&
-      playerState.isTurn &&
-      gameState.phase === 'MAIN' &&
-      playerState.grave.length > 0 &&
-      playerState.deck.length >= 2
-  },
   {
     id: '103080317_revive_self_after_own_unit_effect_leave',
     type: 'TRIGGER',

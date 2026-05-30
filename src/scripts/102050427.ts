@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, addContinuousDamage, addContinuousKeyword, addContinuousPower, cardsInZones, createSelectCardQuery, getOpponentUid, getOnlyGodMarkUnit, markCannotDefendUntilEndOfTurn, moveCard } from './BaseUtil';
+import { AtomicEffectExecutor, addContinuousDamage, addContinuousKeyword, addContinuousPower, cardsInZones, getOpponentUid, getOnlyGodMarkUnit, markCannotDefendUntilEndOfTurn, moveCardAsCost } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
   id: '102050427_lone_god_boost',
@@ -24,11 +24,26 @@ const cardEffects: CardEffect[] = [{
   condition: (gameState, playerState) => {
     if (!playerState.isTurn || gameState.phase !== 'MAIN') return false;
     const costs = cardsInZones(playerState, ['HAND', 'DECK', 'GRAVE']).filter(({ card }) => card.specialName === '赛利亚');
-    const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
-    return costs.length >= 2 && opponent.unitZone.some(unit => unit && (unit.power || 0) <= 2000);
+    return costs.length >= 2;
   },
-  execute: async (instance, gameState, playerState) => {
+  targetSpec: {
+    title: '选择不能防御的单位',
+    description: '选择对手最多2个力量2000以下单位，本回合不能宣言防御。',
+    minSelections: 0,
+    maxSelections: 2,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    step: 'TARGET',
+    getCandidates: (gameState, playerState) => {
+      const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
+      return opponent.unitZone
+        .filter((unit): unit is Card => !!unit && (unit.power || 0) <= 2000)
+        .map(card => ({ card, source: 'UNIT' as any }));
+    }
+  },
+  cost: async (gameState, playerState, instance) => {
     const costs = cardsInZones(playerState, ['HAND', 'DECK', 'GRAVE']).filter(({ card }) => card.specialName === '赛利亚');
+    if (costs.length < 2) return false;
     gameState.pendingQuery = {
       id: Math.random().toString(36).substring(7),
       type: 'SELECT_CARD',
@@ -38,28 +53,27 @@ const cardEffects: CardEffect[] = [{
       description: '选择合计2张「赛利亚」放逐作为费用。',
       minSelections: 2,
       maxSelections: 2,
-      callbackKey: 'EFFECT_RESOLVE',
-      context: { sourceCardId: instance.gamecardId, effectId: '102050427_cannot_defend', step: 'COST' }
+      callbackKey: 'ACTIVATE_COST_RESOLVE',
+      context: { sourceCardId: instance.gamecardId, effectId: '102050427_cannot_defend', step: 'COST', skipEffectResolveAfterCost: true }
     };
+    return true;
+  },
+  onCostResolve: async (instance, gameState, _playerState, selections) => {
+    selections.forEach(id => {
+      const cost = AtomicEffectExecutor.findCardById(gameState, id);
+      const ownerUid = cost ? AtomicEffectExecutor.findCardOwnerKey(gameState, cost.gamecardId) : undefined;
+      if (cost && ownerUid) moveCardAsCost(gameState, ownerUid, cost, 'EXILE', instance);
+    });
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context?.step === 'COST') {
-      selections.forEach(id => {
-        const cost = AtomicEffectExecutor.findCardById(gameState, id);
-        const ownerUid = cost ? AtomicEffectExecutor.findCardOwnerKey(gameState, cost.gamecardId) : undefined;
-        if (cost && ownerUid) moveCard(gameState, ownerUid, cost, 'EXILE', instance);
-      });
-      const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
-      createSelectCardQuery(gameState, playerState.uid, opponent.unitZone.filter((unit): unit is Card => !!unit && (unit.power || 0) <= 2000), '选择不能防御的单位', '选择对手最多2个力量2000以下单位，本回合不能宣言防御。', 0, 2, {
-        sourceCardId: instance.gamecardId,
-        effectId: '102050427_cannot_defend',
-        step: 'TARGET'
-      });
-      return;
-    }
+    if (context?.step !== 'TARGET') return;
+    const opponentUid = getOpponentUid(gameState, playerState.uid);
     selections.forEach(id => {
       const target = AtomicEffectExecutor.findCardById(gameState, id);
-      if (target?.cardlocation === 'UNIT') markCannotDefendUntilEndOfTurn(target, instance, gameState);
+      const ownerUid = target ? AtomicEffectExecutor.findCardOwnerKey(gameState, target.gamecardId) : undefined;
+      if (target?.cardlocation === 'UNIT' && ownerUid === opponentUid && (target.power || 0) <= 2000) {
+        markCannotDefendUntilEndOfTurn(target, instance, gameState);
+      }
     });
   }
 }];

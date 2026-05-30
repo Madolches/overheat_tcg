@@ -6,15 +6,51 @@ import {
   allUnitsOnField,
   createChoiceQuery,
   createSelectCardQuery,
-  moveCard,
+  moveCardAsCost,
   story
 } from './BaseUtil';
+
+const MODE_PROTECT = 'PROTECT_DESTROY_DRAW';
+const MODE_BOOST = 'BOOST_GREEN';
+
+const selectedModeFromContext = (context?: any) =>
+  context?.declaredModeId ||
+  context?.selectedModeId ||
+  context?.modeId ||
+  context?.declaredTargets?.[0]?.modeId ||
+  context?.declaredTargets?.declaredModeId;
 
 const anyDiscardCandidates = (playerState: any, instance: Card) =>
   playerState.hand.filter((card: Card) => card.gamecardId !== instance.gamecardId);
 
 const greenDiscardCandidates = (playerState: any, instance: Card) =>
   anyDiscardCandidates(playerState, instance).filter((card: Card) => card.color === 'GREEN');
+
+const discardCandidatesForMode = (playerState: any, instance: Card, mode: string) =>
+  mode === MODE_BOOST ? greenDiscardCandidates(playerState, instance) : anyDiscardCandidates(playerState, instance);
+
+const openDiscardCostQuery = (gameState: any, playerState: any, instance: Card, mode: string) => {
+  const candidates = discardCandidatesForMode(playerState, instance, mode);
+  if (candidates.length === 0) return false;
+  createSelectCardQuery(
+    gameState,
+    playerState.uid,
+    candidates,
+    '支付舍弃费用',
+    mode === MODE_BOOST ? '选择1张绿色手牌舍弃，作为发动费用。' : '选择1张手牌舍弃，作为发动费用。',
+    1,
+    1,
+    {
+      sourceCardId: instance.gamecardId,
+      effectId: '203000116_conveyed_thoughts',
+      step: 'DISCARD_COST',
+      mode,
+      skipEffectResolveAfterCost: true
+    },
+    () => 'HAND'
+  );
+  return !!gameState.pendingQuery;
+};
 
 const cardEffects: CardEffect[] = [story('203000116_conveyed_thoughts', '选择1项：舍弃1张手牌，本回合中你的单位将被对手的卡的效果破坏时防止那次破坏，然后你可以抽2张卡；或选择战场上的1个单位，舍弃1张绿色手牌，那个单位本回合力量+500并获得歼灭。', async (instance, gameState, playerState) => {
   const options = [];
@@ -37,67 +73,55 @@ const cardEffects: CardEffect[] = [story('203000116_conveyed_thoughts', '选择1
   condition: (gameState, playerState, instance) =>
     anyDiscardCandidates(playerState, instance).length > 0 ||
     (greenDiscardCandidates(playerState, instance).length > 0 && allUnitsOnField(gameState).length > 0),
+  targetSpec: {
+    modeTitle: '选择效果',
+    modeDescription: '选择1项效果并指定对象。',
+    modeOptions: [{
+      id: MODE_PROTECT,
+      label: '防止效果破坏并抽卡',
+      title: '确认防止破坏',
+      description: '舍弃1张手牌，本回合中你的单位将被对手的卡的效果破坏时防止那次破坏。',
+      minSelections: 0,
+      maxSelections: 0,
+      zones: [],
+      step: 'PROTECT_DESTROY_DRAW',
+      condition: (_gameState, playerState, instance) => anyDiscardCandidates(playerState, instance).length > 0,
+      getCandidates: () => [] as any[]
+    }, {
+      id: MODE_BOOST,
+      label: '力量+500并获得歼灭',
+      title: '选择单位',
+      description: '选择战场上的1个单位。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'ANY',
+      step: 'TARGET',
+      condition: (gameState, playerState, instance) =>
+        greenDiscardCandidates(playerState, instance).length > 0 &&
+        allUnitsOnField(gameState).length > 0,
+      getCandidates: gameState =>
+        allUnitsOnField(gameState).map(card => ({ card, source: 'UNIT' as any }))
+    }]
+  },
+  cost: async (gameState, playerState, instance, context?: any) => {
+    const mode = selectedModeFromContext(context);
+    if (!mode) return false;
+    return openDiscardCostQuery(gameState, playerState, instance, mode);
+  },
+  onCostResolve: async (instance, gameState, playerState, selections, context) => {
+    const mode = context?.mode;
+    const discarded = selections[0]
+      ? discardCandidatesForMode(playerState, instance, mode).find((card: Card) => card.gamecardId === selections[0])
+      : undefined;
+    if (!discarded) {
+      context.cancelActivation = true;
+      gameState.logs.push(`[${instance.fullName}] 舍弃费用不合法，发动中止。`);
+      return;
+    }
+    moveCardAsCost(gameState, playerState.uid, discarded, 'GRAVE', instance);
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context?.step === 'MODE') {
-      const mode = selections[0];
-      if (mode === 'BOOST_GREEN') {
-        const targets = allUnitsOnField(gameState);
-        if (targets.length === 0) return;
-        createSelectCardQuery(
-          gameState,
-          playerState.uid,
-          targets,
-          '选择单位',
-          '选择战场上的1个单位。',
-          1,
-          1,
-          { sourceCardId: instance.gamecardId, effectId: '203000116_conveyed_thoughts', step: 'TARGET', mode },
-          card => card.cardlocation as any
-        );
-        return;
-      }
-
-      const candidates = anyDiscardCandidates(playerState, instance);
-      if (candidates.length === 0) return;
-      createSelectCardQuery(
-        gameState,
-        playerState.uid,
-        candidates,
-        '支付舍弃费用',
-        '选择1张手牌舍弃。',
-        1,
-        1,
-        { sourceCardId: instance.gamecardId, effectId: '203000116_conveyed_thoughts', step: 'DISCARD', mode },
-        () => 'HAND'
-      );
-      return;
-    }
-
-    if (context?.step === 'TARGET') {
-      const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
-      if (!target || target.cardlocation !== 'UNIT') return;
-      const candidates = greenDiscardCandidates(playerState, instance);
-      if (candidates.length === 0) return;
-      createSelectCardQuery(
-        gameState,
-        playerState.uid,
-        candidates,
-        '支付舍弃费用',
-        '选择1张绿色手牌舍弃。',
-        1,
-        1,
-        {
-          sourceCardId: instance.gamecardId,
-          effectId: '203000116_conveyed_thoughts',
-          step: 'DISCARD',
-          mode: 'BOOST_GREEN',
-          targetId: target.gamecardId
-        },
-        () => 'HAND'
-      );
-      return;
-    }
-
     if (context?.step === 'DRAW_CHOICE') {
       if (selections[0] === 'DRAW_TWO') {
         await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'DRAW', value: 2 }, instance);
@@ -105,20 +129,18 @@ const cardEffects: CardEffect[] = [story('203000116_conveyed_thoughts', '选择1
       return;
     }
 
-    if (context?.step !== 'DISCARD') return;
-    const discarded = selections[0] ? playerState.hand.find((card: Card) => card.gamecardId === selections[0]) : undefined;
-    if (!discarded) return;
-    if (context.mode === 'BOOST_GREEN' && discarded.color !== 'GREEN') return;
-    moveCard(gameState, playerState.uid, discarded, 'GRAVE', instance);
+    const mode = selectedModeFromContext(context);
 
-    if (context.mode === 'BOOST_GREEN') {
-      const target = context.targetId ? AtomicEffectExecutor.findCardById(gameState, context.targetId) : undefined;
+    if (mode === MODE_BOOST) {
+      const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
       if (target?.cardlocation === 'UNIT') {
         addTempPowerUntilEndOfTurn(target, instance, 500, gameState);
         addTempKeyword(target, instance, 'annihilation');
       }
       return;
     }
+
+    if (mode !== MODE_PROTECT) return;
 
     const player = playerState as any;
     player.preventOwnUnitsOpponentEffectDestroyTurn = gameState.turnCount;

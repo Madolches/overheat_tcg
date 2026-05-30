@@ -12,23 +12,24 @@ const effect_105110161_activate: CardEffect = {
   condition: (_gameState, playerState) =>
     playerState.itemZone.some(card => card !== null) &&
     playerState.unitZone.some(card => card !== null),
-  execute: async (instance, gameState, playerState) => {
-    const ownItems = playerState.itemZone.filter((card): card is Card => !!card);
-    createSelectCardQuery(
-      gameState,
-      playerState.uid,
-      ownItems,
-      '选择道具',
-      '破坏我方1张道具。',
-      1,
-      1,
-      { sourceCardId: instance.gamecardId, effectId: '105110161_activate', step: 'DESTROY_ITEM' }
-    );
+  targetSpec: {
+    title: '选择道具',
+    description: '破坏我方1张道具。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['ITEM'],
+    controller: 'SELF',
+    step: 'DESTROY_ITEM',
+    getCandidates: (_gameState, playerState) => {
+      return playerState.itemZone
+        .filter((card): card is Card => !!card)
+        .map(card => ({ card, source: 'ITEM' as any }));
+    }
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context.step === 'DESTROY_ITEM') {
       const targetItem = AtomicEffectExecutor.findCardById(gameState, selections[0]);
-      if (!targetItem) return;
+      if (!targetItem || targetItem.cardlocation !== 'ITEM') return;
 
       if (!destroyByEffect(gameState, targetItem, instance)) return;
 

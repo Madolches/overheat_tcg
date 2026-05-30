@@ -47,6 +47,19 @@ const cardEffects: CardEffect[] = [{
     playerState.isTurn &&
     ownUnits(playerState).some(unit => isFaction(unit, '神木森')) &&
     playerState.deck.some(card => isFaction(card, '神木森') && isNonGodUnit(card)),
+  targetSpec: {
+    title: '选择返回单位',
+    description: '选择你的战场上的1个<神木森>单位放置到卡组底。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'RETURN',
+    getCandidates: (_gameState, playerState) =>
+      ownUnits(playerState)
+        .filter(unit => isFaction(unit, '神木森'))
+        .map(card => ({ card, source: 'UNIT' as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,

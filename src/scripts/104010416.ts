@@ -41,25 +41,40 @@ const cardEffects: CardEffect[] = [{
     instance.cardlocation === 'HAND' &&
     swordDiscardCards(playerState, instance).length > 0 &&
     canPutUnitOntoBattlefield(playerState, instance),
-  execute: async (instance, gameState, playerState) => {
+  cost: async (gameState, playerState, instance) => {
+    const costs = swordDiscardCards(playerState, instance);
+    if (costs.length === 0) return false;
     createSelectCardQuery(
       gameState,
       playerState.uid,
-      swordDiscardCards(playerState, instance),
+      costs,
       '选择舍弃的剑仙卡',
-      '选择手牌中的1张卡名含有《剑仙》的卡舍弃。',
+      '选择手牌中的1张卡名含有《剑仙》的卡舍弃作为费用。',
       1,
       1,
-      { sourceCardId: instance.gamecardId, effectId: '104010416_hand_put_self' },
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '104010416_hand_put_self',
+        step: 'DISCARD_SWORD_COST',
+        costType: 'CUSTOM_CARD_COST',
+        skipEffectResolveAfterCost: true
+      },
       () => 'HAND'
     );
+    return true;
   },
-  onQueryResolve: async (instance, gameState, playerState, selections) => {
+  onCostResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step !== 'DISCARD_SWORD_COST') return;
     const discard = selections[0]
       ? playerState.hand.find((card: Card) => card.gamecardId === selections[0])
       : undefined;
-    if (!discard || !isSwordImmortal(discard) || discard.gamecardId === instance.gamecardId) return;
+    if (!discard || !isSwordImmortal(discard) || discard.gamecardId === instance.gamecardId) {
+      context.cancelActivation = true;
+      return;
+    }
     moveCardAsCost(gameState, playerState.uid, discard, 'GRAVE', instance);
+  },
+  execute: async (instance, gameState, playerState) => {
     const live = AtomicEffectExecutor.findCardById(gameState, instance.gamecardId) || instance;
     if (live.cardlocation === 'HAND') putUnitOntoField(gameState, playerState.uid, live, instance);
   }

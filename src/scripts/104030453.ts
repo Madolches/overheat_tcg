@@ -1,5 +1,6 @@
 import { Card, GameState, PlayerState, CardEffect, GameEvent } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import { paymentCost } from './BaseUtil';
 
 const getSwapTargets = (playerState: PlayerState, sourceCard: Card) => {
   const fieldSpecialNames = new Set(
@@ -80,82 +81,59 @@ const activate_104030453_swap: CardEffect = {
   triggerLocation: ['UNIT'],
   erosionTotalLimit: [3, 7],
   condition: (_gameState: GameState, playerState: PlayerState, instance: Card) => {
-    return playerState.isTurn && instance.cardlocation === 'UNIT';
+    return playerState.isTurn &&
+      instance.cardlocation === 'UNIT' &&
+      getSwapTargets(playerState, instance).length > 0;
   },
+  cost: paymentCost(1, 'BLUE'),
   execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
-    gameState.pendingQuery = {
-      id: Math.random().toString(36).substring(7),
-      type: 'SELECT_PAYMENT',
-      playerUid: playerState.uid,
-      options: [],
-      title: `支付 [${instance.fullName}] 的费用`,
-      description: '请支付1点费用以发动效果。',
-      minSelections: 1,
-      maxSelections: 1,
-      callbackKey: 'EFFECT_RESOLVE',
-      paymentCost: 1,
-      paymentColor: instance.color,
-      context: {
-        sourceCardId: instance.gamecardId,
-        effectIndex: 1,
-        step: 1
-      }
-    };
-
-    gameState.logs.push(`[${instance.fullName}] 等待 ${playerState.displayName} 支付 1 点费用...`);
-  },
-  onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
-    if (context.step === 1) {
-      const sourceUnitIndex = playerState.unitZone.findIndex(c => c?.gamecardId === instance.gamecardId);
-      const cardOnField = sourceUnitIndex >= 0 ? playerState.unitZone[sourceUnitIndex] : undefined;
-      if (!cardOnField) {
-        gameState.logs.push(`[${instance.fullName}] 结算时已不在单位区，效果失败。`);
-        return;
-      }
-
-      gameState.logs.push(`[${instance.fullName}] 费用支付成功。`);
-
-      await AtomicEffectExecutor.execute(gameState, playerState.uid, {
-        type: 'MOVE_FROM_FIELD',
-        targetFilter: { gamecardId: instance.gamecardId },
-        destinationZone: 'EROSION_FRONT'
-      }, instance);
-
-      const movedSelf = playerState.erosionFront.find(c => c?.gamecardId === instance.gamecardId);
-      if (movedSelf) {
-        movedSelf.displayState = 'FRONT_UPRIGHT';
-      }
-
-      const validTargets = getSwapTargets(playerState, instance);
-      if (validTargets.length === 0) {
-        gameState.logs.push(`[${instance.fullName}] 已正面进入侵蚀前区，但当前没有可放置到单位区的合法目标。`);
-        return;
-      }
-
-      gameState.pendingQuery = {
-        id: Math.random().toString(36).substring(7),
-        type: 'SELECT_CARD',
-        playerUid: playerState.uid,
-        options: AtomicEffectExecutor.enrichQueryOptions(
-          gameState,
-          playerState.uid,
-          validTargets.map(c => ({ card: c, source: 'EROSION_FRONT' }))
-        ),
-        title: '选择进入单位区的单位',
-        description: '请选择一张侵蚀前区的「冒险家公会」单位放置到单位区。',
-        minSelections: 1,
-        maxSelections: 1,
-        callbackKey: 'EFFECT_RESOLVE',
-        context: {
-          sourceCardId: instance.gamecardId,
-          effectIndex: 1,
-          step: 2,
-          sourceUnitIndex
-        }
-      };
+    const sourceUnitIndex = playerState.unitZone.findIndex(c => c?.gamecardId === instance.gamecardId);
+    const cardOnField = sourceUnitIndex >= 0 ? playerState.unitZone[sourceUnitIndex] : undefined;
+    if (!cardOnField) {
+      gameState.logs.push(`[${instance.fullName}] 结算时已不在单位区，效果失败。`);
       return;
     }
 
+    await AtomicEffectExecutor.execute(gameState, playerState.uid, {
+      type: 'MOVE_FROM_FIELD',
+      targetFilter: { gamecardId: instance.gamecardId },
+      destinationZone: 'EROSION_FRONT'
+    }, instance);
+
+    const movedSelf = playerState.erosionFront.find(c => c?.gamecardId === instance.gamecardId);
+    if (movedSelf) {
+      movedSelf.displayState = 'FRONT_UPRIGHT';
+    }
+
+    const validTargets = getSwapTargets(playerState, instance);
+    if (validTargets.length === 0) {
+      gameState.logs.push(`[${instance.fullName}] 已正面进入侵蚀前区，但当前没有可放置到单位区的合法目标。`);
+      return;
+    }
+
+    gameState.pendingQuery = {
+      id: Math.random().toString(36).substring(7),
+      type: 'SELECT_CARD',
+      playerUid: playerState.uid,
+      options: AtomicEffectExecutor.enrichQueryOptions(
+        gameState,
+        playerState.uid,
+        validTargets.map(c => ({ card: c, source: 'EROSION_FRONT' }))
+      ),
+      title: '选择进入单位区的单位',
+      description: '请选择一张侵蚀前区的「冒险家公会」单位放置到单位区。',
+      minSelections: 1,
+      maxSelections: 1,
+      callbackKey: 'EFFECT_RESOLVE',
+      context: {
+        sourceCardId: instance.gamecardId,
+        effectIndex: 1,
+        step: 2,
+        sourceUnitIndex
+      }
+    };
+  },
+  onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
     if (context.step === 2) {
       const targetId = selections[0];
       const targetCard = playerState.erosionFront.find(c => c?.gamecardId === targetId);

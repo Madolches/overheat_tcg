@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, createChoiceQuery, createSelectCardQuery, getOpponentUid, millTop, moveRandomGraveToDeckBottom, story, wealthCount } from './BaseUtil';
+import { AtomicEffectExecutor, createSelectCardQuery, getOpponentUid, millTop, moveCardAsCost, moveRandomGraveToDeckBottom, story, wealthCount } from './BaseUtil';
 
 const canDrawToFour = (playerState: any) =>
   playerState.hand.length < 4 && playerState.deck.length > 0;
@@ -13,13 +13,8 @@ const discardTwoHands = (gameState: any, playerState: any, instance: Card, selec
   const discards = selections
     .map(id => playerState.hand.find((card: Card) => card.gamecardId === id))
     .filter((card: Card | undefined): card is Card => !!card);
-  if (discards.length !== 2) return false;
-  discards.forEach(card => {
-    AtomicEffectExecutor.moveCard(gameState, playerState.uid, 'HAND', playerState.uid, 'GRAVE', card.gamecardId, false, {
-      effectSourcePlayerUid: playerState.uid,
-      effectSourceCardId: instance.gamecardId
-    });
-  });
+  if (discards.length !== 2 || new Set(discards.map(card => card.gamecardId)).size !== 2) return false;
+  discards.forEach(card => moveCardAsCost(gameState, playerState.uid, card, 'GRAVE', instance));
   return true;
 };
 
@@ -36,36 +31,16 @@ const createDiscardTwoHandQuery = (gameState: any, playerState: any, instance: C
     {
       sourceCardId: instance.gamecardId,
       effectId: '204020122_money_dream_modes',
-      step: 'DISCARD'
+      step: 'DISCARD_COST',
+      costType: 'CUSTOM_CARD_COST',
+      skipEffectResolveAfterCost: true
     },
     () => 'HAND'
   );
   return true;
 };
 
-const cardEffects: CardEffect[] = [story('204020122_money_dream_modes', '同名1回合1次，你的回合中，财富3以上，选择1项：抽到4张；或舍弃2张手牌，恢复3并将对手卡组顶3张送墓。', async (instance, gameState, playerState) => {
-  const options = [
-    {
-      id: 'DRAW_TO_FOUR',
-      label: '抽到4张',
-      disabled: !canDrawToFour(playerState),
-      disabledReason: '手牌已达4张或卡组不足'
-    },
-    {
-      id: 'RECOVER_MILL',
-      label: '恢复并送墓',
-      disabled: !canRecoverMill(gameState, playerState),
-      disabledReason: '手牌、墓地或对手卡组不足'
-    }
-  ];
-  createChoiceQuery(
-    gameState,
-    playerState.uid,
-    '选择金钱美梦',
-    '选择要执行的效果。',
-    options,
-    { sourceCardId: instance.gamecardId, effectId: '204020122_money_dream_modes', step: 'MODE' }
-  );
+const cardEffects: CardEffect[] = [story('204020122_money_dream_modes', '同名1回合1次，你的回合中，财富3以上，选择1项：抽到4张；或舍弃2张手牌，恢复3并将对手卡组顶3张送墓。', async () => {
 }, {
   limitCount: 1,
   limitNameType: true,
@@ -73,21 +48,47 @@ const cardEffects: CardEffect[] = [story('204020122_money_dream_modes', '同名1
     playerState.isTurn &&
     wealthCount(playerState, gameState) >= 3 &&
     (canDrawToFour(playerState) || canRecoverMill(gameState, playerState)),
+  targetSpec: {
+    modeTitle: '选择金钱美梦',
+    modeDescription: '选择要执行的效果。',
+    modeOptions: [{
+      id: 'DRAW_TO_FOUR',
+      label: '抽到4张',
+      title: '抽到4张',
+      description: '将手牌抽到4张为止。',
+      minSelections: 0,
+      maxSelections: 0,
+      condition: (_gameState, playerState) => canDrawToFour(playerState)
+    }, {
+      id: 'RECOVER_MILL',
+      label: '恢复并送墓',
+      title: '恢复并送墓',
+      description: '舍弃2张手牌作为费用，恢复3并将对手卡组顶3张送入墓地。',
+      minSelections: 0,
+      maxSelections: 0,
+      condition: (gameState, playerState) => canRecoverMill(gameState, playerState)
+    }]
+  },
+  cost: async (gameState, playerState, instance, options?: any) => {
+    if (options?.declaredModeId !== 'RECOVER_MILL') return true;
+    return createDiscardTwoHandQuery(gameState, playerState, instance);
+  },
+  onCostResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step !== 'DISCARD_COST') return;
+    if (!discardTwoHands(gameState, playerState, instance, selections)) {
+      context.cancelActivation = true;
+    }
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context?.step === 'MODE') {
-      if (selections[0] === 'DRAW_TO_FOUR') {
-        const count = Math.max(0, Math.min(4 - playerState.hand.length, playerState.deck.length));
-        if (count > 0) await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'DRAW', value: count }, instance);
-        return;
-      }
-      if (selections[0] !== 'RECOVER_MILL' || !canRecoverMill(gameState, playerState)) return;
-      createDiscardTwoHandQuery(gameState, playerState, instance);
+    const modeId = context?.modeId || context?.selectedModeId || selections[0];
+    if (modeId === 'DRAW_TO_FOUR') {
+      const count = Math.max(0, Math.min(4 - playerState.hand.length, playerState.deck.length));
+      if (count > 0) await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'DRAW', value: count }, instance);
       return;
     }
 
-    if (context?.step !== 'DISCARD') return;
+    if (modeId !== 'RECOVER_MILL' || !canRecoverMill(gameState, playerState)) return;
     const recoverCount = Math.min(3, playerState.grave.length);
-    if (!discardTwoHands(gameState, playerState, instance, selections)) return;
     moveRandomGraveToDeckBottom(gameState, playerState.uid, recoverCount, instance);
     millTop(gameState, getOpponentUid(gameState, playerState.uid), 3, instance);
   }

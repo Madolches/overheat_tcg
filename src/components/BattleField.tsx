@@ -1076,8 +1076,11 @@ export const BattleField: React.FC = () => {
     const spec = effect?.targetSpec;
     if (!sourceCard || !effect || !spec) return rawPendingQueryOptions;
 
-    const targetShape = context.modeId
+    const selectedMode = context.modeId
       ? spec.modeOptions?.find(mode => mode.id === context.modeId)
+      : undefined;
+    const targetShape = selectedMode
+      ? selectedMode.targetGroups?.[context.targetGroupIndex || 0] || selectedMode
       : spec.targetGroups?.[context.targetGroupIndex || 0] || spec;
     if (!targetShape) return rawPendingQueryOptions;
 

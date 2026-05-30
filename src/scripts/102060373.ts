@@ -49,6 +49,15 @@ const cardEffects: CardEffect[] = [{
     instance.cardlocation === 'UNIT' &&
     totalUnitsSentFromFieldToGraveThisTurn(gameState) >= 6 &&
     allCardsOnField(gameState).length > 0,
+  targetSpec: {
+    title: '选择破坏目标',
+    description: '选择战场上的1张卡破坏。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT', 'ITEM'],
+    controller: 'ANY',
+    getCandidates: gameState => allCardsOnField(gameState).map(card => ({ card, source: card.cardlocation as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,

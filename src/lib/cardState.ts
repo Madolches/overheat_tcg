@@ -53,6 +53,9 @@ export const clearBattlefieldState = (card: Card) => {
   if ((card as any).data?.preventFirstDestroyEachTurnSourceName !== undefined) {
     delete (card as any).data.preventFirstDestroyEachTurnSourceName;
   }
+  if ((card as any).data?.preventFirstAnyDestroyEachTurnSourceName !== undefined) {
+    delete (card as any).data.preventFirstAnyDestroyEachTurnSourceName;
+  }
   if ((card as any).data?.preventFirstBattleDestroyEachTurnSourceName !== undefined) {
     delete (card as any).data.preventFirstBattleDestroyEachTurnSourceName;
   }

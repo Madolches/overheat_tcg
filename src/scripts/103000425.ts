@@ -31,6 +31,18 @@ const cardEffects: CardEffect[] = [{
   condition: (gameState, playerState) =>
     canActivateDefaultTiming(gameState, playerState) &&
     playerState.grave.some(card => card.type === 'STORY' && nameContains(card, '魔女')),
+  targetSpec: {
+    title: '选择魔女故事',
+    description: '选择墓地中1张卡名含有《魔女》的故事卡放逐，并处理其效果。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) =>
+      playerState.grave
+        .filter(card => card.type === 'STORY' && nameContains(card, '魔女'))
+        .map(card => ({ card, source: 'GRAVE' as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(gameState, playerState.uid, playerState.grave.filter(card => card.type === 'STORY' && nameContains(card, '魔女')), '选择魔女故事', '选择墓地中1张卡名含有《魔女》的故事卡放逐，并处理其效果。', 1, 1, {
       sourceCardId: instance.gamecardId,

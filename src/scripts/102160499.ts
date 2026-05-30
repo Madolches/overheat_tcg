@@ -51,6 +51,21 @@ const cardEffects: CardEffect[] = [{
       const ownerUid = ownerUidOf(gameState, unit);
       return ownerUid === playerState.uid || canPutUnitOntoBattlefield(playerState, unit);
     }),
+  targetSpec: {
+    title: '选择获得控制权的单位',
+    description: '选择1个单位，获得其控制权。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    getCandidates: (gameState, playerState) =>
+      allUnitsOnField(gameState)
+        .filter(unit => {
+          const ownerUid = ownerUidOf(gameState, unit);
+          return ownerUid === playerState.uid || canPutUnitOntoBattlefield(playerState, unit);
+        })
+        .map(card => ({ card, source: 'UNIT' as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     const targets = allUnitsOnField(gameState).filter(unit => {
       const ownerUid = ownerUidOf(gameState, unit);

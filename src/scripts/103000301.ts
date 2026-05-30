@@ -65,18 +65,38 @@ const effect_103000301_recover_kuya_from_erosion: CardEffect = {
     gameState.phase === 'MAIN' &&
     playerState.hand.length > 0 &&
     faceUpErosion(playerState).some(isKuyaCard),
-  execute: async (instance, gameState, playerState) => {
+  cost: async (gameState, playerState, instance) => {
+    const discardCandidates = playerState.hand.filter((card: Card) => card.gamecardId !== instance.gamecardId);
+    if (discardCandidates.length === 0) return false;
     createSelectCardQuery(
       gameState,
       playerState.uid,
-      faceUpErosion(playerState).filter(isKuyaCard),
-      '选择九夜卡',
-      '选择侵蚀区中的1张卡名含有《九夜》的正面卡。',
+      discardCandidates,
+      '舍弃手牌',
+      '舍弃1张手牌作为费用，将选择的九夜卡加入手牌。',
       1,
       1,
-      { sourceCardId: instance.gamecardId, effectId: '103000301_recover_kuya_from_erosion', step: 'TARGET' },
-      () => 'EROSION_FRONT'
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '103000301_recover_kuya_from_erosion',
+        step: 'DISCARD_COST',
+        costType: 'CUSTOM_CARD_COST',
+        skipEffectResolveAfterCost: true
+      },
+      () => 'HAND'
     );
+    return true;
+  },
+  onCostResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step !== 'DISCARD_COST') return;
+    const discard = selections[0] ? playerState.hand.find((card: Card) => card.gamecardId === selections[0]) : undefined;
+    if (!discard || discard.gamecardId === instance.gamecardId) {
+      context.cancelActivation = true;
+      return;
+    }
+    moveCardAsCost(gameState, playerState.uid, discard, 'GRAVE', instance);
+  },
+  execute: async () => {
   },
   targetSpec: {
     title: '选择九夜卡',
@@ -90,31 +110,9 @@ const effect_103000301_recover_kuya_from_erosion: CardEffect = {
       faceUpErosion(playerState).filter(isKuyaCard).map(card => ({ card, source: 'EROSION_FRONT' as any }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context?.step === 'TARGET') {
-      createSelectCardQuery(
-        gameState,
-        playerState.uid,
-        playerState.hand.filter((card: Card) => card.gamecardId !== instance.gamecardId),
-        '舍弃手牌',
-        '舍弃1张手牌作为费用，将选择的九夜卡加入手牌。',
-        1,
-        1,
-        {
-          sourceCardId: instance.gamecardId,
-          effectId: '103000301_recover_kuya_from_erosion',
-          step: 'DISCARD',
-          targetId: selections[0]
-        },
-        () => 'HAND'
-      );
-      return;
-    }
-
-    if (context?.step !== 'DISCARD') return;
-    const discard = selections[0] ? playerState.hand.find((card: Card) => card.gamecardId === selections[0]) : undefined;
-    const target = context.targetId ? faceUpErosion(playerState).find(card => card.gamecardId === context.targetId) : undefined;
-    if (!discard || !target || !isKuyaCard(target)) return;
-    moveCardAsCost(gameState, playerState.uid, discard, 'GRAVE', instance);
+    if (context?.step !== 'TARGET') return;
+    const target = selections[0] ? faceUpErosion(playerState).find(card => card.gamecardId === selections[0]) : undefined;
+    if (!target || !isKuyaCard(target)) return;
     moveCard(gameState, playerState.uid, target, 'HAND', instance);
   }
 };
@@ -131,18 +129,35 @@ const effect_103000301_transform_unit: CardEffect = {
     canActivateDefaultTiming(gameState, playerState) &&
     ownUnits(playerState).some(unit => !unit.godMark) &&
     hasTwoRequiredCostColors(playerState),
-  execute: async (instance, gameState, playerState) => {
+  cost: async (gameState, playerState, instance) => {
+    const costs = greenCostCards(playerState);
+    if (!hasTwoRequiredCostColors(playerState)) return false;
     createSelectCardQuery(
       gameState,
       playerState.uid,
-      ownUnits(playerState).filter(unit => !unit.godMark),
-      '选择强化单位',
-      '选择自己战场上的1个非神蚀单位。',
-      1,
-      1,
-      { sourceCardId: instance.gamecardId, effectId: '103000301_transform_unit', step: 'TARGET' },
-      () => 'UNIT'
+      costs,
+      '选择费用',
+      '选择墓地中的红色、蓝色、绿色中的2种颜色的卡各1张放逐。',
+      2,
+      2,
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '103000301_transform_unit',
+        step: 'GRAVE_EXILE_COST',
+        costType: 'CUSTOM_CARD_COST',
+        skipEffectResolveAfterCost: true
+      },
+      () => 'GRAVE'
     );
+    return true;
+  },
+  onCostResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step !== 'GRAVE_EXILE_COST') return;
+    if (!payTwoOfRedBlueGreenGraveCost(gameState, playerState, instance, selections)) {
+      context.cancelActivation = true;
+    }
+  },
+  execute: async () => {
   },
   targetSpec: {
     title: '选择强化单位',
@@ -156,31 +171,8 @@ const effect_103000301_transform_unit: CardEffect = {
       ownUnits(playerState).filter(unit => !unit.godMark).map(card => ({ card, source: 'UNIT' as any }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context?.step === 'TARGET') {
-      const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
-      if (!target || target.cardlocation !== 'UNIT' || ownerUidOf(gameState, target) !== playerState.uid || target.godMark) return;
-      createSelectCardQuery(
-        gameState,
-        playerState.uid,
-        greenCostCards(playerState),
-        '选择费用',
-        '选择墓地中的红色、蓝色、绿色中的2种颜色的卡各1张放逐。',
-        2,
-        2,
-        {
-          sourceCardId: instance.gamecardId,
-          effectId: '103000301_transform_unit',
-          step: 'COST',
-          targetId: target.gamecardId
-        },
-        () => 'GRAVE'
-      );
-      return;
-    }
-
-    if (context?.step !== 'COST') return;
-    if (!payTwoOfRedBlueGreenGraveCost(gameState, playerState, instance, selections)) return;
-    const target = context.targetId ? AtomicEffectExecutor.findCardById(gameState, context.targetId) : undefined;
+    if (context?.step !== 'TARGET') return;
+    const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (target?.cardlocation === 'UNIT' && ownerUidOf(gameState, target) === playerState.uid && !target.godMark) {
       markAsTwoDamageThirtyFive(target, instance);
     }

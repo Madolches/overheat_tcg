@@ -14,10 +14,29 @@ const cardEffects: CardEffect[] = [{
       faceUpErosion(playerState).length >= 1 &&
       ownUnits(opponent).some(isNonGodUnit);
   },
-  cost: erosionCost(1),
-  execute: async (instance, gameState, playerState) => {
+  cost: async (gameState, playerState, instance) => {
     if (instance.cardlocation === 'UNIT') {
       moveCard(gameState, playerState.uid, instance, 'EXILE', instance);
+    }
+    return erosionCost(1)(gameState, playerState, instance);
+  },
+  targetSpec: {
+    title: '选择破坏对象',
+    description: '选择对手的1个非神蚀单位，将其破坏。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    getCandidates: (gameState, playerState) => {
+      const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
+      return ownUnits(opponent).filter(isNonGodUnit).map(card => ({ card, source: 'UNIT' as const }));
+    }
+  },
+  execute: async (instance, gameState, playerState, _event, declaredSelections?: string[]) => {
+    if (declaredSelections?.length) {
+      const target = AtomicEffectExecutor.findCardById(gameState, declaredSelections[0]);
+      if (target && target.cardlocation === 'UNIT' && !target.godMark) destroyByEffect(gameState, target, instance);
+      return;
     }
     const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
     createSelectCardQuery(

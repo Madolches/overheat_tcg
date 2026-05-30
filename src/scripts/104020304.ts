@@ -31,8 +31,15 @@ const cardEffects: CardEffect[] = [{
     instance.cardlocation === 'UNIT' &&
     !instance.isExhausted &&
     itemTargets(playerState).length > 0,
+  cost: async (gameState, playerState, instance) => {
+    if (instance.isExhausted) return false;
+    await AtomicEffectExecutor.execute(gameState, playerState.uid, {
+      type: 'ROTATE_HORIZONTAL',
+      targetFilter: { gamecardId: instance.gamecardId }
+    }, instance);
+    return instance.isExhausted;
+  },
   execute: async (instance, gameState, playerState) => {
-    instance.isExhausted = true;
     selectFromEntries(
       gameState,
       playerState.uid,

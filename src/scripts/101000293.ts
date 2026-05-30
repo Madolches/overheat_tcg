@@ -70,6 +70,47 @@ const isPeonyMainPhaseModeTiming = (gameState: any) =>
   gameState.phase === 'MAIN' ||
   (gameState.phase === 'COUNTERING' && gameState.previousPhase === 'MAIN');
 
+const markPeonyRecruitTarget = (gameState: any, playerState: any, instance: Card, ownTarget: Card) => {
+  const data = ensureData(ownTarget);
+  data.seisoRecruitOnDestroyedTurn = gameState.turnCount;
+  data.seisoRecruitSourceCardId = instance.gamecardId;
+  data.seisoRecruitOwnerUid = playerState.uid;
+  data.seisoRecruitSourceName = instance.fullName;
+  (playerState as any).seisoRecruitMarks = [
+    ...(((playerState as any).seisoRecruitMarks || []).filter((mark: any) =>
+      !(mark.targetId === ownTarget.gamecardId && mark.sourceCardId === instance.gamecardId)
+    )),
+    {
+      targetId: ownTarget.gamecardId,
+      sourceCardId: instance.gamecardId,
+      turn: gameState.turnCount
+    }
+  ];
+};
+
+const createPeonyDestroyPaymentQuery = (gameState: any, playerState: any, instance: Card, ownTarget: Card, oppTarget: Card) => {
+  gameState.pendingQuery = {
+    id: Math.random().toString(36).substring(7),
+    type: 'SELECT_PAYMENT',
+    playerUid: playerState.uid,
+    options: [],
+    title: '支付费用',
+    description: `支付1点费用以发动${instance.fullName}的破坏效果。`,
+    minSelections: 1,
+    maxSelections: 1,
+    callbackKey: 'ACTIVATE_COST_RESOLVE',
+    paymentCost: 1,
+    paymentColor: instance.color,
+    context: {
+      sourceCardId: instance.gamecardId,
+      effectId: '101000293_seiso_modes',
+      step: 'PAY_DESTROY_PAIR',
+      ownTargetId: ownTarget.gamecardId,
+      oppTargetId: oppTarget.gamecardId
+    }
+  };
+};
+
 const effect_101000293_irodori_enter: CardEffect = {
   id: '101000293_irodori_enter',
   type: 'ACTIVATE',
@@ -121,6 +162,58 @@ const effect_101000293_seiso_modes: CardEffect = {
     instance.cardlocation === 'UNIT' &&
     canActivateDefaultTiming(gameState, playerState) &&
     ownUnits(playerState).some(isYellowOrGreenOrSeisoNonGodUnit),
+  targetSpec: {
+    modeTitle: '选择牡丹雪效果',
+    modeDescription: '选择1项效果并指定对象。',
+    modeOptions: [{
+      id: 'DESTROY_PAIR',
+      label: '支付1费并破坏双方目标',
+      title: '选择破坏目标',
+      description: '选择要破坏的己方单位和对手卡牌。',
+      minSelections: 0,
+      maxSelections: 0,
+      zones: [],
+      step: 'DESTROY_PAIR',
+      condition: (gameState, playerState, instance) =>
+        isPeonyMainPhaseModeTiming(gameState) &&
+        opponentAccessThreeOrLessNonGodCards(gameState, playerState.uid).length > 0 &&
+        canPayAccessCost(gameState, playerState, 1, undefined, instance),
+      getCandidates: () => [] as any[],
+      targetGroups: [{
+        title: '选择己方单位',
+        description: '选择自己战场上的1个黄色、绿色或卡名含有《清霜》的非神蚀单位。',
+        minSelections: 1,
+        maxSelections: 1,
+        zones: ['UNIT'],
+        controller: 'SELF',
+        step: 'OWN_TARGET',
+        getCandidates: (_gameState, playerState) =>
+          ownUnits(playerState).filter(isYellowOrGreenOrSeisoNonGodUnit).map(card => ({ card, source: 'UNIT' as any }))
+      }, {
+        title: '选择对手卡牌',
+        description: '选择对手场上的1张ACCESS 3以下非神蚀卡。',
+        minSelections: 1,
+        maxSelections: 1,
+        zones: ['UNIT', 'ITEM'],
+        controller: 'OPPONENT',
+        step: 'OPP_TARGET',
+        getCandidates: (gameState, playerState) =>
+          opponentAccessThreeOrLessNonGodCards(gameState, playerState.uid).map(card => ({ card, source: card.cardlocation as any }))
+      }]
+    }, {
+      id: 'SETUP_RECRUIT',
+      label: '被破坏时横置放置清霜单位',
+      title: '选择己方单位',
+      description: '选择自己战场上的1个黄色、绿色或卡名含有《清霜》的非神蚀单位。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'SELF',
+      step: 'OWN_TARGET',
+      getCandidates: (_gameState, playerState) =>
+        ownUnits(playerState).filter(isYellowOrGreenOrSeisoNonGodUnit).map(card => ({ card, source: 'UNIT' as any }))
+    }]
+  },
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,
@@ -135,6 +228,27 @@ const effect_101000293_seiso_modes: CardEffect = {
     );
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    const declaredMode = context?.selectedModeId || context?.modeId;
+    if (declaredMode === 'SETUP_RECRUIT' || declaredMode === 'DESTROY_PAIR') {
+      const declaredTargets = context?.declaredTargets || [];
+      const ownTargetId = declaredTargets.find((target: any) => target.step === 'OWN_TARGET')?.gamecardId || selections[0];
+      const ownTarget = ownTargetId ? AtomicEffectExecutor.findCardById(gameState, ownTargetId) : undefined;
+      if (!isValidPeonyOwnTarget(gameState, playerState, ownTarget)) return;
+
+      if (declaredMode === 'SETUP_RECRUIT') {
+        markPeonyRecruitTarget(gameState, playerState, instance, ownTarget);
+        return;
+      }
+
+      const oppTargetId = declaredTargets.find((target: any) => target.step === 'OPP_TARGET')?.gamecardId ||
+        selections.find(id => id !== ownTargetId);
+      const oppTarget = oppTargetId ? AtomicEffectExecutor.findCardById(gameState, oppTargetId) : undefined;
+      if (!isValidPeonyOpponentTarget(gameState, playerState, oppTarget)) return;
+      if (!canPayAccessCost(gameState, playerState, 1, undefined, instance)) return;
+      createPeonyDestroyPaymentQuery(gameState, playerState, instance, ownTarget, oppTarget);
+      return;
+    }
+
     if (context?.step === 'OWN_TARGET') {
       const ownTarget = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
       if (
@@ -194,21 +308,7 @@ const effect_101000293_seiso_modes: CardEffect = {
         return;
       }
 
-      const data = ensureData(ownTarget);
-      data.seisoRecruitOnDestroyedTurn = gameState.turnCount;
-      data.seisoRecruitSourceCardId = instance.gamecardId;
-      data.seisoRecruitOwnerUid = playerState.uid;
-      data.seisoRecruitSourceName = instance.fullName;
-      (playerState as any).seisoRecruitMarks = [
-        ...(((playerState as any).seisoRecruitMarks || []).filter((mark: any) =>
-          !(mark.targetId === ownTarget.gamecardId && mark.sourceCardId === instance.gamecardId)
-        )),
-        {
-          targetId: ownTarget.gamecardId,
-          sourceCardId: instance.gamecardId,
-          turn: gameState.turnCount
-        }
-      ];
+      markPeonyRecruitTarget(gameState, playerState, instance, ownTarget);
       return;
     }
 
