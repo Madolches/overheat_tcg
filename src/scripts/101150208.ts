@@ -25,6 +25,29 @@ const cardEffects: CardEffect[] = [{
   erosionTotalLimit: [4, 9],
   description: '4~9，1回合1次，对手回合：选择3张正面侵蚀放逐。之后选择你的1个单位，本回合下一次将被战斗破坏时防止。',
   condition: (_gameState, playerState) => !playerState.isTurn && faceUpErosion(playerState).length >= 3 && ownUnits(playerState).length > 0,
+  targetSpec: {
+    targetGroups: [{
+      title: '选择放逐的侵蚀卡',
+      description: '选择你的侵蚀区的3张正面卡，将其放逐。',
+      minSelections: 3,
+      maxSelections: 3,
+      zones: ['EROSION_FRONT'],
+      controller: 'SELF',
+      step: 'EXILE',
+      getCandidates: (_gameState, playerState) =>
+        faceUpErosion(playerState).map(card => ({ card, source: 'EROSION_FRONT' as any }))
+    }, {
+      title: '选择防止破坏的单位',
+      description: '选择你的1个单位，本回合中下一次将要被战斗破坏时防止那次破坏。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'SELF',
+      step: 'TARGET',
+      getCandidates: (_gameState, playerState) =>
+        ownUnits(playerState).map(card => ({ card, source: 'UNIT' as any }))
+    }]
+  },
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,
@@ -39,6 +62,22 @@ const cardEffects: CardEffect[] = [{
     );
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    const declaredTargets = context?.declaredTargets || [];
+    if (declaredTargets.length >= 4) {
+      const erosionTargets = declaredTargets
+        .filter((target: any) => target.step === 'EXILE')
+        .map((target: any) => target.gamecardId);
+      const preventTargetId = declaredTargets.find((target: any) => target.step === 'TARGET')?.gamecardId;
+      if (erosionTargets.length !== 3 || !preventTargetId) return;
+      erosionTargets.forEach(id => {
+        const card = playerState.erosionFront.find(candidate => candidate?.gamecardId === id);
+        if (card) moveCard(gameState, playerState.uid, card, 'EXILE', instance);
+      });
+      const target = AtomicEffectExecutor.findCardById(gameState, preventTargetId);
+      if (target?.cardlocation === 'UNIT') preventNextDestroy(target, instance, gameState.turnCount);
+      return;
+    }
+
     if (context?.step === 'TARGET') {
       const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
       if (target?.cardlocation === 'UNIT') preventNextDestroy(target, instance, gameState.turnCount);

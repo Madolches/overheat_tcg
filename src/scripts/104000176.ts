@@ -11,6 +11,54 @@ const effect_104000176_activate: CardEffect = {
     return playerState.isTurn && playerState.hand.length > 0 && playerState.erosionFront.some(c => c !== null);
   },
   triggerLocation: ['UNIT'],
+  targetSpec: {
+    title: '选择加入手牌的卡牌',
+    description: '选择一张侵蚀区正面的卡牌加入手牌。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['EROSION_FRONT'],
+    controller: 'SELF',
+    step: 'SALVAGE',
+    getCandidates: (_gameState, playerState) =>
+      playerState.erosionFront
+        .filter((card): card is Card => !!card)
+        .map(card => ({ card, source: 'EROSION_FRONT' as TriggerLocation }))
+  },
+  cost: async (gameState, playerState, instance) => {
+    if (playerState.hand.length === 0) return false;
+    gameState.pendingQuery = {
+      id: Math.random().toString(36).substring(7),
+      type: 'SELECT_CARD',
+      playerUid: playerState.uid,
+      options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, playerState.hand.map(c => ({ card: c, source: 'HAND' }))),
+      title: 'Select discard cost',
+      description: 'Select 1 hand card to discard as cost.',
+      minSelections: 1,
+      maxSelections: 1,
+      callbackKey: 'EFFECT_RESOLVE',
+      context: {
+        effectId: 'mina_salvage_activate',
+        sourceCardId: instance.gamecardId,
+        step: 'DISCARD_COST',
+        costType: 'CUSTOM_CARD_COST',
+        skipEffectResolveAfterCost: true
+      }
+    };
+    return true;
+  },
+  onCostResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
+    if (context?.step !== 'DISCARD_COST') return;
+    const discardId = selections[0];
+    const discard = playerState.hand.find(card => card.gamecardId === discardId);
+    if (!discard) {
+      context.cancelActivation = true;
+      return;
+    }
+    await AtomicEffectExecutor.execute(gameState, playerState.uid, {
+      type: 'DISCARD_CARD',
+      targetFilter: { gamecardId: discardId }
+    }, instance);
+  },
   execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
     // 1. Discard 1
     gameState.pendingQuery = {
@@ -31,6 +79,17 @@ const effect_104000176_activate: CardEffect = {
     };
   },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
+    if (context?.step === 'SALVAGE' && selections.length > 0) {
+      const targetId = selections[0];
+      await AtomicEffectExecutor.execute(gameState, playerState.uid, {
+        type: 'MOVE_FROM_EROSION',
+        targetFilter: { gamecardId: targetId },
+        destinationZone: 'HAND'
+      }, instance);
+      gameState.logs.push(`[${instance.fullName}] recovered 1 erosion card to hand.`);
+      return;
+    }
+
     if (context.step === 'COST' && selections.length > 0) {
       const discardId = selections[0];
       const pUid = playerState.uid;

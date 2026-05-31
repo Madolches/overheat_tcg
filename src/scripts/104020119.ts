@@ -12,6 +12,19 @@ const activated_104020119: CardEffect = {
       c && c.displayState === 'FRONT_UPRIGHT' && AtomicEffectExecutor.matchesColor(c, 'BLUE')
     );
   },
+  targetSpec: {
+    title: '选择牺牲的侵蚀卡牌',
+    description: '请选择一张侵蚀前区的蓝色正面卡牌送去墓地。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['EROSION_FRONT'],
+    controller: 'SELF',
+    step: 1 as any,
+    getCandidates: (_gameState, playerState) =>
+      playerState.erosionFront
+        .filter((card): card is Card => !!card && card.displayState === 'FRONT_UPRIGHT' && AtomicEffectExecutor.matchesColor(card, 'BLUE'))
+        .map(card => ({ card, source: 'EROSION_FRONT' as any }))
+  },
   cost: async (gameState: GameState, playerState: PlayerState, instance: Card) => {
     if (instance.isExhausted) return false;
 
@@ -47,6 +60,11 @@ const activated_104020119: CardEffect = {
     };
   },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
+    const declaredTargets = context?.declaredTargets || [];
+    if (declaredTargets.length > 0 && context?.step === 1) {
+      selections = [declaredTargets[0].gamecardId];
+    }
+
     if (context.step === 1) {
       const targetId = selections[0];
       const targetCard = playerState.erosionFront.find(c => c?.gamecardId === targetId);

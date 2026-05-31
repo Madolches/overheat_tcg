@@ -16,6 +16,19 @@ const effect_305000017_activate: CardEffect = {
   condition: (_gameState, playerState, instance) => {
     return !instance.isExhausted && playerState.unitZone.some(unit => unit !== null);
   },
+  targetSpec: {
+    title: '选择单位',
+    description: '选择你的1个单位，本回合中若其将被破坏，改为返回手牌。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'APPLY_TARGET',
+    getCandidates: (_gameState, playerState) =>
+      playerState.unitZone
+        .filter((unit): unit is Card => !!unit)
+        .map(card => ({ card, source: 'UNIT' as any }))
+  },
   cost: async (gameState, playerState, instance) => {
     if (instance.isExhausted) return false;
     gameState.pendingQuery = {

@@ -26,6 +26,21 @@ const cardEffects: CardEffect[] = [{
         (unit.power || 0) <= (instance.power || 0)
       );
     },
+    targetSpec: {
+      title: '选择破坏预约对象',
+      description: '选择对手的1个力量值在这个单位以下的非神蚀单位，回合结束时破坏。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'OPPONENT',
+      step: 'TARGET',
+      getCandidates: (gameState, playerState, instance) => {
+        const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
+        return ownUnits(opponent)
+          .filter(unit => !unit.godMark && (unit.power || 0) <= (instance.power || 0))
+          .map(card => ({ card, source: 'UNIT' as any }));
+      }
+    },
     cost: async (gameState, playerState, instance) => {
       const paid = await paymentCost(1, 'GREEN')!(gameState, playerState, instance);
       instance.isExhausted = true;

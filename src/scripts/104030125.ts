@@ -1,17 +1,17 @@
 import { Card, GameState, PlayerState, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { ensureData } from './BaseUtil';
+import { ensureData, erosionCost } from './BaseUtil';
 
 const hasExistingCocoaOnField = (playerState: PlayerState) => {
   const fieldCards = [...playerState.unitZone, ...playerState.itemZone];
-  return fieldCards.some(c => c && c.specialName === '可可亚');
+  return fieldCards.some(c => c?.id === '104030126');
 };
 
 const hasSummonableCocoa = (playerState: PlayerState) =>
   playerState.unitZone.some(slot => slot === null) &&
   !hasExistingCocoaOnField(playerState) &&
   [...playerState.hand, ...playerState.deck, ...playerState.grave].some(c =>
-    c && c.type === 'UNIT' && (c.specialName === '可可亚' || c.fullName.includes('可可亚'))
+    c && c.type === 'UNIT' && c.id === '104030126'
   );
 
 const effect_104030125_trigger: CardEffect = {
@@ -80,77 +80,43 @@ const effect_104030125_activate: CardEffect = {
   condition: (gameState: GameState, playerState: PlayerState) => {
     return hasSummonableCocoa(playerState);
   },
+  cost: erosionCost(1),
   execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
-    const frontCards = playerState.erosionFront.filter(c => c && c.displayState === 'FRONT_UPRIGHT') as Card[];
-    if (frontCards.length === 0) return;
-
+    if (!hasSummonableCocoa(playerState)) return;
+    const searchZones: { zone: (Card | null)[], name: TriggerLocation }[] = [
+      { zone: playerState.hand, name: 'HAND' },
+      { zone: playerState.deck, name: 'DECK' },
+      { zone: playerState.grave, name: 'GRAVE' }
+    ];
+    const cocoaOptions: { card: Card; source: TriggerLocation }[] = [];
+    searchZones.forEach(z => {
+      z.zone.forEach(c => {
+        if (c && c.type === 'UNIT' && c.id === '104030126') {
+          cocoaOptions.push({ card: c, source: z.name });
+        }
+      });
+    });
+    if (cocoaOptions.length === 0) return;
     gameState.pendingQuery = {
       id: Math.random().toString(36).substring(7),
       type: 'SELECT_CARD',
       playerUid: playerState.uid,
-      options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, frontCards.map(c => ({ card: c, source: 'EROSION_FRONT' }))),
-      title: '选择代价',
-      description: '选择一张侵蚀区正面卡转为背面作为代价。',
+      options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, cocoaOptions),
+      title: '选择出击的可可亚',
+      description: '从手牌、卡组或墓地选择一个“可可亚”单位放置在战场上。',
       minSelections: 1,
       maxSelections: 1,
       callbackKey: 'EFFECT_RESOLVE',
       context: {
         effectId: 'cocola_summon_cocoa',
         sourceCardId: instance.gamecardId,
-        step: 'COST'
+        step: 'SUMMON'
       }
     };
+    return;
   },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
-    if (context.step === 'COST' && selections.length > 0) {
-      if (!hasSummonableCocoa(playerState)) {
-        gameState.logs.push('没有可放置的“可可亚”，或单位区已满，效果发动失败。');
-        return;
-      }
-
-      // Execute Cost: Turn face down
-      await AtomicEffectExecutor.execute(gameState, playerState.uid, {
-        type: 'TURN_EROSION_FACE_DOWN',
-        value: 1
-      }, instance, undefined, selections);
-
-      // Effect: Search Cocoa
-      const searchZones: { zone: (Card | null)[], name: TriggerLocation }[] = [
-        { zone: playerState.hand, name: 'HAND' },
-        { zone: playerState.deck, name: 'DECK' },
-        { zone: playerState.grave, name: 'GRAVE' }
-      ];
-      const cocoaOptions: { card: Card; source: TriggerLocation }[] = [];
-
-      searchZones.forEach(z => {
-        z.zone.forEach(c => {
-          if (c && c.type === 'UNIT' && (c.specialName === '可可亚' || c.fullName.includes('可可亚'))) {
-            cocoaOptions.push({ card: c, source: z.name });
-          }
-        });
-      });
-
-      if (cocoaOptions.length > 0) {
-        gameState.pendingQuery = {
-          id: Math.random().toString(36).substring(7),
-          type: 'SELECT_CARD',
-          playerUid: playerState.uid,
-          options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, cocoaOptions),
-          title: '选择出击的可可亚',
-          description: '从手牌、卡组或墓地选择一个“可可亚”单位放置在战场上。',
-          minSelections: 1,
-          maxSelections: 1,
-          callbackKey: 'EFFECT_RESOLVE',
-          context: {
-            effectId: 'cocola_summon_cocoa',
-            sourceCardId: instance.gamecardId,
-            step: 'SUMMON'
-          }
-        };
-      } else {
-        gameState.logs.push('未发现符合条件的“可可亚”卡牌。');
-      }
-    } else if (context.step === 'SUMMON' && selections.length > 0) {
+    if (context.step === 'SUMMON' && selections.length > 0) {
       if (hasExistingCocoaOnField(playerState) || !playerState.unitZone.some(slot => slot === null)) {
         gameState.logs.push('场上已有专用名为“可可亚”的卡牌，或单位区已满，无法放置。');
         return;

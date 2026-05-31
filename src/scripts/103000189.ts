@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { canPutUnitOntoBattlefield, createSelectCardQuery, moveCard } from './BaseUtil';
+import { canPutUnitOntoBattlefield, createSelectCardQuery, moveCard, moveCardAsCost } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
   id: '103000189_grave_enter',
@@ -12,24 +12,40 @@ const cardEffects: CardEffect[] = [{
     gameState.phase !== 'BATTLE_DECLARATION' &&
     canPutUnitOntoBattlefield(playerState, instance) &&
     playerState.grave.filter(card => card.color === 'GREEN' && card.gamecardId !== instance.gamecardId).length >= 8,
-  execute: async (instance, gameState, playerState) => {
+  cost: async (gameState, playerState, instance) => {
+    const costs = playerState.grave.filter(card => card.color === 'GREEN' && card.gamecardId !== instance.gamecardId);
+    if (costs.length < 8) return false;
     createSelectCardQuery(
       gameState,
       playerState.uid,
-      playerState.grave.filter(card => card.color === 'GREEN' && card.gamecardId !== instance.gamecardId),
+      costs,
       '选择放逐的绿色卡',
-      '选择你的墓地中的8张绿色卡放逐，之后将这张卡放置到战场。',
+      '选择你的墓地中的8张绿色卡放逐作为费用。',
       8,
       8,
-      { sourceCardId: instance.gamecardId, effectId: '103000189_grave_enter' },
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '103000189_grave_enter',
+        step: 'GREEN_GRAVE_EXILE_COST',
+        costType: 'CUSTOM_CARD_COST',
+        skipEffectResolveAfterCost: true
+      },
       () => 'GRAVE'
     );
+    return true;
   },
-  onQueryResolve: async (instance, gameState, playerState, selections) => {
-    selections.forEach(id => {
-      const card = playerState.grave.find(candidate => candidate.gamecardId === id);
-      if (card) moveCard(gameState, playerState.uid, card, 'EXILE', instance);
-    });
+  onCostResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step !== 'GREEN_GRAVE_EXILE_COST') return;
+    const selected = selections
+      .map(id => playerState.grave.find(card => card.gamecardId === id && card.color === 'GREEN'))
+      .filter((card): card is Card => !!card && card.gamecardId !== instance.gamecardId);
+    if (selected.length !== 8 || new Set(selected.map(card => card.gamecardId)).size !== 8) {
+      context.cancelActivation = true;
+      return;
+    }
+    selected.forEach(card => moveCardAsCost(gameState, playerState.uid, card, 'EXILE', instance));
+  },
+  execute: async (instance, gameState, playerState) => {
     if (instance.cardlocation === 'GRAVE' && canPutUnitOntoBattlefield(playerState, instance)) {
       moveCard(gameState, playerState.uid, instance, 'UNIT', instance);
     }

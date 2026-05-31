@@ -14,6 +14,21 @@ const effect_104010173_activation: CardEffect = {
     const sharedPhases = ['MAIN', 'BATTLE_DECLARATION', 'BATTLE_FREE'];
     return (sharedPhases.includes(gameState.phase) || gameState.phase === 'COUNTERING') && hasValidTarget;
   },
+  targetSpec: {
+    title: '选择返回手牌的单位',
+    description: '请选择一张横置的非神蚀单位返回其持有者手牌。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    step: 'SELECT_TARGET',
+    getCandidates: (gameState, _playerState, instance) =>
+      Object.values(gameState.players).flatMap(player =>
+        player.unitZone
+          .filter((card): card is Card => !!card && card.gamecardId !== instance.gamecardId && !card.godMark && !!card.isExhausted)
+          .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
+      )
+  },
   execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
     const targets: Card[] = [];
     Object.values(gameState.players).forEach(p => {

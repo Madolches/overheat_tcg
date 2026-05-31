@@ -1,5 +1,8 @@
-import { Card, CardEffect, TriggerLocation } from '../types/game';
+import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor, getOpponentUid, millTop, ownUnits } from './BaseUtil';
+
+const canPayGreenZeroCost = (playerState: any) =>
+  ownUnits(playerState).filter(unit => AtomicEffectExecutor.matchesColor(unit, 'GREEN')).length >= 2;
 
 const cardEffects: CardEffect[] = [{
     id: '103000081_double_mill',
@@ -7,7 +10,8 @@ const cardEffects: CardEffect[] = [{
     triggerLocation: ['UNIT'],
     limitCount: 1,
     description: '主要阶段，将双方卡组顶各1张送入墓地。',
-    condition: (gameState, playerState) => gameState.phase === 'MAIN' && playerState.isTurn && ownUnits(playerState).filter(unit => AtomicEffectExecutor.matchesColor(unit, 'GREEN')).length >= 2,
+    condition: (gameState, playerState) => gameState.phase === 'MAIN' && playerState.isTurn,
+    cost: async (_gameState, playerState) => canPayGreenZeroCost(playerState),
     execute: async (instance, gameState, playerState) => {
       millTop(gameState, playerState.uid, 1, instance);
       millTop(gameState, getOpponentUid(gameState, playerState.uid), 1, instance);

@@ -1,8 +1,8 @@
 import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { canPutItemOntoBattlefield, canPutUnitOntoBattlefield, countItemTypes, createChoiceQuery, createSelectCardQuery, moveCard } from './BaseUtil';
+import { canPutItemOntoBattlefield, canPutUnitOntoBattlefield, countItemTypes, createChoiceQuery, createSelectCardQuery, moveCardAsCost } from './BaseUtil';
 
-const getTruthGodmarkCards = (playerState: any) => {
+const getTruthGodmarkCards = (playerState: any, instance?: Card) => {
   const zones: { zone: (Card | null)[]; source: TriggerLocation }[] = [
     { zone: playerState.hand, source: 'HAND' },
     { zone: playerState.deck, source: 'DECK' },
@@ -10,7 +10,12 @@ const getTruthGodmarkCards = (playerState: any) => {
   ];
   return zones.flatMap(({ zone, source }) =>
     zone
-      .filter((card): card is Card => !!card && card.godMark && (card.specialName === '真理' || card.fullName.includes('真理')))
+      .filter((card): card is Card =>
+        !!card &&
+        card.godMark &&
+        card.gamecardId !== instance?.gamecardId &&
+        (!instance?.specialName || card.specialName === instance.specialName || card.fullName.includes(instance.specialName))
+      )
       .map(card => ({ card, source }))
   );
 };
@@ -58,57 +63,69 @@ const effect_105110445_activate: CardEffect = {
   limitCount: 1,
   limitNameType: true,
   description: '只能在主要阶段发动。从你的手牌、卡组和/或墓地放逐2张「真实」神蚀卡。从卡组将1张AC为X以下的非神蚀卡放置到战场。X为你控制的不同道具种类数量。',
-  condition: (gameState, playerState) =>
+  condition: (gameState, playerState, instance) =>
     gameState.phase === 'MAIN' &&
     countItemTypes(playerState) > 0 &&
-    getTruthGodmarkCards(playerState).length >= 2,
-  execute: async (instance, gameState, playerState) => {
-    const truthCards = getTruthGodmarkCards(playerState);
+    getTruthGodmarkCards(playerState, instance).length >= 2,
+  cost: async (gameState, playerState, instance) => {
+    const truthCards = getTruthGodmarkCards(playerState, instance);
+    if (truthCards.length < 2) return false;
     createSelectCardQuery(
       gameState,
       playerState.uid,
       truthCards.map(entry => entry.card),
       '选择2张真实卡',
-      '从你的手牌、卡组和/或墓地选择2张「真实」神蚀卡放逐。',
+      '从你的手牌、卡组和/或墓地选择2张「真实」神蚀卡放逐作为费用。',
       2,
       2,
-      { sourceCardId: instance.gamecardId, effectId: '105110445_activate', step: 'BANISH_COST' },
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '105110445_activate',
+        step: 'TRUTH_EXILE_COST',
+        costType: 'CUSTOM_CARD_COST',
+        skipEffectResolveAfterCost: true
+      },
       card => (truthCards.find(entry => entry.card.gamecardId === card.gamecardId)?.source || card.cardlocation) as TriggerLocation
+    );
+    return true;
+  },
+  onCostResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step !== 'TRUTH_EXILE_COST') return;
+    const truthCards = getTruthGodmarkCards(playerState, instance);
+    const selected = selections
+      .map(id => truthCards.find(entry => entry.card.gamecardId === id)?.card)
+      .filter((card): card is Card => !!card);
+    if (selected.length !== 2 || new Set(selected.map(card => card.gamecardId)).size !== 2) {
+      context.cancelActivation = true;
+      return;
+    }
+    const usedDeck = selected.some(card => card.cardlocation === 'DECK');
+    selected.forEach(card => moveCardAsCost(gameState, playerState.uid, card, 'EXILE', instance));
+    if (usedDeck) await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'SHUFFLE_DECK' }, instance);
+  },
+  execute: async (instance, gameState, playerState) => {
+    const maxAc = countItemTypes(playerState);
+    const candidates = playerState.deck.filter(card => {
+      if (card.godMark || (card.baseAcValue ?? card.acValue) > maxAc) return false;
+      if (card.type === 'UNIT') return canPutUnitOntoBattlefield(playerState, card);
+      if (card.type === 'ITEM') return canPutItemOntoBattlefield(playerState, card);
+      return false;
+    });
+    if (candidates.length === 0) return;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      candidates,
+      '选择卡牌',
+      `从你的卡组选择1张AC为${maxAc}以下的非神蚀卡。`,
+      1,
+      1,
+      { sourceCardId: instance.gamecardId, effectId: '105110445_activate', step: 'PUT_CARD' },
+      () => 'DECK'
     );
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context.step === 'BANISH_COST') {
-      const targets = selections
-        .map(id => AtomicEffectExecutor.findCardById(gameState, id))
-        .filter((card): card is Card => !!card);
-
-      targets.forEach(card => moveCard(gameState, playerState.uid, card, 'EXILE', instance));
-
-      const maxAc = countItemTypes(playerState);
-      const candidates = playerState.deck.filter(card => {
-        if (card.godMark || (card.baseAcValue ?? card.acValue) > maxAc) return false;
-        if (card.type === 'UNIT') return canPutUnitOntoBattlefield(playerState, card);
-        if (card.type === 'ITEM') return canPutItemOntoBattlefield(playerState, card);
-        return false;
-      });
-      if (candidates.length === 0) return;
-
-      createSelectCardQuery(
-        gameState,
-        playerState.uid,
-        candidates,
-        '选择卡牌',
-        `从你的卡组选择1张AC为${maxAc}以下的非神蚀卡。`,
-        1,
-        1,
-        { sourceCardId: instance.gamecardId, effectId: '105110445_activate', step: 'PUT_CARD' },
-        () => 'DECK'
-      );
-      return;
-    }
-
-    if (context.step !== 'PUT_CARD') return;
-
+    if (context?.step !== 'PUT_CARD') return;
     const card = AtomicEffectExecutor.findCardById(gameState, selections[0]);
     if (!card) return;
     await AtomicEffectExecutor.execute(gameState, playerState.uid, {

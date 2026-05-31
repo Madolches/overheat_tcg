@@ -1,5 +1,24 @@
-import { Card, GameState, PlayerState, CardEffect, TriggerLocation, GameEvent } from '../types/game';
+import { Card, GameState, PlayerState, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import { cardsInZones, createSelectCardQuery, moveCardAsCost } from './BaseUtil';
+
+const fukaGodmarkCards = (playerState: PlayerState, instance: Card) =>
+  cardsInZones(playerState, ['HAND', 'DECK', 'GRAVE']).filter(({ card }) =>
+    card.godMark &&
+    card.gamecardId !== instance.gamecardId &&
+    !!instance.specialName &&
+    (card.specialName === instance.specialName || card.fullName.includes(instance.specialName))
+  );
+
+const horizontalFieldCards = (gameState: GameState, instance: Card) =>
+  Object.values(gameState.players).flatMap(player => [
+    ...player.unitZone
+      .filter((card): card is Card => !!card && !!card.isExhausted && card.gamecardId !== instance.gamecardId)
+      .map(card => ({ card, source: 'UNIT' as TriggerLocation })),
+    ...player.itemZone
+      .filter((card): card is Card => !!card && !!card.isExhausted)
+      .map(card => ({ card, source: 'ITEM' as TriggerLocation }))
+  ]);
 
 const effect_104010449_continuous: CardEffect = {
   id: 'fuka_restriction',
@@ -82,119 +101,68 @@ const effect_104010449_activate: CardEffect = {
   description: '【启】每回合此卡名限一次，从你的手牌、卡组或墓地中将两张“风花”神迹卡牌移出对战，且仅在你的主要阶段可以发动：选择一张横置状态的单位或道具卡牌（不包括该单位本身）返回其持有者手牌。',
   limitCount: 1,
   limitNameType: true,
-  condition: (gameState: GameState, playerState: PlayerState, instance: Card) => {
-    if (!playerState.isTurn || gameState.phase !== 'MAIN') return false;
-
-    // Search for '风花' godmark cards in Hand, Deck, Grave (excluding this one)
-    const zones = [playerState.hand, playerState.deck, playerState.grave];
-    let count = 0;
-    zones.forEach(zone => {
-      zone.forEach(c => {
-        if (c && c.fullName.includes('风花') && c.godMark && c.gamecardId !== instance.gamecardId) {
-          count++;
-        }
-      });
-    });
-
-    return count >= 2;
+  condition: (gameState: GameState, playerState: PlayerState, instance: Card) =>
+    playerState.isTurn &&
+    gameState.phase === 'MAIN' &&
+    fukaGodmarkCards(playerState, instance).length >= 2 &&
+    horizontalFieldCards(gameState, instance).length > 0,
+  targetSpec: {
+    title: '选择回场目标',
+    description: '选择一张横置的单位或道具返回持有者手牌。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT', 'ITEM'],
+    controller: 'ANY',
+    step: 'BOUNCE',
+    getCandidates: (gameState, _playerState, instance) => horizontalFieldCards(gameState, instance)
   },
-  execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
-    // Search for '风花' godmark cards in Hand, Deck, Grave (excluding this one)
-    const zones: { zone: (Card | null)[], name: TriggerLocation }[] = [
-      { zone: playerState.hand, name: 'HAND' },
-      { zone: playerState.deck, name: 'DECK' },
-      { zone: playerState.grave, name: 'GRAVE' }
-    ];
-    const options: { card: Card; source: TriggerLocation }[] = [];
-    zones.forEach(z => {
-      z.zone.forEach(c => {
-        if (c && c.fullName.includes('风花') && c.godMark && c.gamecardId !== instance.gamecardId) {
-          options.push({ card: c, source: z.name });
-        }
-      });
-    });
-
-    gameState.pendingQuery = {
-      id: Math.random().toString(36).substring(7),
-      type: 'SELECT_CARD',
-      playerUid: playerState.uid,
-      options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, options),
-      title: '选择移出对战的卡牌',
-      description: '选择两张“风花”神迹卡移出对战作为代价。',
-      minSelections: 2,
-      maxSelections: 2,
-      callbackKey: 'EFFECT_RESOLVE',
-      context: {
-        effectId: 'fuka_exile_bounce',
+  cost: async (gameState, playerState, instance) => {
+    const costs = fukaGodmarkCards(playerState, instance);
+    if (costs.length < 2) return false;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      costs.map(entry => entry.card),
+      '选择移出对战的卡牌',
+      '选择两张“风花”神迹卡移出对战作为代价。',
+      2,
+      2,
+      {
         sourceCardId: instance.gamecardId,
-        step: 'COST'
-      }
-    };
+        effectId: 'fuka_exile_bounce',
+        step: 'FUKA_EXILE_COST',
+        costType: 'CUSTOM_CARD_COST',
+        skipEffectResolveAfterCost: true
+      },
+      card => (costs.find(entry => entry.card.gamecardId === card.gamecardId)?.source || card.cardlocation) as TriggerLocation
+    );
+    return true;
   },
-  onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
-    if (context.step === 'COST' && selections.length === 2) {
-      // Execute Cost: Exile
-      for (const id of selections) {
-        const owner = AtomicEffectExecutor.findCardOwnerKey(gameState, id)!;
-        await AtomicEffectExecutor.execute(gameState, owner, {
-          type: 'BANISH_CARD',
-          targetFilter: { gamecardId: id }
-        }, instance);
-      }
-      gameState.logs.push(`[${instance.fullName}] 支付发动代价：将两张“风花”卡牌移出对战。`);
-
-      // Effect: select horizontal unit/item (not self)
-      const allUnitsItems: { card: Card; source: TriggerLocation }[] = [];
-      Object.values(gameState.players).forEach(p => {
-        p.unitZone.forEach(u => {
-          if (u && u.isExhausted && u.gamecardId !== instance.gamecardId) {
-            allUnitsItems.push({ card: u, source: 'UNIT' });
-          }
-        });
-        p.itemZone.forEach(i => {
-          if (i && i.isExhausted) {
-            allUnitsItems.push({ card: i, source: 'ITEM' });
-          }
-        });
-      });
-
-      if (allUnitsItems.length > 0) {
-        gameState.pendingQuery = {
-          id: Math.random().toString(36).substring(7),
-          type: 'SELECT_CARD',
-          playerUid: playerState.uid,
-          options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, allUnitsItems),
-          title: '选择回场目标',
-          description: '选择一张横置的单位或道具返回持有者手牌。',
-          minSelections: 1,
-          maxSelections: 1,
-          callbackKey: 'EFFECT_RESOLVE',
-          context: {
-            effectId: 'fuka_exile_bounce',
-            sourceCardId: instance.gamecardId,
-            step: 'BOUNCE'
-          }
-        };
-      } else {
-        gameState.logs.push(`[${instance.fullName}] 未发现可选择的横置目标。`);
-      }
-    } else if (context.step === 'BOUNCE' && selections.length > 0) {
-      const targetId = selections[0];
-      const owner = AtomicEffectExecutor.findCardOwnerKey(gameState, targetId)!;
-      const target = AtomicEffectExecutor.findCardById(gameState, targetId)!;
-      await AtomicEffectExecutor.execute(gameState, owner, {
-        type: 'MOVE_FROM_FIELD',
-        targetFilter: { gamecardId: targetId },
-        destinationZone: 'HAND'
-      }, instance);
-      gameState.logs.push(`[${instance.fullName}] 激活效果：使 [${target.fullName}] 返回了手牌。`);
+  onCostResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
+    if (context?.step !== 'FUKA_EXILE_COST') return;
+    const costs = fukaGodmarkCards(playerState, instance);
+    const selected = selections
+      .map(id => costs.find(entry => entry.card.gamecardId === id)?.card)
+      .filter((card): card is Card => !!card);
+    if (selected.length !== 2 || new Set(selected.map(card => card.gamecardId)).size !== 2) {
+      context.cancelActivation = true;
+      return;
     }
-
-    if (context.step === 'BOUNCE' || (context.step === 'COST' && selections.length === 2)) {
-      // Shuffle if cost from deck? The search logic spans multiple zones.
-      // However, searching typically requires shuffling.
-      await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'SHUFFLE_DECK' }, instance);
-    }
+    const usedDeck = selected.some(card => card.cardlocation === 'DECK');
+    selected.forEach(card => moveCardAsCost(gameState, playerState.uid, card, 'EXILE', instance));
+    if (usedDeck) await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'SHUFFLE_DECK' }, instance);
+  },
+  onQueryResolve: async (instance: Card, gameState: GameState, _playerState: PlayerState, selections: string[], context: any) => {
+    if (context?.step !== 'BOUNCE' || selections.length === 0) return;
+    const targetId = selections[0];
+    const owner = AtomicEffectExecutor.findCardOwnerKey(gameState, targetId);
+    const target = AtomicEffectExecutor.findCardById(gameState, targetId);
+    if (!owner || !target || !target.isExhausted || target.gamecardId === instance.gamecardId) return;
+    await AtomicEffectExecutor.execute(gameState, owner, {
+      type: 'MOVE_FROM_FIELD',
+      targetFilter: { gamecardId: targetId },
+      destinationZone: 'HAND'
+    }, instance);
   }
 };
 

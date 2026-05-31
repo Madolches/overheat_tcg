@@ -1,5 +1,13 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, canActivateDefaultTiming, cardsInZones, createSelectCardQuery, ensureData, markCanAttackAnyUnit, moveCard, readyByEffect } from './BaseUtil';
+import { AtomicEffectExecutor, canActivateDefaultTiming, cardsInZones, createSelectCardQuery, ensureData, markCanAttackAnyUnit, moveCardAsCost, readyByEffect } from './BaseUtil';
+
+const dikaiGodmarkCards = (playerState: any, instance: Card) =>
+  cardsInZones(playerState, ['HAND', 'DECK', 'GRAVE']).filter(({ card }) =>
+    card.godMark &&
+    card.gamecardId !== instance.gamecardId &&
+    !!instance.specialName &&
+    (card.specialName === instance.specialName || card.fullName.includes(instance.specialName))
+  );
 
 const cardEffects: CardEffect[] = [{
   id: '102050432_god_limit',
@@ -22,28 +30,43 @@ const cardEffects: CardEffect[] = [{
     canActivateDefaultTiming(gameState, playerState) &&
     instance.cardlocation === 'UNIT' &&
     instance.isExhausted &&
-    cardsInZones(playerState, ['HAND', 'DECK', 'GRAVE']).filter(({ card }) => card.godMark && card.specialName === '迪凯').length >= 2,
-  execute: async (instance, gameState, playerState) => {
-    const costs = cardsInZones(playerState, ['HAND', 'DECK', 'GRAVE']).filter(({ card }) => card.godMark && card.specialName === '迪凯');
-    gameState.pendingQuery = {
-      id: Math.random().toString(36).substring(7),
-      type: 'SELECT_CARD',
-      playerUid: playerState.uid,
-      options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, costs),
-      title: '选择放逐费用',
-      description: '选择合计2张「迪凯」神蚀卡放逐作为费用。',
-      minSelections: 2,
-      maxSelections: 2,
-      callbackKey: 'EFFECT_RESOLVE',
-      context: { sourceCardId: instance.gamecardId, effectId: '102050432_reset_attack_unit' }
-    };
+    dikaiGodmarkCards(playerState, instance).length >= 2,
+  cost: async (gameState, playerState, instance) => {
+    const costs = dikaiGodmarkCards(playerState, instance);
+    if (costs.length < 2) return false;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      costs.map(entry => entry.card),
+      '选择放逐费用',
+      '选择合计2张「迪凯」神蚀卡放逐作为费用。',
+      2,
+      2,
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '102050432_reset_attack_unit',
+        step: 'DIKAI_EXILE_COST',
+        costType: 'CUSTOM_CARD_COST',
+        skipEffectResolveAfterCost: true
+      },
+      card => (costs.find(entry => entry.card.gamecardId === card.gamecardId)?.source || card.cardlocation) as any
+    );
+    return true;
   },
-  onQueryResolve: async (instance, gameState, playerState, selections) => {
-    selections.forEach(id => {
-      const cost = AtomicEffectExecutor.findCardById(gameState, id);
-      const ownerUid = cost ? AtomicEffectExecutor.findCardOwnerKey(gameState, cost.gamecardId) : undefined;
-      if (cost && ownerUid) moveCard(gameState, ownerUid, cost, 'EXILE', instance);
-    });
+  onCostResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step !== 'DIKAI_EXILE_COST') return;
+    const selected = selections
+      .map(id => dikaiGodmarkCards(playerState, instance).find(entry => entry.card.gamecardId === id)?.card)
+      .filter((card): card is Card => !!card);
+    if (selected.length !== 2 || new Set(selected.map(card => card.gamecardId)).size !== 2) {
+      context.cancelActivation = true;
+      return;
+    }
+    const usedDeck = selected.some(card => card.cardlocation === 'DECK');
+    selected.forEach(card => moveCardAsCost(gameState, playerState.uid, card, 'EXILE', instance));
+    if (usedDeck) await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'SHUFFLE_DECK' }, instance);
+  },
+  execute: async (instance, gameState) => {
     readyByEffect(gameState, instance, instance);
     markCanAttackAnyUnit(instance, instance);
     const data = ensureData(instance);

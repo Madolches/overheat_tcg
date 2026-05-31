@@ -8,6 +8,19 @@ const effect_205000144_activate: CardEffect = {
   triggerLocation: ['PLAY'],
   description: '破坏你的1张道具。之后对手舍弃1张手牌。若其为非神蚀单位，将其放置到你的战场。若其没有手牌，则将其卡组顶3张卡送入墓地。',
   condition: (_gameState, playerState) => playerState.itemZone.some(card => !!card),
+  targetSpec: {
+    title: '选择道具',
+    description: '选择你的1张道具破坏。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['ITEM'],
+    controller: 'SELF',
+    step: 'DESTROY_ITEM',
+    getCandidates: (_gameState, playerState) =>
+      playerState.itemZone
+        .filter((card): card is Card => !!card)
+        .map(card => ({ card, source: 'ITEM' as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     const ownItems = playerState.itemZone.filter((card): card is Card => !!card);
     createSelectCardQuery(

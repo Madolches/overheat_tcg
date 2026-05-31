@@ -27,6 +27,26 @@ const effect_204000025_activation: CardEffect = {
 
     return false;
   },
+  targetSpec: {
+    preselect: false,
+    title: '选择封印目标',
+    description: '请选择一个单位，然后封印其一个“启”效果。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    step: 'SELECT_UNIT',
+    getCandidates: (gameState, playerState, instance) => {
+      const playPhase = (instance as any).__playSnapshot?.phase;
+      const isMainMode = playPhase === 'MAIN' || (!playPhase && gameState.phase === 'MAIN' && playerState.isTurn);
+      if (!isMainMode) return [];
+      return Object.values(gameState.players).flatMap(player =>
+        player.unitZone
+          .filter((card): card is Card => !!card && !!card.effects?.some(effect => effect.type === 'ACTIVATE'))
+          .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
+      );
+    }
+  },
   execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
     const playPhase = (instance as any).__playSnapshot?.phase;
     const isMainMode = playPhase === 'MAIN' || (!playPhase && gameState.phase === 'MAIN' && playerState.isTurn);

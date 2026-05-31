@@ -1,7 +1,7 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import { EventEngine } from '../services/EventEngine';
-import { canPutCardOntoBattlefieldByEffect, createSelectCardQuery, isAlchemyCard, moveCardsToBottom } from './BaseUtil';
+import { canPutCardOntoBattlefieldByEffect, createSelectCardQuery, exhaustCost, isAlchemyCard, moveCardsToBottom } from './BaseUtil';
 
 const effect_105120167_activate: CardEffect = {
   id: '105120167_activate',
@@ -16,12 +16,8 @@ const effect_105120167_activate: CardEffect = {
     );
     return !instance.isExhausted && ownField.length >= 2 && playerState.deck.some(card => card.type === 'UNIT' && isAlchemyCard(card));
   },
+  cost: exhaustCost,
   execute: async (instance, gameState, playerState) => {
-    await AtomicEffectExecutor.execute(gameState, playerState.uid, {
-      type: 'ROTATE_HORIZONTAL',
-      targetFilter: { gamecardId: instance.gamecardId }
-    }, instance);
-
     const ownField = [...playerState.unitZone, ...playerState.itemZone].filter(
       (card): card is Card => !!card && card.gamecardId !== instance.gamecardId
     );
@@ -35,6 +31,19 @@ const effect_105120167_activate: CardEffect = {
       2,
       { sourceCardId: instance.gamecardId, effectId: '105120167_activate', step: 'SEND_FIELD' }
     );
+  },
+  targetSpec: {
+    title: '选择2张卡',
+    description: '选择其他我方战场上的2张卡送入墓地。',
+    minSelections: 2,
+    maxSelections: 2,
+    zones: ['UNIT', 'ITEM'],
+    controller: 'SELF',
+    step: 'SEND_FIELD',
+    getCandidates: (_gameState, playerState, instance) =>
+      [...playerState.unitZone, ...playerState.itemZone]
+        .filter((card): card is Card => !!card && card.gamecardId !== instance.gamecardId)
+        .map(card => ({ card, source: card.cardlocation as any }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context.step === 'SEND_FIELD') {
