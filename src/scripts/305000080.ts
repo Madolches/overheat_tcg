@@ -2,27 +2,30 @@ import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import { createChoiceQuery, createSelectCardQuery, findUnitOnBattlefield, moveCard, revealDeckCards, universalEquipEffect } from './BaseUtil';
 
+const canExhaustEquipTarget = (gameState: any, instance: Card) => {
+  const target = findUnitOnBattlefield(gameState, instance.equipTargetId);
+  if (!target || target.isExhausted) return false;
+  return !((target as any).data?.cannotExhaustUntilTurn >= gameState.turnCount);
+};
+
 const effect_305000080_activate: CardEffect = {
   id: '305000080_activate',
   type: 'ACTIVATE',
   triggerLocation: ['ITEM'],
   description: '横置装备单位：展示你的卡组顶1张卡。你可以将其加入手牌，之后将1张手牌放置到卡组底。',
   condition: (gameState, playerState, instance) => {
-    const target = findUnitOnBattlefield(gameState, instance.equipTargetId);
-    return instance.cardlocation === 'ITEM' && !!target && !target.isExhausted && playerState.deck.length > 0;
+    return instance.cardlocation === 'ITEM' && canExhaustEquipTarget(gameState, instance) && playerState.deck.length > 0;
   },
-  execute: async (instance, gameState, playerState) => {
+  cost: async (gameState, playerState, instance) => {
     const target = findUnitOnBattlefield(gameState, instance.equipTargetId);
-    if (!target) {
-      instance.equipTargetId = undefined;
-      return;
-    }
-
+    if (!target || !canExhaustEquipTarget(gameState, instance)) return false;
     await AtomicEffectExecutor.execute(gameState, playerState.uid, {
       type: 'ROTATE_HORIZONTAL',
       targetFilter: { gamecardId: target.gamecardId }
     }, instance);
-
+    return !!target.isExhausted;
+  },
+  execute: async (instance, gameState, playerState) => {
     const topCard = revealDeckCards(gameState, playerState.uid, 1)[0];
     if (!topCard) return;
 

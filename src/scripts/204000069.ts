@@ -31,6 +31,21 @@ const card: Card = {
         const opponent = gameState.players[opponentId];
         return opponent.unitZone.some(u => u && u.isExhausted);
       },
+      targetSpec: {
+        title: '选择目标单位',
+        description: '选择对手一个横置单位进行标记。',
+        minSelections: 1,
+        maxSelections: 1,
+        zones: ['UNIT'],
+        controller: 'OPPONENT',
+        step: 1 as any,
+        getCandidates: (gameState, playerState) => {
+          const opponentId = Object.keys(gameState.players).find(id => id !== playerState.uid)!;
+          return gameState.players[opponentId].unitZone
+            .filter((unit): unit is Card => !!unit && !!unit.isExhausted)
+            .map(card => ({ card, source: 'UNIT' as any }));
+        }
+      },
       execute: async (card, gameState, playerState) => {
         const opponentId = Object.keys(gameState.players).find(id => id !== playerState.uid)!;
         const opponent = gameState.players[opponentId];

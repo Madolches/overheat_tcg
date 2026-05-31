@@ -20,7 +20,59 @@ const cardEffects: CardEffect[] = [story('203090028_forced_battle', '主要阶�
       playerState.isTurn &&
       ownUnits(playerState).length > 0 &&
       ownUnits(gameState.players[getOpponentUid(gameState, playerState.uid)]).some(unit => !unit.godMark),
+    targetSpec: {
+      targetGroups: [{
+        title: '选择攻击单位',
+        description: '选择你的1个单位作为攻击单位。',
+        minSelections: 1,
+        maxSelections: 1,
+        zones: ['UNIT'],
+        controller: 'SELF',
+        step: 'ATTACKER',
+        getCandidates: (_gameState, playerState) =>
+          ownUnits(playerState).map(card => ({ card, source: 'UNIT' as any }))
+      }, {
+        title: '选择防御单位',
+        description: '选择对手的1个非神蚀单位作为防御单位。',
+        minSelections: 1,
+        maxSelections: 1,
+        zones: ['UNIT'],
+        controller: 'OPPONENT',
+        step: 'DEFENDER',
+        getCandidates: (gameState, playerState) =>
+          ownUnits(gameState.players[getOpponentUid(gameState, playerState.uid)])
+            .filter(unit => !unit.godMark)
+            .map(card => ({ card, source: 'UNIT' as any }))
+      }]
+    },
     onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+      const declaredTargets = context?.declaredTargets || [];
+      if (declaredTargets.length >= 2) {
+        const attackerId = declaredTargets.find((target: any) => target.step === 'ATTACKER')?.gamecardId || selections[0];
+        const defenderId = declaredTargets.find((target: any) => target.step === 'DEFENDER')?.gamecardId || selections[1];
+        const attacker = ownUnits(playerState).find(unit => unit.gamecardId === attackerId);
+        const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
+        const defender = ownUnits(opponent).find(unit => unit.gamecardId === defenderId);
+        if (!attacker || !defender || defender.godMark) return;
+
+        gameState.battleState = {
+          attackers: [attacker.gamecardId],
+          battleId: `battle_${gameState.turnCount}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          defender: defender.gamecardId,
+          unitTargetId: defender.gamecardId,
+          defenseLockedToTargetId: defender.gamecardId,
+          isAlliance: false,
+          resolvedUnitIds: [],
+          skipAttackerExhaust: true,
+          autoResolveDamage: true
+        };
+        gameState.previousPhase = undefined;
+        gameState.phase = 'DAMAGE_CALCULATION';
+        gameState.phaseTimerStart = Date.now();
+        gameState.logs.push(`[${instance.fullName}] forced [${attacker.fullName}] and [${defender.fullName}] into damage calculation.`);
+        return;
+      }
+
       if (context?.step === 'ATTACKER') {
         const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
         const defenders = ownUnits(opponent).filter(unit => !unit.godMark);

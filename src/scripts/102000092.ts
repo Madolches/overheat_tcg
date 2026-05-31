@@ -1,5 +1,8 @@
-import { Card, CardEffect, TriggerLocation } from '../types/game';
+import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor, damagePlayerByEffect, ownUnits } from './BaseUtil';
+
+const canPayRedZeroCost = (playerState: any) =>
+  ownUnits(playerState).filter(unit => AtomicEffectExecutor.matchesColor(unit, 'RED')).length >= 2;
 
 const cardEffects: CardEffect[] = [{
     id: '102000092_all_damage',
@@ -7,7 +10,8 @@ const cardEffects: CardEffect[] = [{
     triggerLocation: ['UNIT'],
     limitCount: 1,
     description: '主要阶段，给予所有玩家1点伤害。',
-    condition: (gameState, playerState) => gameState.phase === 'MAIN' && playerState.isTurn && ownUnits(playerState).filter(unit => AtomicEffectExecutor.matchesColor(unit, 'RED')).length >= 2,
+    condition: (gameState, playerState) => gameState.phase === 'MAIN' && playerState.isTurn,
+    cost: async (_gameState, playerState) => canPayRedZeroCost(playerState),
     execute: async (instance, gameState, playerState) => {
       for (const uid of Object.keys(gameState.players)) await damagePlayerByEffect(gameState, playerState.uid, uid, 1, instance);
     }

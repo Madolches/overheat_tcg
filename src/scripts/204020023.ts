@@ -7,6 +7,37 @@ const effect_204020023_activate: CardEffect = {
   type: 'ACTIVATE',
   triggerLocation: ['PLAY'],
   description: '对手选择以下效果之一发动。若你在神依状态下发动，则由你代替对手进行选择：a.抽三张牌，选择其两张手牌，放置在侵蚀前区。b.选择一个横置单位并破坏。',
+  targetSpec: {
+    preselect: false,
+    modeTitle: '公平交易：选择效果',
+    modeDescription: '请选择一个效果以执行。',
+    modeOptions: [{
+      id: 'MODE_A',
+      label: '抽3并充能2张',
+      title: '选择手牌放置到侵蚀区',
+      description: '对手抽3张牌，选择其中2张手牌放置到侵蚀前区。',
+      minSelections: 0,
+      maxSelections: 0,
+      zones: [],
+      step: 'MODE_A'
+    }, {
+      id: 'MODE_B',
+      label: '破坏横置单位',
+      title: '选择破坏目标',
+      description: '请选择一个横置的单位。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'ANY',
+      step: 'MODE_B_DESTROY',
+      getCandidates: gameState =>
+        Object.values(gameState.players).flatMap(player =>
+          player.unitZone
+            .filter((unit): unit is Card => !!unit && !!unit.isExhausted)
+            .map(card => ({ card, source: 'UNIT' as any }))
+        )
+    }]
+  },
   execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
     const opponentUid = Object.keys(gameState.players).find(uid => uid !== playerState.uid)!;
     const activatedInGoddess = !!((instance as any).__playSnapshot?.isGoddessMode ?? playerState.isGoddessMode);

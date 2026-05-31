@@ -11,6 +11,19 @@ const effect_205000143_activate: CardEffect = {
     (gameState.phase === 'MAIN' || gameState.previousPhase === 'MAIN') &&
     playerState.unitZone.some(unit => !!unit) &&
     playerState.deck.some(card => card.type === 'UNIT' && !card.godMark),
+  targetSpec: {
+    title: '选择单位',
+    description: '选择你的1个单位送入墓地。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'SEND_UNIT',
+    getCandidates: (_gameState, playerState) =>
+      playerState.unitZone
+        .filter((unit): unit is Card => !!unit)
+        .map(card => ({ card, source: 'UNIT' as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     const targets = playerState.unitZone.filter((unit): unit is Card => !!unit);
     createSelectCardQuery(

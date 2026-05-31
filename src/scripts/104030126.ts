@@ -1,16 +1,17 @@
 import { Card, GameState, PlayerState, CardEffect, TriggerLocation, GameEvent } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import { erosionCost } from './BaseUtil';
 
 const hasExistingCocolaOnField = (playerState: PlayerState) => {
   const fieldCards = [...playerState.unitZone, ...playerState.itemZone];
-  return fieldCards.some(c => c && c.specialName === '可可拉');
+  return fieldCards.some(c => c?.id === '104030125');
 };
 
 const hasSummonableCocola = (playerState: PlayerState) =>
   playerState.unitZone.some(slot => slot === null) &&
   !hasExistingCocolaOnField(playerState) &&
   [...playerState.hand, ...playerState.deck, ...playerState.grave].some(c =>
-    c && c.type === 'UNIT' && (c.specialName === '可可拉' || c.fullName.includes('可可拉'))
+    c && c.type === 'UNIT' && c.id === '104030125'
   );
 
 const effect_104030126_kill_trigger: CardEffect = {
@@ -79,103 +80,50 @@ const effect_104030126_activate: CardEffect = {
   type: 'ACTIVATE',
   erosionTotalLimit: [10, 10],
   erosionFrontLimit: [1, 10],
-  description: '【启】在女神化状态下，每回合此卡名限一次，选择侵蚀区正面的一张卡转为背面：从手牌、卡组或墓地中选择一张“可可拉”单位卡放置在战场上。',
+  description: '【启】在女神化状态下，每回合此卡名限一次，支付[侵蚀1]：从手牌、卡组或墓地选择一张“可可拉”单位卡放置在战场上。',
   limitCount: 1,
   limitNameType: true,
-  condition: (gameState: GameState, playerState: PlayerState) => {
-    return hasSummonableCocola(playerState);
-  },
+  condition: (_gameState: GameState, playerState: PlayerState) => hasSummonableCocola(playerState),
+  cost: erosionCost(1),
   execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
-    const frontCards = playerState.erosionFront.filter(c => c && c.displayState === 'FRONT_UPRIGHT') as Card[];
-    if (frontCards.length === 0) return;
-
+    const searchZones: { zone: (Card | null)[], name: TriggerLocation }[] = [
+      { zone: playerState.hand, name: 'HAND' },
+      { zone: playerState.deck, name: 'DECK' },
+      { zone: playerState.grave, name: 'GRAVE' }
+    ];
+    const cocolaOptions: { card: Card; source: TriggerLocation }[] = [];
+    searchZones.forEach(z => {
+      z.zone.forEach(c => {
+        if (c && c.type === 'UNIT' && c.id === '104030125') cocolaOptions.push({ card: c, source: z.name });
+      });
+    });
+    if (cocolaOptions.length === 0) return;
     gameState.pendingQuery = {
       id: Math.random().toString(36).substring(7),
       type: 'SELECT_CARD',
       playerUid: playerState.uid,
-      options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, frontCards.map(c => ({ card: c, source: 'EROSION_FRONT' }))),
-      title: '选择代价',
-      description: '选择一张侵蚀区正面卡转为背面作为代价。',
+      options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, cocolaOptions),
+      title: '选择出击的可可拉',
+      description: '从手牌、卡组或墓地选择一个“可可拉”单位放置在战场上。',
       minSelections: 1,
       maxSelections: 1,
       callbackKey: 'EFFECT_RESOLVE',
-      context: {
-        effectId: 'cocoa_summon_cocola',
-        sourceCardId: instance.gamecardId,
-        step: 'COST'
-      }
+      context: { effectId: 'cocoa_summon_cocola', sourceCardId: instance.gamecardId, step: 'SUMMON' }
     };
   },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
-    if (context.step === 'COST' && selections.length > 0) {
-      if (!hasSummonableCocola(playerState)) {
-        gameState.logs.push('没有可放置的“可可拉”，或单位区已满，效果发动失败。');
-        return;
-      }
-
-      await AtomicEffectExecutor.execute(gameState, playerState.uid, {
-        type: 'TURN_EROSION_FACE_DOWN',
-        value: 1
-      }, instance, undefined, selections);
-
-      const searchZones: { zone: (Card | null)[], name: TriggerLocation }[] = [
-        { zone: playerState.hand, name: 'HAND' },
-        { zone: playerState.deck, name: 'DECK' },
-        { zone: playerState.grave, name: 'GRAVE' }
-      ];
-      const cocolaOptions: { card: Card; source: TriggerLocation }[] = [];
-
-      searchZones.forEach(z => {
-        z.zone.forEach(c => {
-          if (c && c.type === 'UNIT' && c.fullName.includes('可可拉')) {
-            cocolaOptions.push({ card: c, source: z.name });
-          }
-        });
-      });
-
-      if (cocolaOptions.length > 0) {
-        gameState.pendingQuery = {
-          id: Math.random().toString(36).substring(7),
-          type: 'SELECT_CARD',
-          playerUid: playerState.uid,
-          options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, cocolaOptions),
-          title: '选择出击的可可拉',
-          description: '从手牌、卡组或墓地选择一个“可可拉”单位放置在战场上。',
-          minSelections: 1,
-          maxSelections: 1,
-          callbackKey: 'EFFECT_RESOLVE',
-          context: {
-            effectId: 'cocoa_summon_cocola',
-            sourceCardId: instance.gamecardId,
-            step: 'SUMMON'
-          }
-        };
-      } else {
-        gameState.logs.push('未发现符合条件的“可可拉”卡牌。');
-      }
-    } else if (context.step === 'SUMMON' && selections.length > 0) {
-      if (hasExistingCocolaOnField(playerState) || !playerState.unitZone.some(slot => slot === null)) {
-        gameState.logs.push('场上已有专用名为“可可拉”的卡牌，或单位区已满，无法放置。');
-        return;
-      }
-
-      const cocolaId = selections[0];
-      // Resolve source from option context if available, otherwise fallback to find
-      const sourceOption = gameState.pendingQuery?.options.find((o: any) => o.card.gamecardId === cocolaId);
-      const sourceZone = (sourceOption?.source || AtomicEffectExecutor.findCardById(gameState, cocolaId)?.cardlocation) as TriggerLocation;
-
-      await AtomicEffectExecutor.execute(gameState, playerState.uid, {
-        type: (sourceZone === 'DECK' ? 'MOVE_FROM_DECK' : (sourceZone === 'GRAVE' ? 'MOVE_FROM_GRAVE' : 'MOVE_FROM_HAND')) as any,
-        targetFilter: { gamecardId: cocolaId },
-        destinationZone: 'UNIT'
-      }, instance);
-
-      gameState.logs.push(`[${instance.fullName}] 的效果使“可可拉”从 ${sourceZone} 出击到战场！`);
-
-      if (sourceZone === 'DECK') {
-        await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'SHUFFLE_DECK' }, instance);
-      }
-    }
+    if (context?.step !== 'SUMMON' || selections.length === 0) return;
+    if (hasExistingCocolaOnField(playerState) || !playerState.unitZone.some(slot => slot === null)) return;
+    const cocolaId = selections[0];
+    const targetCard = AtomicEffectExecutor.findCardById(gameState, cocolaId);
+    if (!targetCard) return;
+    const sourceZone = targetCard.cardlocation as TriggerLocation;
+    await AtomicEffectExecutor.execute(gameState, playerState.uid, {
+      type: (sourceZone === 'DECK' ? 'MOVE_FROM_DECK' : (sourceZone === 'GRAVE' ? 'MOVE_FROM_GRAVE' : 'MOVE_FROM_HAND')) as any,
+      targetFilter: { gamecardId: cocolaId },
+      destinationZone: 'UNIT'
+    }, instance);
+    if (sourceZone === 'DECK') await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'SHUFFLE_DECK' }, instance);
   }
 };
 

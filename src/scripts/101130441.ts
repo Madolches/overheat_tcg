@@ -11,6 +11,19 @@ const cardEffects: CardEffect[] = [{
     canActivateDefaultTiming(gameState, playerState) &&
     playerState.grave.length >= 3 &&
     ownUnits(playerState).some(unit => unit.isExhausted && unit.faction === '圣王国' && isNonGodUnit(unit)),
+  targetSpec: {
+    title: 'Select reset unit',
+    description: 'Select 1 exhausted same-faction non-godmark unit, ready it, and give it power +500 this turn.',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState, instance) =>
+      ownUnits(playerState)
+        .filter(unit => unit.isExhausted && unit.faction === instance.faction && isNonGodUnit(unit))
+        .map(card => ({ card, source: 'UNIT' as any }))
+  },
   cost: async (gameState, playerState, instance) => {
     createSelectCardQuery(gameState, playerState.uid, playerState.grave, '选择放逐费用', '选择墓地中的3张卡放逐作为费用。', 3, 3, {
       sourceCardId: instance.gamecardId,

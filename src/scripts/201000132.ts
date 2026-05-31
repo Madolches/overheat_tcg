@@ -14,6 +14,20 @@ const cardEffects: CardEffect[] = [story('201000132_exile_grave', '选择一名�
 }, {
   condition: (gameState, playerState) =>
     playerState.grave.length >= 2 || gameState.players[getOpponentUid(gameState, playerState.uid)].grave.length >= 2,
+  targetSpec: {
+    preselect: false,
+    title: '选择墓地卡牌',
+    description: '选择该玩家墓地中的2张卡放逐。',
+    minSelections: 2,
+    maxSelections: 2,
+    zones: ['GRAVE'],
+    controller: 'ANY',
+    step: 'GRAVE',
+    getCandidates: (gameState, playerState) => [
+      ...playerState.grave.map(card => ({ card, source: 'GRAVE' as any })),
+      ...gameState.players[getOpponentUid(gameState, playerState.uid)].grave.map(card => ({ card, source: 'GRAVE' as any }))
+    ]
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'PLAYER') {
       const targetUid = selections[0] === 'PLAYER_SELF' ? playerState.uid : getOpponentUid(gameState, playerState.uid);
