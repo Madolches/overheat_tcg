@@ -3026,6 +3026,8 @@ async function testEffectUnitReturnOverflowGoesToGrave(): Promise<ScenarioResult
     fullName: 'Overflow Returning Unit',
     cardlocation: 'EXILE',
     type: 'UNIT',
+    displayState: 'FRONT_HORIZONTAL',
+    isExhausted: true,
   });
   const source = cloneScriptCard(escort as Card, 'UNIT');
   const state = game({
@@ -3041,12 +3043,56 @@ async function testEffectUnitReturnOverflowGoesToGrave(): Promise<ScenarioResult
     effectSourceCardId: source.gamecardId,
   });
   const inGrave = state.players.BOT.grave.some((card: Card) => card.gamecardId === returning.gamecardId);
+  const graveCard = state.players.BOT.grave.find((card: Card) => card.gamecardId === returning.gamecardId);
+  const resetUpright = graveCard?.displayState === 'FRONT_UPRIGHT' && graveCard?.isExhausted === false;
   const unitCount = state.players.BOT.unitZone.filter(Boolean).length;
   const noExtraSlot = state.players.BOT.unitZone.length === 6;
 
-  return moved && inGrave && unitCount === 6 && noExtraSlot
-    ? pass(name, `grave=${inGrave}, unitCount=${unitCount}, slots=${state.players.BOT.unitZone.length}`)
-    : fail(name, `moved=${moved}, grave=${inGrave}, unitCount=${unitCount}, slots=${state.players.BOT.unitZone.length}`);
+  return moved && inGrave && resetUpright && unitCount === 6 && noExtraSlot
+    ? pass(name, `grave=${inGrave}, upright=${resetUpright}, unitCount=${unitCount}, slots=${state.players.BOT.unitZone.length}`)
+    : fail(name, `moved=${moved}, grave=${inGrave}, upright=${resetUpright}/${graveCard?.displayState || 'none'}/${graveCard?.isExhausted}, unitCount=${unitCount}, slots=${state.players.BOT.unitZone.length}`);
+}
+
+async function testEscortReturnOverflowGoesToGraveUpright(): Promise<ScenarioResult> {
+  const name = 'Escort full-field return goes to grave upright';
+  const escortCard = cloneScriptCard(escort as Card, 'UNIT');
+  const returning = testCard({
+    id: 'ESCORT_OVERFLOW_RETURNING_UNIT',
+    fullName: 'Escort Overflow Returning Unit',
+    cardlocation: 'EXILE',
+    type: 'UNIT',
+    displayState: 'FRONT_HORIZONTAL',
+    isExhausted: true,
+  });
+  const filler = Array.from({ length: 6 }, (_, index) =>
+    testCard({ id: `ESCORT_FULL_${index}`, fullName: `Escort Full ${index}`, cardlocation: 'UNIT' })
+  );
+  const state = game({
+    unitZone: filler,
+    exile: [returning],
+  }, {
+    unitZone: [escortCard, null, null, null, null, null],
+    escortReturns: [{
+      cardId: returning.gamecardId,
+      ownerUid: 'BOT',
+      zone: 'UNIT',
+      slotIndex: 0,
+      sourceCardId: escortCard.gamecardId,
+      returnTurn: 6,
+    }],
+  }, { phase: 'END', turnCount: 6, mode: 'sandbox' });
+
+  EventEngine.dispatchEvent(state, { type: 'TURN_END' as any, playerUid: 'BOT' });
+  await ServerGameService.checkTriggeredEffects(state);
+
+  const graveCard = state.players.BOT.grave.find((card: Card) => card.gamecardId === returning.gamecardId);
+  const inGrave = !!graveCard;
+  const resetUpright = graveCard?.displayState === 'FRONT_UPRIGHT' && graveCard?.isExhausted === false;
+  const unitCount = state.players.BOT.unitZone.filter(Boolean).length;
+
+  return inGrave && resetUpright && unitCount === 6
+    ? pass(name, `grave=${inGrave}, upright=${resetUpright}, unitCount=${unitCount}`)
+    : fail(name, `grave=${inGrave}, upright=${resetUpright}/${graveCard?.displayState || 'none'}/${graveCard?.isExhausted}, unitCount=${unitCount}, pending=${state.pendingQuery?.callbackKey || 'none'}`);
 }
 
 async function testChurchInvestigationReturnOverflowGoesToGrave(): Promise<ScenarioResult> {
@@ -3057,6 +3103,8 @@ async function testChurchInvestigationReturnOverflowGoesToGrave(): Promise<Scena
     fullName: 'Investigation Returning Unit',
     cardlocation: 'EXILE',
     type: 'UNIT',
+    displayState: 'FRONT_HORIZONTAL',
+    isExhausted: true,
   });
   const filler = Array.from({ length: 6 }, (_, index) =>
     testCard({ id: `INVESTIGATION_FULL_${index}`, fullName: `Investigation Full ${index}`, cardlocation: 'UNIT' })
@@ -3081,12 +3129,14 @@ async function testChurchInvestigationReturnOverflowGoesToGrave(): Promise<Scena
   await ServerGameService.checkTriggeredEffects(state);
 
   const inGrave = state.players.P1.grave.some((card: Card) => card.gamecardId === returning.gamecardId);
+  const graveCard = state.players.P1.grave.find((card: Card) => card.gamecardId === returning.gamecardId);
+  const resetUpright = graveCard?.displayState === 'FRONT_UPRIGHT' && graveCard?.isExhausted === false;
   const unitCount = state.players.P1.unitZone.filter(Boolean).length;
   const slots = state.players.P1.unitZone.length;
 
-  return inGrave && unitCount === 6 && slots === 6
-    ? pass(name, `grave=${inGrave}, unitCount=${unitCount}, slots=${slots}`)
-    : fail(name, `grave=${inGrave}, unitCount=${unitCount}, slots=${slots}, pending=${state.pendingQuery?.callbackKey || 'none'}`);
+  return inGrave && resetUpright && unitCount === 6 && slots === 6
+    ? pass(name, `grave=${inGrave}, upright=${resetUpright}, unitCount=${unitCount}, slots=${slots}`)
+    : fail(name, `grave=${inGrave}, upright=${resetUpright}/${graveCard?.displayState || 'none'}/${graveCard?.isExhausted}, unitCount=${unitCount}, slots=${slots}, pending=${state.pendingQuery?.callbackKey || 'none'}`);
 }
 
 async function testEnterTriggerWaitsForConfrontationChainEnd(): Promise<ScenarioResult> {
@@ -3274,6 +3324,44 @@ async function testBattleFreeAutoStrategyDeclinesAndAdvances(): Promise<Scenario
     : fail(name, `askedTurnPlayer=${askedTurnPlayer}, phase=${state.phase}, battle=${!!state.battleState}, damage=${damageApplied}`);
 }
 
+async function testSandboxBattleFreeOffStrategyEndsCurrentPlayerFreeStep(): Promise<ScenarioResult> {
+  const name = 'Sandbox battle free OFF strategy ends current player free step';
+  const attacker = testCard({
+    id: 'SANDBOX_OFF_ATTACKER',
+    fullName: 'Sandbox Off Attacker',
+    cardlocation: 'UNIT',
+    playedTurn: 1,
+    damage: 1,
+    baseDamage: 1,
+  });
+  const state = game({
+    unitZone: [attacker, null, null, null, null, null],
+    confrontationStrategy: 'OFF',
+  }, {
+    confrontationStrategy: 'OFF',
+  }, {
+    mode: 'sandbox',
+    phase: 'BATTLE_FREE',
+    battleState: {
+      attackers: [attacker.gamecardId],
+      isAlliance: false,
+      battleId: 'SANDBOX_OFF_BATTLE_FREE',
+    },
+  });
+
+  await ServerGameService.applyConfrontationStrategy(state);
+  const proposedEnd = state.logs.some((line: any) =>
+    String(line?.text || line).includes('请求进入伤害计算') ||
+    String(line?.text || line).includes('进入伤害计算')
+  );
+  const advanced = state.phase === 'MAIN' && !state.battleState;
+  const damageApplied = state.players.P1.erosionBack.length + state.players.P1.erosionFront.length > 0;
+
+  return proposedEnd && advanced && damageApplied
+    ? pass(name, `proposed=${proposedEnd}, phase=${state.phase}, damage=${damageApplied}`)
+    : fail(name, `proposed=${proposedEnd}, phase=${state.phase}, battle=${!!state.battleState}, damage=${damageApplied}`);
+}
+
 const scenarios: ScenarioRun[] = [
   testCorielEndSearch,
   testCorielStoryCheatUnit,
@@ -3326,10 +3414,12 @@ const scenarios: ScenarioRun[] = [
   testTriggerOrderAcceptsDisplayedCardIds,
   testSerializedVirtualEndTriggersResolve,
   testEffectUnitReturnOverflowGoesToGrave,
+  testEscortReturnOverflowGoesToGraveUpright,
   testChurchInvestigationReturnOverflowGoesToGrave,
   testEnterTriggerWaitsForConfrontationChainEnd,
   testConfrontationChainTriggersStayQueuedAndOrderedByBucket,
   testBattleFreeAutoStrategyDeclinesAndAdvances,
+  testSandboxBattleFreeOffStrategyEndsCurrentPlayerFreeStep,
 ];
 
 async function main() {

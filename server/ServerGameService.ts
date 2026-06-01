@@ -2189,10 +2189,23 @@ export const ServerGameService = {
 
   playerHasAvailableConfrontationAction(gameState: GameState, playerId: string): boolean {
     const player = gameState.players[playerId];
-    if (!player || gameState.phase !== 'COUNTERING' || gameState.priorityPlayerId !== playerId) return false;
+    if (!player) return false;
+
+    const turnPlayerId = gameState.playerIds[gameState.currentTurnPlayer];
+    const isCounteringTurn = gameState.phase === 'COUNTERING' && gameState.priorityPlayerId === playerId;
+    const isBattleFreeTurnPlayer = gameState.phase === 'BATTLE_FREE' && turnPlayerId === playerId;
+    const isBattleFreeAskedPlayer =
+      gameState.phase === 'BATTLE_FREE' &&
+      !!gameState.battleState?.askConfront &&
+      (
+        (gameState.battleState.askConfront === 'ASKING_OPPONENT' && turnPlayerId !== playerId) ||
+        (gameState.battleState.askConfront === 'ASKING_TURN_PLAYER' && turnPlayerId === playerId)
+      );
+    if (!isCounteringTurn && !isBattleFreeTurnPlayer && !isBattleFreeAskedPlayer) return false;
 
     const hasPlayableStory = player.hand.some(card =>
       card.type === 'STORY' &&
+      (isCounteringTurn || isBattleFreeTurnPlayer) &&
       ServerGameService.canPlayCard(gameState, player, card).canPlay
     );
     if (hasPlayableStory) return true;
@@ -2219,6 +2232,30 @@ export const ServerGameService = {
   },
 
   async applyConfrontationStrategy(gameState: GameState, onUpdate?: (state: GameState) => Promise<void>) {
+    if (
+      gameState.phase === 'BATTLE_FREE' &&
+      gameState.battleState &&
+      !gameState.battleState.askConfront &&
+      !gameState.pendingQuery &&
+      !gameState.isResolvingStack &&
+      !gameState.currentProcessingItem
+    ) {
+      const turnPlayerId = gameState.playerIds[gameState.currentTurnPlayer];
+      const player = gameState.players[turnPlayerId];
+      if (!player) return gameState;
+
+      const strategy = player.confrontationStrategy || 'AUTO';
+      if (strategy === 'ON') return gameState;
+
+      const hasAction = strategy === 'AUTO'
+        ? ServerGameService.playerHasAvailableConfrontationAction(gameState, player.uid)
+        : false;
+      if (strategy === 'AUTO' && hasAction) return gameState;
+
+      await ServerGameService.advancePhase(gameState, 'PROPOSE_DAMAGE_CALCULATION', player.uid, onUpdate);
+      return ServerGameService.applyConfrontationStrategy(gameState, onUpdate);
+    }
+
     if (
       gameState.phase === 'BATTLE_FREE' &&
       gameState.battleState?.askConfront &&

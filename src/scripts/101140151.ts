@@ -94,7 +94,7 @@ const cardEffects: CardEffect[] = [{
         continue;
       }
       moveCard(gameState, entry.ownerUid, card, returnZone, instance, { targetIndex: entry.slotIndex });
-      if (returnZone === 'UNIT') card.isExhausted = true;
+      if (card.cardlocation === 'UNIT') card.isExhausted = true;
       card.displayState = 'FRONT_UPRIGHT';
     }
     (playerState as any).escortReturns = remaining;
