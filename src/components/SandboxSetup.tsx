@@ -285,22 +285,26 @@ export const SandboxSetup: React.FC = () => {
 
   const addCardToTarget = (card: Card) => {
     if (!editingTarget) return;
+    let targetZone = editingTarget.zone;
+    if (targetZone === 'erosionBack') {
+      targetZone = 'erosionFront'; // Default to front side!
+    }
     const setup: SandboxCardSetup = {
       cardRef: card.uniqueId || card.id,
-      displayState: editingTarget.zone === 'deck' || editingTarget.zone === 'erosionBack' ? 'BACK_UPRIGHT' : 'FRONT_UPRIGHT',
+      displayState: targetZone === 'deck' ? 'BACK_UPRIGHT' : 'FRONT_UPRIGHT',
       isExhausted: false
     };
     updatePlayer(editingTarget.playerKey, player => {
       const next = { ...player };
-      if (editingTarget.zone === 'unitZone' || editingTarget.zone === 'erosionFront' || editingTarget.zone === 'erosionBack') {
-        const zone = [...(next[editingTarget.zone] as Array<SandboxCardSetup | null>)];
+      if (targetZone === 'unitZone' || targetZone === 'erosionFront' || targetZone === 'erosionBack') {
+        const zone = [...(next[targetZone] as Array<SandboxCardSetup | null>)];
         const targetIndex = editingTarget.index ?? zone.findIndex(slot => !slot);
         if (targetIndex >= 0 && targetIndex < zone.length) {
           zone[targetIndex] = setup;
         }
-        (next as any)[editingTarget.zone] = zone;
+        (next as any)[targetZone] = zone;
       } else {
-        (next as any)[editingTarget.zone] = [...((next as any)[editingTarget.zone] || []), setup];
+        (next as any)[targetZone] = [...((next as any)[targetZone] || []), setup];
       }
       return next;
     });
@@ -341,6 +345,50 @@ export const SandboxSetup: React.FC = () => {
     setSelectedCard(prev => prev ? { ...prev, card: { ...prev.card, ...patch } } : prev);
   };
 
+  const toggleErosionSide = (target: SelectedCardTarget) => {
+    const fromZone = target.zone; // 'erosionFront' or 'erosionBack'
+    const toZone = fromZone === 'erosionFront' ? 'erosionBack' : 'erosionFront';
+    const nextDisplayState = toZone === 'erosionFront' ? 'FRONT_UPRIGHT' : 'BACK_UPRIGHT';
+    
+    updatePlayer(target.playerKey, player => {
+      const next = { ...player };
+      const sourceZone = [...(next[fromZone] as Array<SandboxCardSetup | null>)];
+      const destZone = [...(next[toZone] as Array<SandboxCardSetup | null>)];
+      
+      const index = target.index;
+      if (index !== undefined && index >= 0 && index < 10) {
+        const cardSetup = sourceZone[index];
+        if (cardSetup) {
+          // Move card to destZone
+          destZone[index] = {
+            ...cardSetup,
+            displayState: nextDisplayState,
+            isExhausted: false
+          };
+          // Remove card from sourceZone
+          sourceZone[index] = null;
+        }
+      }
+      
+      next[fromZone] = sourceZone as any;
+      next[toZone] = destZone as any;
+      return next;
+    });
+
+    setSelectedCard(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        zone: toZone,
+        card: {
+          ...prev.card,
+          displayState: nextDisplayState,
+          isExhausted: false
+        }
+      };
+    });
+  };
+
   const moveCard = (target: SelectedCardTarget, delta: number) => {
     if (target.zone === 'unitZone' || target.zone === 'erosionFront' || target.zone === 'erosionBack') return;
     updatePlayer(target.playerKey, player => {
@@ -375,10 +423,16 @@ export const SandboxSetup: React.FC = () => {
     }
     const setup = findSetupForTarget(target);
     if (setup) {
-      setSelectedCard({ playerKey: target.playerKey, zone: target.zone, index: target.index, card: setup });
+      let finalIndex = target.index;
+      if (finalIndex === undefined) {
+        const zoneArray = sandbox.players[target.playerKey][target.zone] as Array<SandboxCardSetup | null>;
+        finalIndex = zoneArray.findIndex(item => item?.cardRef === setup.cardRef);
+      }
+      setSelectedCard({ playerKey: target.playerKey, zone: target.zone, index: finalIndex >= 0 ? finalIndex : undefined, card: setup });
       return;
     }
-    setEditingTarget({ playerKey: target.playerKey, zone: target.zone, index: target.index });
+    const targetZone = target.zone === 'erosionBack' ? 'erosionFront' : target.zone;
+    setEditingTarget({ playerKey: target.playerKey, zone: targetZone, index: target.index });
   };
 
   const findSetupForTarget = (target: { playerKey: SandboxPlayerKey; zone: SandboxEditableZone; index?: number; card?: Card | null }): SandboxCardSetup | null => {
@@ -500,213 +554,214 @@ export const SandboxSetup: React.FC = () => {
   const centerPopoverClass = 'absolute left-1/2 top-full z-30 mt-2 w-56 -translate-x-1/2 rounded-xl border border-white/10 bg-zinc-950 p-3 text-left shadow-2xl';
 
   const sandboxCenterControls = (
-    <div className="mx-auto w-full max-w-3xl rounded-2xl border border-white/10 bg-zinc-950/95 p-2 shadow-2xl backdrop-blur-xl">
-      <div className="flex flex-wrap items-center justify-center gap-2">
-        <div className="relative">
-          <button title="对局设置" onClick={() => setCenterPopover(centerPopover === 'settings' ? null : 'settings')} className={centerIconButton}>
-            <Settings className="h-4 w-4 text-blue-400" />
-            <ChevronDown className="ml-1 h-3.5 w-3.5 text-zinc-500" />
-          </button>
-          {centerPopover === 'settings' && (
-            <div className={centerPopoverClass}>
-              <div className="mb-3 text-[10px] font-black tracking-widest text-zinc-500">对局设置</div>
-              
-              <div className="mb-3 space-y-1">
-                <label className="block text-xs font-bold text-zinc-400">当前回合数</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={999}
-                  value={sandbox.turnCount}
-                  onChange={event => setSandbox(prev => ({ ...prev, turnCount: Math.max(1, Math.min(999, Number(event.target.value) || 1)) }))}
-                  className="w-full rounded-lg border border-zinc-800 bg-black px-3 py-2 text-sm font-black outline-none focus:border-red-500"
-                />
-              </div>
+    <div className="relative mx-auto flex w-fit max-w-[calc(100%-0.75rem)] flex-row items-center gap-1 rounded-2xl border border-white/10 bg-[#0c0c0e]/95 px-2 py-1 shadow-[0_20px_50px_rgba(0,0,0,0.5)] backdrop-blur-xl md:w-auto md:max-w-full md:gap-2 md:rounded-[2rem] md:px-4 md:py-2 scale-[0.85] md:scale-100 origin-center">
+      <div className="flex flex-row flex-wrap items-center justify-center gap-1.5">
+        <button title="对局设置" onClick={() => setCenterPopover(centerPopover === 'settings' ? null : 'settings')} className={centerIconButton}>
+          <Settings className="h-4 w-4 text-blue-400" />
+          <ChevronDown className="ml-1 h-3.5 w-3.5 text-zinc-500" />
+        </button>
 
-              <div className="mb-3 space-y-1">
-                <label className="block text-xs font-bold text-zinc-400">当前回合玩家</label>
-                <button
-                  onClick={() => setSandbox(prev => ({ ...prev, currentTurn: prev.currentTurn === 'player' ? 'opponent' : 'player' }))}
-                  className="flex w-full items-center justify-center rounded-lg border border-zinc-800 bg-black px-3 py-2 text-sm font-black hover:border-red-500"
-                >
-                  <ArrowRightLeft className="mr-2 h-4 w-4 text-purple-400" />
-                  {sandbox.currentTurn === 'player' ? '我方' : '对手'}
-                </button>
-              </div>
+        <button title="设置阶段" onClick={() => setCenterPopover(centerPopover === 'phase' ? null : 'phase')} className={centerIconButton}>
+          <Clock className="h-4 w-4 text-green-400" />
+          <span className="ml-1.5">{getPhaseLabel(sandbox.phase)}</span>
+          <ChevronDown className="ml-1 h-3.5 w-3.5 text-zinc-500" />
+        </button>
 
-              <div className="space-y-1">
-                <label className="block text-xs font-bold text-zinc-400">回合时间 (秒)</label>
-                <input
-                  type="number"
-                  min={30}
-                  max={999}
-                  value={sandbox.turnTimerLimit || 300}
-                  onChange={event => setSandbox(prev => ({ ...prev, turnTimerLimit: Math.max(30, Math.min(999, Number(event.target.value) || 300)) }))}
-                  className="w-full rounded-lg border border-zinc-800 bg-black px-3 py-2 text-sm font-black outline-none focus:border-red-500"
-                />
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="relative">
-          <button title="设置阶段" onClick={() => setCenterPopover(centerPopover === 'phase' ? null : 'phase')} className={centerIconButton}>
-            <Clock className="h-4 w-4 text-green-400" />
-            <span className="ml-1.5">{getPhaseLabel(sandbox.phase)}</span>
-            <ChevronDown className="ml-1 h-3.5 w-3.5 text-zinc-500" />
-          </button>
-          {centerPopover === 'phase' && (
-            <div className={centerPopoverClass}>
-              <div className="mb-2 text-[10px] font-black tracking-widest text-zinc-500">阶段设置</div>
-              <div className="grid gap-1">
-                {SANDBOX_PHASES.map(phase => (
-                  <button
-                    key={phase}
-                    onClick={() => {
-                      setSandbox(prev => ({ ...prev, phase }));
-                      setCenterPopover(null);
-                    }}
-                    className={cn('rounded-lg px-3 py-2 text-left text-xs font-black transition', sandbox.phase === phase ? 'bg-red-600 text-white' : 'text-zinc-400 hover:bg-white/10 hover:text-white')}
-                  >
-                    {getPhaseLabel(phase)}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="relative">
-          <button title="人机设置" onClick={() => setCenterPopover(centerPopover === 'bot' ? null : 'bot')} className={centerIconButton}>
-            <Bot className="h-4 w-4 text-orange-400" />
-            <span className="ml-1.5">{botDifficulty === 'hard' ? '困难' : '简单'}</span>
-            <ChevronDown className="ml-1 h-3.5 w-3.5 text-zinc-500" />
-          </button>
-          {centerPopover === 'bot' && (
-            <div className="absolute left-1/2 top-full z-30 mt-2 w-72 -translate-x-1/2 rounded-xl border border-white/10 bg-zinc-950 p-3 text-left shadow-2xl">
-              <div className="mb-2 text-[10px] font-black tracking-widest text-zinc-500">人机设置</div>
-              <div className="grid gap-1">
-                <button onClick={() => setBotDifficulty('simple')} className={cn('rounded-lg px-3 py-2 text-left text-xs font-black', botDifficulty === 'simple' ? 'bg-red-600 text-white' : 'text-zinc-400 hover:bg-white/10 hover:text-white')}>简单人机</button>
-                <button onClick={() => setBotDifficulty('hard')} className={cn('rounded-lg px-3 py-2 text-left text-xs font-black', botDifficulty === 'hard' ? 'bg-red-600 text-white' : 'text-zinc-400 hover:bg-white/10 hover:text-white')}>困难人机</button>
-              </div>
-              {botDifficulty === 'hard' && (
-                <div className="mt-2 grid gap-1 border-t border-white/10 pt-2">
-                  {AI_OPPONENT_DECKS.map(deck => (
-                    <button
-                      key={deck.id}
-                      onClick={() => setBotDeckProfileId(deck.id)}
-                      className={cn('rounded-lg px-3 py-2 text-left text-xs font-black', botDeckProfileId === deck.id ? 'bg-white text-black' : 'text-zinc-400 hover:bg-white/10 hover:text-white')}
-                    >
-                      {deck.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        <button title="人机设置" onClick={() => setCenterPopover(centerPopover === 'bot' ? null : 'bot')} className={centerIconButton}>
+          <Bot className="h-4 w-4 text-orange-400" />
+          <span className="ml-1.5">{botDifficulty === 'hard' ? '困难' : '简单'}</span>
+          <ChevronDown className="ml-1 h-3.5 w-3.5 text-zinc-500" />
+        </button>
 
         <button title="运行人机沙盒" onClick={startBotGame} disabled={starting} className={cn(centerIconButton, 'bg-red-600/90 text-white hover:bg-red-500')}>
           {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
         </button>
-        <div className="relative">
-          <button title="联机房间" onClick={() => setCenterPopover(centerPopover === 'room' ? null : 'room')} className={centerIconButton}>
-            <Network className="h-4 w-4 text-cyan-400" />
-            <ChevronDown className="ml-1 h-3.5 w-3.5 text-zinc-500" />
-          </button>
-          {centerPopover === 'room' && (
-            <div className={centerPopoverClass}>
-              <div className="mb-3 text-[10px] font-black tracking-widest text-zinc-500">联机房间</div>
-              
-              <div className="mb-4">
-                <button 
-                  onClick={createRoom} 
-                  disabled={starting} 
-                  className="flex w-full items-center justify-center rounded-lg bg-cyan-600/90 px-3 py-2 text-xs font-black text-white hover:bg-cyan-500 disabled:opacity-50"
-                >
-                  {starting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Network className="mr-1.5 h-3.5 w-3.5" />}
-                  生成房间码
-                </button>
-                {createdRoomCode && (
-                  <div className="mt-2 text-center">
-                    <p className="text-[10px] text-zinc-400">已生成房间:</p>
-                    <button
-                      title="点击进入房间"
-                      onClick={() => createdRoomGameId && navigate(`/battle/${createdRoomGameId}`, { state: { seat: 'player' } })}
-                      className="mt-1 w-full truncate rounded border border-cyan-500/30 bg-cyan-950/40 py-1.5 font-mono text-sm font-black tracking-[0.25em] text-cyan-200 hover:border-cyan-500/60"
-                    >
-                      {createdRoomCode}
-                    </button>
-                  </div>
-                )}
-              </div>
 
-              <div className="border-t border-white/10 pt-3">
-                <label className="mb-1 block text-[10px] font-bold text-zinc-400">加入其他房间</label>
-                <div className="flex gap-2">
-                  <input
-                    value={roomCode}
-                    onChange={event => setRoomCode(event.target.value.replace(/\D/g, '').slice(0, 8))}
-                    placeholder="输入8位房间码"
-                    className="w-full min-w-0 rounded-lg border border-zinc-800 bg-black px-3 py-2 text-center font-mono text-xs font-black outline-none focus:border-cyan-500"
-                  />
-                  <button 
-                    title="加入" 
-                    onClick={joinRoom} 
-                    disabled={joining || roomCode.length !== 8} 
-                    className="flex shrink-0 items-center justify-center rounded-lg bg-zinc-800 px-3 text-white hover:bg-zinc-700 disabled:opacity-50"
-                  >
-                    {joining ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4 text-teal-400" />}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="relative">
-          <button title="导出 .sbx" onClick={() => setCenterPopover(centerPopover === 'export' ? null : 'export')} className={centerIconButton}>
-            <Download className="h-4 w-4 text-indigo-400" />
-          </button>
-          {centerPopover === 'export' && (
-            <div className={centerPopoverClass}>
-              <div className="mb-2 text-[10px] font-black tracking-widest text-zinc-500">导出沙盒</div>
-              <input
-                autoFocus
-                value={sandbox.name || ''}
-                onChange={event => setSandbox(prev => ({ ...prev, name: event.target.value }))}
-                onKeyDown={event => {
-                  if (event.key === 'Enter') {
-                    exportSandbox();
-                    setCenterPopover(null);
-                  }
-                }}
-                className="w-full rounded-lg border border-zinc-800 bg-black px-3 py-2 text-sm font-black outline-none focus:border-red-500"
-                placeholder="输入沙盒名称"
-              />
-              <button
-                onClick={() => {
-                  exportSandbox();
-                  setCenterPopover(null);
-                }}
-                className="mt-2 w-full rounded-lg bg-indigo-600 px-3 py-2 text-xs font-black text-white hover:bg-indigo-500"
-              >
-                确认导出
-              </button>
-            </div>
-          )}
-        </div>
+        <button title="联机房间" onClick={() => setCenterPopover(centerPopover === 'room' ? null : 'room')} className={centerIconButton}>
+          <Network className="h-4 w-4 text-cyan-400" />
+          <ChevronDown className="ml-1 h-3.5 w-3.5 text-zinc-500" />
+        </button>
+
+        <button title="导出 .sbx" onClick={() => setCenterPopover(centerPopover === 'export' ? null : 'export')} className={centerIconButton}>
+          <Download className="h-4 w-4 text-indigo-400" />
+        </button>
+
         <button title="导入 .sbx" onClick={() => fileInputRef.current?.click()} className={centerIconButton}>
           <Upload className="h-4 w-4 text-pink-400" />
         </button>
+
         <button title="保存到我的沙盒" onClick={saveSandbox} disabled={saving} className={centerIconButton}>
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4 text-emerald-400" />}
         </button>
       </div>
+
       <input ref={fileInputRef} type="file" accept=".sbx" className="hidden" onChange={event => {
         const file = event.target.files?.[0];
         if (file) importSandboxFile(file).catch(err => alert(err.message || '导入失败'));
         event.target.value = '';
       }} />
+
+      {/* Pop-up windows displayed in the middle of the sandbox settings bar */}
+      {centerPopover === 'settings' && (
+        <div className={centerPopoverClass}>
+          <div className="mb-3 text-[10px] font-black tracking-widest text-zinc-500">对局设置</div>
+          
+          <div className="mb-3 space-y-1">
+            <label className="block text-xs font-bold text-zinc-400">当前回合数</label>
+            <input
+              type="number"
+              min={1}
+              max={999}
+              value={sandbox.turnCount}
+              onChange={event => setSandbox(prev => ({ ...prev, turnCount: Math.max(1, Math.min(999, Number(event.target.value) || 1)) }))}
+              className="w-full rounded-lg border border-zinc-800 bg-black px-3 py-2 text-sm font-black outline-none focus:border-red-500"
+            />
+          </div>
+
+          <div className="mb-3 space-y-1">
+            <label className="block text-xs font-bold text-zinc-400">当前回合玩家</label>
+            <button
+              onClick={() => setSandbox(prev => ({ ...prev, currentTurn: prev.currentTurn === 'player' ? 'opponent' : 'player' }))}
+              className="flex w-full items-center justify-center rounded-lg border border-zinc-800 bg-black px-3 py-2 text-sm font-black hover:border-red-500"
+            >
+              <ArrowRightLeft className="mr-2 h-4 w-4 text-purple-400" />
+              {sandbox.currentTurn === 'player' ? '我方' : '对手'}
+            </button>
+          </div>
+
+          <div className="space-y-1">
+            <label className="block text-xs font-bold text-zinc-400">回合时间 (秒)</label>
+            <input
+              type="number"
+              min={30}
+              max={999}
+              value={sandbox.turnTimerLimit || 300}
+              onChange={event => setSandbox(prev => ({ ...prev, turnTimerLimit: Math.max(30, Math.min(999, Number(event.target.value) || 300)) }))}
+              className="w-full rounded-lg border border-zinc-800 bg-black px-3 py-2 text-sm font-black outline-none focus:border-red-500"
+            />
+          </div>
+        </div>
+      )}
+
+      {centerPopover === 'phase' && (
+        <div className={centerPopoverClass}>
+          <div className="mb-2 text-[10px] font-black tracking-widest text-zinc-500">阶段设置</div>
+          <div className="grid gap-1">
+            {SANDBOX_PHASES.map(phase => (
+              <button
+                key={phase}
+                onClick={() => {
+                  setSandbox(prev => ({ ...prev, phase }));
+                  setCenterPopover(null);
+                }}
+                className={cn('rounded-lg px-3 py-2 text-left text-xs font-black transition', sandbox.phase === phase ? 'bg-red-600 text-white' : 'text-zinc-400 hover:bg-white/10 hover:text-white')}
+              >
+                {getPhaseLabel(phase)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {centerPopover === 'bot' && (
+        <div className="absolute left-1/2 top-full z-30 mt-2 w-72 -translate-x-1/2 rounded-xl border border-white/10 bg-zinc-950 p-3 text-left shadow-2xl">
+          <div className="mb-2 text-[10px] font-black tracking-widest text-zinc-500">人机设置</div>
+          <div className="grid gap-1">
+            <button onClick={() => setBotDifficulty('simple')} className={cn('rounded-lg px-3 py-2 text-left text-xs font-black', botDifficulty === 'simple' ? 'bg-red-600 text-white' : 'text-zinc-400 hover:bg-white/10 hover:text-white')}>简单人机</button>
+            <button onClick={() => setBotDifficulty('hard')} className={cn('rounded-lg px-3 py-2 text-left text-xs font-black', botDifficulty === 'hard' ? 'bg-red-600 text-white' : 'text-zinc-400 hover:bg-white/10 hover:text-white')}>困难人机</button>
+          </div>
+          {botDifficulty === 'hard' && (
+            <div className="mt-2 grid gap-1 border-t border-white/10 pt-2">
+              {AI_OPPONENT_DECKS.map(deck => (
+                <button
+                  key={deck.id}
+                  onClick={() => setBotDeckProfileId(deck.id)}
+                  className={cn('rounded-lg px-3 py-2 text-left text-xs font-black', botDeckProfileId === deck.id ? 'bg-white text-black' : 'text-zinc-400 hover:bg-white/10 hover:text-white')}
+                >
+                  {deck.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {centerPopover === 'room' && (
+        <div className={centerPopoverClass}>
+          <div className="mb-3 text-[10px] font-black tracking-widest text-zinc-500">联机房间</div>
+          
+          <div className="mb-4">
+            <button 
+              onClick={createRoom} 
+              disabled={starting} 
+              className="flex w-full items-center justify-center rounded-lg bg-cyan-600/90 px-3 py-2 text-xs font-black text-white hover:bg-cyan-500 disabled:opacity-50"
+            >
+              {starting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Network className="mr-1.5 h-3.5 w-3.5" />}
+              生成房间码
+            </button>
+            {createdRoomCode && (
+              <div className="mt-2 text-center">
+                <p className="text-[10px] text-zinc-400">已生成房间:</p>
+                <button
+                  title="点击进入房间"
+                  onClick={() => createdRoomGameId && navigate(`/battle/${createdRoomGameId}`, { state: { seat: 'player' } })}
+                  className="mt-1 w-full truncate rounded border border-cyan-500/30 bg-cyan-950/40 py-1.5 font-mono text-sm font-black tracking-[0.25em] text-cyan-200 hover:border-cyan-500/60"
+                >
+                  {createdRoomCode}
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="border-t border-white/10 pt-3">
+            <label className="mb-1 block text-[10px] font-bold text-zinc-400">加入其他房间</label>
+            <div className="flex gap-2">
+              <input
+                value={roomCode}
+                onChange={event => setRoomCode(event.target.value.replace(/\D/g, '').slice(0, 8))}
+                placeholder="输入8位房间码"
+                className="w-full min-w-0 rounded-lg border border-zinc-800 bg-black px-3 py-2 text-center font-mono text-xs font-black outline-none focus:border-cyan-500"
+              />
+              <button 
+                title="加入" 
+                onClick={joinRoom} 
+                disabled={joining || roomCode.length !== 8} 
+                className="flex shrink-0 items-center justify-center rounded-lg bg-zinc-800 px-3 text-white hover:bg-zinc-700 disabled:opacity-50"
+              >
+                {joining ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4 text-teal-400" />}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {centerPopover === 'export' && (
+        <div className={centerPopoverClass}>
+          <div className="mb-2 text-[10px] font-black tracking-widest text-zinc-500">导出沙盒</div>
+          <input
+            autoFocus
+            value={sandbox.name || ''}
+            onChange={event => setSandbox(prev => ({ ...prev, name: event.target.value }))}
+            onKeyDown={event => {
+              if (event.key === 'Enter') {
+                exportSandbox();
+                setCenterPopover(null);
+              }
+            }}
+            className="w-full rounded-lg border border-zinc-800 bg-black px-3 py-2 text-sm font-black outline-none focus:border-red-500"
+            placeholder="输入沙盒名称"
+          />
+          <button
+            onClick={() => {
+              exportSandbox();
+              setCenterPopover(null);
+            }}
+            className="mt-2 w-full rounded-lg bg-indigo-600 px-3 py-2 text-xs font-black text-white hover:bg-indigo-500"
+          >
+            确认导出
+          </button>
+        </div>
+      )}
     </div>
   );
 
@@ -813,10 +868,36 @@ export const SandboxSetup: React.FC = () => {
                 <button onClick={() => setSelectedCard(null)} className="rounded-lg border border-zinc-800 p-2 hover:bg-white/5"><X className="h-4 w-4" /></button>
               </div>
               <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => {
+                    const targetZone = selectedCard.zone;
+                    const targetPlayerKey = selectedCard.playerKey;
+                    setSelectedCard(null);
+                    setEditingTarget({ playerKey: targetPlayerKey, zone: targetZone });
+                  }}
+                  className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-black text-white hover:bg-blue-500 flex items-center justify-center gap-1"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  继续添加卡牌
+                </button>
                 {selectedCard.zone !== 'deck' && selectedCard.zone !== 'grave' && (
                   <>
-                    <button onClick={() => patchCard(selectedCard, { displayState: selectedCard.card.displayState === 'BACK_UPRIGHT' ? 'FRONT_UPRIGHT' : 'BACK_UPRIGHT' })} className="rounded-lg border border-zinc-800 px-3 py-2 text-xs font-black hover:bg-white/5"><ChevronDown className="mr-1 inline h-3.5 w-3.5" />切换正背面</button>
-                    <button onClick={() => patchCard(selectedCard, { isExhausted: !selectedCard.card.isExhausted, displayState: selectedCard.card.isExhausted ? 'FRONT_UPRIGHT' : 'FRONT_HORIZONTAL' })} className="rounded-lg border border-zinc-800 px-3 py-2 text-xs font-black hover:bg-white/5"><Check className="mr-1 inline h-3.5 w-3.5" />{selectedCard.card.isExhausted ? '设为竖置' : '设为横置'}</button>
+                    <button
+                      onClick={() => {
+                        if (selectedCard.zone === 'erosionFront' || selectedCard.zone === 'erosionBack') {
+                          toggleErosionSide(selectedCard);
+                        } else {
+                          patchCard(selectedCard, { displayState: selectedCard.card.displayState === 'BACK_UPRIGHT' ? 'FRONT_UPRIGHT' : 'BACK_UPRIGHT' });
+                        }
+                      }}
+                      className="rounded-lg border border-zinc-800 px-3 py-2 text-xs font-black hover:bg-white/5"
+                    >
+                      <ChevronDown className="mr-1 inline h-3.5 w-3.5" />
+                      切换正背面
+                    </button>
+                    {selectedCard.zone !== 'erosionFront' && selectedCard.zone !== 'erosionBack' && (
+                      <button onClick={() => patchCard(selectedCard, { isExhausted: !selectedCard.card.isExhausted, displayState: selectedCard.card.isExhausted ? 'FRONT_UPRIGHT' : 'FRONT_HORIZONTAL' })} className="rounded-lg border border-zinc-800 px-3 py-2 text-xs font-black hover:bg-white/5"><Check className="mr-1 inline h-3.5 w-3.5" />{selectedCard.card.isExhausted ? '设为竖置' : '设为横置'}</button>
+                    )}
                   </>
                 )}
                 <button
