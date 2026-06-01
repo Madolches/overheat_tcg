@@ -1,10 +1,9 @@
-import { Card, CardEffect } from '../types/game';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import {
   addInfluence,
   canPutUnitOntoBattlefield,
   cardsInZones,
-  createSelectCardQuery,
   ensureData,
   isOtherworldBat,
   moveCardAsCost,
@@ -49,25 +48,34 @@ const cardEffects: CardEffect[] = [{
     instance.cardlocation === 'HAND' &&
     canPutUnitOntoBattlefield(playerState, instance, selfEntryContext(instance)) &&
     shingiBetisCandidates(playerState, gameState).length > 0,
-  execute: async (instance, gameState, playerState) => {
-    const candidates = shingiBetisCandidates(playerState, gameState);
-    createSelectCardQuery(
-      gameState,
-      playerState.uid,
-      candidates,
-      '选择放逐贝缇丝',
-      '选择己方场上1个由《神仪》效果放置的「贝缇丝」放逐。',
-      1,
-      1,
-      { sourceCardId: instance.gamecardId, effectId: '102070359_hand_put_self_and_bats', step: 'COST_BETIS' },
-      () => 'UNIT'
-    );
+  targetSpec: {
+    title: '选择放逐贝缇丝',
+    description: '选择己方场上1个由《神仪》效果放置的「贝缇丝」放逐作为费用。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'COST_BETIS',
+    costTarget: true,
+    getCandidates: (gameState, playerState) =>
+      shingiBetisCandidates(playerState, gameState)
+        .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
+  },
+  cost: async (gameState, playerState, instance, context?: any) => {
+    const declaredTargetId = context?.declaredTargets?.find((target: any) => target.step === 'COST_BETIS')?.gamecardId;
+    const declaredTarget = declaredTargetId
+      ? shingiBetisCandidates(playerState, gameState).find(card => card.gamecardId === declaredTargetId)
+      : undefined;
+    if (declaredTarget) {
+      moveCardAsCost(gameState, playerState.uid, declaredTarget, 'EXILE', instance);
+      return true;
+    }
+    return false;
+  },
+  execute: async () => {
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'COST_BETIS') {
-      const betis = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
-      if (!betis || !shingiBetisCandidates(playerState, gameState).some(card => card.gamecardId === betis.gamecardId)) return;
-      moveCardAsCost(gameState, playerState.uid, betis, 'EXILE', instance);
       if (!putUnitOntoField(gameState, playerState.uid, instance, instance, selfEntryContext(instance))) return;
 
       const candidates = batCandidates(playerState);

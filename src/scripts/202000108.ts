@@ -81,7 +81,6 @@ const cardEffects: CardEffect[] = [story('202000108_hiye_order', '选择1项：�
     whiteLowNonGodFieldCards(gameState).length > 0 ||
     canCounterWhitePlay(gameState, playerState),
   targetSpec: {
-    preselect: false,
     modeOptions: [{
       id: 'DESTROY',
       label: '破坏白色卡',

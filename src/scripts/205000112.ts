@@ -81,7 +81,6 @@ const cardEffects: CardEffect[] = [story('205000112_false_god_order', '选择1�
     greenLowNonGodFieldCards(gameState).length > 0 ||
     canCounterGreenPlay(gameState, playerState),
   targetSpec: {
-    preselect: false,
     modeOptions: [{
       id: 'DESTROY',
       label: '破坏绿色卡',

@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, addTempDamage, addTempKeyword, addTempPower, canPutUnitOntoBattlefield, createSelectCardQuery, erosionCost, isNonGodUnit, moveCard, ownUnits } from './BaseUtil';
+import { AtomicEffectExecutor, addTempDamage, addTempKeyword, addTempPower, canPutUnitOntoBattlefield, createSelectCardQuery, erosionCost, isNonGodUnit, moveCard, moveCardAsCost, ownUnits, recordUnitSentFromFieldToGrave } from './BaseUtil';
 
 const isWitchUnit = (card: Card) => card.type === 'UNIT' && card.fullName.includes('魔女');
 
@@ -10,7 +10,60 @@ const cardEffects: CardEffect[] = [{
   limitCount: 1,
   description: '将X个自己的非神蚀单位送入墓地：本回合伤害+X、力量+X000。X大于2时获得英勇、歼灭。',
   condition: (_gameState, playerState) => ownUnits(playerState).some(isNonGodUnit),
+  cost: async (gameState, playerState, instance) => {
+    const candidates = ownUnits(playerState).filter(isNonGodUnit);
+    if (candidates.length === 0) return false;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      candidates,
+      'Select cost units',
+      'Select X of your non-god units to send to grave as cost.',
+      1,
+      candidates.length,
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '103100133_sac_boost',
+        step: 'SAC_COST',
+        costType: 'CUSTOM_CARD_COST',
+        skipEffectResolveAfterCost: true
+      },
+      () => 'UNIT'
+    );
+    return true;
+  },
+  onCostResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step !== 'SAC_COST') return;
+    const selectedIds = new Set(selections);
+    const targets = ownUnits(playerState).filter(unit => selectedIds.has(unit.gamecardId) && isNonGodUnit(unit));
+    if (targets.length === 0 || targets.length !== selectedIds.size) {
+      context.cancelActivation = true;
+      return;
+    }
+    targets.forEach(unit => {
+      moveCardAsCost(gameState, playerState.uid, unit, 'GRAVE', instance);
+      recordUnitSentFromFieldToGrave(gameState, playerState.uid, unit);
+    });
+    const data = ((instance as any).data = (instance as any).data || {});
+    data.sacBoostCostX = targets.length;
+    data.sacBoostCostTurn = gameState.turnCount;
+    data.sacBoostCostActivationId = instance.gamecardId;
+  },
   execute: async (instance, gameState, playerState) => {
+    const data = (instance as any).data || {};
+    const paidX = data.sacBoostCostTurn === gameState.turnCount && data.sacBoostCostActivationId === instance.gamecardId
+      ? Number(data.sacBoostCostX || 0)
+      : 0;
+    if (paidX > 0) {
+      addTempDamage(instance, instance, paidX);
+      addTempPower(instance, instance, paidX * 1000);
+      if (paidX > 2) {
+        addTempKeyword(instance, instance, 'heroic');
+        addTempKeyword(instance, instance, 'annihilation');
+      }
+      return;
+    }
+
     const candidates = ownUnits(playerState).filter(isNonGodUnit);
     createSelectCardQuery(
       gameState,
@@ -25,7 +78,10 @@ const cardEffects: CardEffect[] = [{
   },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const targets = ownUnits(playerState).filter(unit => selections.includes(unit.gamecardId) && !unit.godMark);
-    targets.forEach(unit => moveCard(gameState, playerState.uid, unit, 'GRAVE', instance));
+    targets.forEach(unit => {
+      moveCardAsCost(gameState, playerState.uid, unit, 'GRAVE', instance);
+      recordUnitSentFromFieldToGrave(gameState, playerState.uid, unit);
+    });
     const x = targets.length;
     if (x <= 0) return;
     addTempDamage(instance, instance, x);

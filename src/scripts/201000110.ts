@@ -82,7 +82,6 @@ const cardEffects: CardEffect[] = [story('201000110_temple_order', '选择1项�
     blueLowNonGodFieldCards(gameState).length > 0 ||
     canCounterBluePlay(gameState, playerState),
   targetSpec: {
-    preselect: false,
     modeOptions: [{
       id: 'DESTROY',
       label: '破坏蓝色卡',

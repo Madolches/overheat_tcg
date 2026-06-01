@@ -179,10 +179,16 @@ async function activateAndResolveByOpponentPass(state: any, playerUid: string, c
     const min = state.pendingQuery.minSelections || 1;
     await answerPendingQuery(state, state.pendingQuery.playerUid, optionIds.slice(0, min));
   }
+  if (state.phase === 'COUNTERING') {
+    await ServerGameService.passConfrontation(state, state.priorityPlayerId);
+    return;
+  }
+  if (state.pendingQuery) {
+    return;
+  }
   if (state.phase !== 'COUNTERING') {
     throw new Error(`Expected COUNTERING after activation, got ${state.phase}`);
   }
-  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
 }
 
 async function activateKuyaMode(state: any, playerUid: string, card: Card, modeId: string) {
@@ -234,7 +240,7 @@ async function testPowderSnowAttackDestroysAndBoosts(): Promise<ScenarioResult> 
     return fail(name, `expected destroy query, got ${state.pendingQuery?.context?.effectId || 'none'}`);
   }
   const options = (state.pendingQuery.options || []).map((option: any) => option.card.gamecardId);
-  if (!options.includes(gray.gamecardId) || options.includes(powder.gamecardId) || options.includes(cake.gamecardId)) {
+  if (!options.includes(gray.gamecardId) || !options.includes(cake.gamecardId) || options.includes(powder.gamecardId)) {
     return fail(name, `unexpected options=${options.join(',')}`);
   }
   await answerPendingQuery(state, 'BOT', [gray.gamecardId]);
@@ -324,16 +330,23 @@ async function testPeonySnowModes(): Promise<ScenarioResult> {
     itemZone: [enemyTarget],
   });
 
-  await activateAndResolveByOpponentPass(state, 'BOT', peony, 1);
+  await ServerGameService.activateEffect(state, 'BOT', peony.gamecardId, 1);
+  if (state.pendingQuery?.callbackKey !== 'DECLARE_EFFECT_TARGET_MODE') {
+    return fail(name, `expected mode query, got ${state.pendingQuery?.callbackKey || 'none'}`);
+  }
+  await answerPendingQuery(state, 'BOT', ['DESTROY_PAIR']);
   if (state.pendingQuery?.context?.step !== 'OWN_TARGET') {
     return fail(name, `expected own target query, got ${state.pendingQuery?.context?.step || 'none'}`);
   }
   await answerPendingQuery(state, 'BOT', [ownTarget.gamecardId]);
-  await answerPendingQuery(state, 'BOT', ['DESTROY_PAIR']);
   if (state.pendingQuery?.context?.step !== 'OPP_TARGET') {
     return fail(name, `expected opponent target query, got ${state.pendingQuery?.context?.step || 'none'}`);
   }
   await answerPendingQuery(state, 'BOT', [enemyTarget.gamecardId]);
+  if (state.phase !== 'COUNTERING') {
+    return fail(name, `expected COUNTERING after target declaration, got ${state.phase}`);
+  }
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
   if (state.pendingQuery?.context?.step !== 'PAY_DESTROY_PAIR' || state.pendingQuery?.type !== 'SELECT_PAYMENT') {
     return fail(name, `expected destroy payment query, got ${state.pendingQuery?.context?.step || state.pendingQuery?.type || 'none'}`);
   }
@@ -341,6 +354,11 @@ async function testPeonySnowModes(): Promise<ScenarioResult> {
 
   const pairDestroyed = state.players.BOT.grave.some((card: Card) => card.gamecardId === ownTarget.gamecardId) &&
     state.players.P1.grave.some((card: Card) => card.gamecardId === enemyTarget.gamecardId);
+  const pairStackFinished = !state.isResolvingStack &&
+    !state.currentProcessingItem &&
+    state.counterStack.length === 0 &&
+    state.phase === 'MAIN' &&
+    state.isCountering === 0;
 
   const setupPeony = cloneScriptCard(sp03W03 as Card, 'UNIT');
   const setupTarget = testCard({ id: 'SEISO_MARKED', fullName: '清霜标记目标', acValue: 3, cardlocation: 'UNIT' });
@@ -351,9 +369,16 @@ async function testPeonySnowModes(): Promise<ScenarioResult> {
     unitZone: [setupPeony, setupTarget, source, null, null, null],
   });
 
-  await activateAndResolveByOpponentPass(setupState, 'BOT', setupPeony, 1);
-  await answerPendingQuery(setupState, 'BOT', [setupTarget.gamecardId]);
+  await ServerGameService.activateEffect(setupState, 'BOT', setupPeony.gamecardId, 1);
+  if (setupState.pendingQuery?.callbackKey !== 'DECLARE_EFFECT_TARGET_MODE') {
+    return fail(name, `pairDestroyed=${pairDestroyed}, expected setup mode query got ${setupState.pendingQuery?.callbackKey || 'none'}`);
+  }
   await answerPendingQuery(setupState, 'BOT', ['SETUP_RECRUIT']);
+  await answerPendingQuery(setupState, 'BOT', [setupTarget.gamecardId]);
+  if (setupState.phase !== 'COUNTERING') {
+    return fail(name, `pairDestroyed=${pairDestroyed}, expected setup COUNTERING got ${setupState.phase}`);
+  }
+  await ServerGameService.passConfrontation(setupState, setupState.priorityPlayerId);
   destroyByEffect(setupState, setupTarget, source);
   await confirmTrigger(setupState, 'BOT');
   if (setupState.pendingQuery?.context?.effectId !== '101000293_marked_recruit') {
@@ -362,9 +387,9 @@ async function testPeonySnowModes(): Promise<ScenarioResult> {
   await answerPendingQuery(setupState, 'BOT', [recruit.gamecardId]);
 
   const recruited = setupState.players.BOT.unitZone.some((unit: Card | null) => unit?.gamecardId === recruit.gamecardId && unit.isExhausted);
-  return pairDestroyed && recruited
-    ? pass(name, `pairDestroyed=${pairDestroyed}, recruited=${recruited}`)
-    : fail(name, `pairDestroyed=${pairDestroyed}, recruited=${recruited}`);
+  return pairDestroyed && pairStackFinished && recruited
+    ? pass(name, `pairDestroyed=${pairDestroyed}, stackFinished=${pairStackFinished}, recruited=${recruited}`)
+    : fail(name, `pairDestroyed=${pairDestroyed}, stackFinished=${pairStackFinished}, recruited=${recruited}`);
 }
 
 async function testSnowHouseDrawAndDamage(): Promise<ScenarioResult> {
@@ -480,7 +505,14 @@ async function testFuyioriRecoverAndTransform(): Promise<ScenarioResult> {
     return fail(name, `expected erosion target query, got ${state.pendingQuery?.context?.step || 'none'}`);
   }
   await answerPendingQuery(state, 'BOT', [kuya.gamecardId]);
+  if (state.pendingQuery?.context?.step !== 'DISCARD_COST') {
+    return fail(name, `expected discard cost query, got ${state.pendingQuery?.context?.step || state.pendingQuery?.callbackKey || 'none'}`);
+  }
   await answerPendingQuery(state, 'BOT', [discard.gamecardId]);
+  if (state.phase !== 'COUNTERING') {
+    return fail(name, `expected COUNTERING after recover cost, got ${state.phase}`);
+  }
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
   const recovered = state.players.BOT.hand.some((card: Card) => card.gamecardId === kuya.gamecardId);
 
   const transformFuyiori = cloneScriptCard(sp03G03 as Card, 'UNIT');
@@ -497,7 +529,14 @@ async function testFuyioriRecoverAndTransform(): Promise<ScenarioResult> {
     return fail(name, `recovered=${recovered}, expected transform target query got ${transformState.pendingQuery?.context?.step || 'none'}`);
   }
   await answerPendingQuery(transformState, 'BOT', [target.gamecardId]);
+  if (transformState.pendingQuery?.context?.step !== 'GRAVE_EXILE_COST') {
+    return fail(name, `recovered=${recovered}, expected transform cost query got ${transformState.pendingQuery?.context?.step || transformState.pendingQuery?.callbackKey || 'none'}`);
+  }
   await answerPendingQuery(transformState, 'BOT', [red.gamecardId, blue.gamecardId]);
+  if (transformState.phase !== 'COUNTERING') {
+    return fail(name, `recovered=${recovered}, expected transform COUNTERING got ${transformState.phase}`);
+  }
+  await ServerGameService.passConfrontation(transformState, transformState.priorityPlayerId);
 
   const transformed = target.power === 3500 && target.damage === 2 && !!target.isAnnihilation;
   const costsExiled = [red, blue].every(cost => transformState.players.BOT.exile.some((card: Card) => card.gamecardId === cost.gamecardId));
@@ -779,10 +818,14 @@ async function testFlameRayIrodoriDestroysWithSacrifice(): Promise<ScenarioResul
     return fail(name, `targetOptions=${targetOptions.join(',')}`);
   }
   await answerPendingQuery(state, 'BOT', [target.gamecardId]);
-  if (state.pendingQuery?.context?.step !== 'COST') {
+  if (state.pendingQuery?.context?.step !== 'SACRIFICE_COST') {
     return fail(name, `expected cost query, got ${state.pendingQuery?.context?.step || 'none'}`);
   }
   await answerPendingQuery(state, 'BOT', [sacrifice.gamecardId]);
+  if (state.phase !== 'COUNTERING') {
+    return fail(name, `expected COUNTERING after sacrifice cost, got ${state.phase}`);
+  }
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
 
   const sacrificed = state.players.BOT.grave.some((card: Card) => card.gamecardId === sacrifice.gamecardId);
   const destroyed = state.players.P1.grave.some((card: Card) => card.gamecardId === target.gamecardId);
@@ -938,13 +981,17 @@ async function testCocolaModesDamageExileAndCounter(): Promise<ScenarioResult> {
 
   const opponentDeckBefore = state.players.P1.deck.length;
   await activateAndResolveByOpponentPass(state, 'BOT', cocola, 1);
+  if (state.pendingQuery?.callbackKey !== 'DECLARE_EFFECT_TARGET_MODE') {
+    return fail(name, `expected mode query, got ${state.pendingQuery?.callbackKey || 'none'}`);
+  }
+  await answerPendingQuery(state, 'BOT', ['DAMAGE_EXILE']);
   if (state.pendingQuery?.callbackKey === 'ACTIVATE_COST_RESOLVE') {
     await answerPendingQuery(state, 'BOT', [discard.gamecardId]);
   }
-  if (state.pendingQuery?.context?.step !== 'PLAYER') {
-    return fail(name, `expected player query, got ${state.pendingQuery?.context?.step || state.pendingQuery?.callbackKey || 'none'}`);
+  if (state.phase !== 'COUNTERING') {
+    return fail(name, `expected COUNTERING after damage mode cost, got ${state.phase}`);
   }
-  await answerPendingQuery(state, 'BOT', ['PLAYER_OPPONENT']);
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
   if (state.pendingQuery?.context?.step !== 'EXILE_GRAVE') {
     return fail(name, `expected exile query, got ${state.pendingQuery?.context?.step || 'none'}`);
   }
@@ -974,13 +1021,14 @@ async function testCocolaModesDamageExileAndCounter(): Promise<ScenarioResult> {
   });
 
   await ServerGameService.activateEffect(counterState, 'BOT', counterCocola.gamecardId, 1);
+  if (counterState.pendingQuery?.callbackKey !== 'DECLARE_EFFECT_TARGET_MODE') {
+    return fail(name, `damaged=${damaged}, expected counter mode query got ${counterState.pendingQuery?.callbackKey || 'none'}`);
+  }
+  await answerPendingQuery(counterState, 'BOT', ['COUNTER']);
   if (counterState.pendingQuery?.callbackKey === 'ACTIVATE_COST_RESOLVE') {
     await answerPendingQuery(counterState, 'BOT', [counterDiscard.gamecardId]);
   }
   await ServerGameService.passConfrontation(counterState, counterState.priorityPlayerId);
-  if (counterState.pendingQuery?.context?.step === 'MODE') {
-    await answerPendingQuery(counterState, 'BOT', ['COUNTER']);
-  }
   const coloredNegated = counterState.players.P1.grave.some((card: Card) => card.gamecardId === coloredPlay.gamecardId);
   const noReqUnnegated = counterState.players.P1.unitZone.some((unit: Card | null) => unit?.gamecardId === noReqPlay.gamecardId);
 

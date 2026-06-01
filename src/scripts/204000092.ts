@@ -81,7 +81,6 @@ const cardEffects: CardEffect[] = [story('204000092_tenko_order', '选择1项：
     yellowLowNonGodFieldCards(gameState).length > 0 ||
     canCounterYellowPlay(gameState, playerState),
   targetSpec: {
-    preselect: false,
     modeOptions: [{
       id: 'DESTROY',
       label: '破坏黄色卡',

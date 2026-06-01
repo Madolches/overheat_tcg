@@ -138,6 +138,7 @@ export interface AtomicEffect {
 export interface EffectTargetCandidate {
   card: Card;
   source?: TriggerLocation;
+  ownerUid?: string;
 }
 
 export interface EffectTargetShape {
@@ -145,6 +146,7 @@ export interface EffectTargetShape {
   description: string;
   minSelections: number;
   maxSelections: number;
+  costTarget?: boolean;
   zones?: TriggerLocation[];
   controller?: 'SELF' | 'OPPONENT' | 'ANY';
   filter?: CardFilter;
@@ -172,6 +174,7 @@ export interface DeclaredEffectTarget {
   gamecardId: string;
   ownerUid: string;
   zone: TriggerLocation;
+  costTarget?: boolean;
   sourceCardId: string;
   sourceCardName: string;
   effectIndex?: number;
@@ -415,6 +418,8 @@ export interface PlayerState {
   markedUnitAttackTarget?: string; // Target selected at start of Main Phase that can be attacked
   exiledFromErosionTurn?: number;
   unitFromGraveToFieldTurn?: number;
+  snowstormTurn?: number;
+  snowstormSourceName?: string;
   skipDrawPhase?: boolean;
   confrontationStrategy?: 'ON' | 'AUTO' | 'OFF';
   botDifficulty?: 'simple' | 'hard';

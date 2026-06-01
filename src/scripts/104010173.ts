@@ -1,5 +1,6 @@
 import { Card, GameState, PlayerState, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import { moveCardAsCost } from './BaseUtil';
 
 const effect_104010173_activation: CardEffect = {
   id: 'suisen_bounce',
@@ -28,6 +29,14 @@ const effect_104010173_activation: CardEffect = {
           .filter((card): card is Card => !!card && card.gamecardId !== instance.gamecardId && !card.godMark && !!card.isExhausted)
           .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
       )
+  },
+  cost: async (gameState: GameState, playerState: PlayerState, instance: Card) => {
+    if (instance.cardlocation !== 'UNIT') return false;
+    const owner = AtomicEffectExecutor.findCardOwnerKey(gameState, instance.gamecardId);
+    if (owner !== playerState.uid) return false;
+    moveCardAsCost(gameState, playerState.uid, instance, 'HAND', instance);
+    gameState.logs.push(`[${instance.fullName}] returned itself to hand as cost.`);
+    return true;
   },
   execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
     const targets: Card[] = [];
@@ -72,12 +81,14 @@ const effect_104010173_activation: CardEffect = {
     const target = AtomicEffectExecutor.findCardById(gameState, targetId);
     const owner = AtomicEffectExecutor.findCardOwnerKey(gameState, targetId);
 
-    await AtomicEffectExecutor.execute(gameState, playerState.uid, {
-      type: 'MOVE_FROM_FIELD',
-      targetFilter: { gamecardId: instance.gamecardId },
-      destinationZone: 'HAND'
-    }, instance);
-    gameState.logs.push(`[${instance.fullName}] 自身返回了手牌。`);
+    if (!context?.declaredTargets?.length) {
+      await AtomicEffectExecutor.execute(gameState, playerState.uid, {
+        type: 'MOVE_FROM_FIELD',
+        targetFilter: { gamecardId: instance.gamecardId },
+        destinationZone: 'HAND'
+      }, instance);
+      gameState.logs.push(`[${instance.fullName}] 自身返回了手牌。`);
+    }
 
     if (!target || !owner) {
       gameState.logs.push(`[${instance.fullName}] 结算时目标已不合法，不再返回其他单位。`);

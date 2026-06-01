@@ -1,6 +1,12 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor, createPlayerSelectQuery, createSelectCardQuery, faceUpErosion, getOpponentUid, moveCard, ownUnits, story } from './BaseUtil';
 
+const MODE_SELF_GRAVE = 'SELF_GRAVE';
+const MODE_OPPONENT_GRAVE = 'OPPONENT_GRAVE';
+
+const graveTargetUidForMode = (gameState: any, playerState: any, mode?: string) =>
+  mode === MODE_OPPONENT_GRAVE ? getOpponentUid(gameState, playerState.uid) : playerState.uid;
+
 const cardEffects: CardEffect[] = [story('201000132_exile_grave', '选择一名玩家墓地2张卡放逐。之后若你场上有<仙雪原>神蚀单位，可以选择侵蚀区1张卡放逐。', async (instance, gameState, playerState) => {
   const canChooseSelf = playerState.grave.length >= 2;
   const opponentUid = getOpponentUid(gameState, playerState.uid);
@@ -15,18 +21,36 @@ const cardEffects: CardEffect[] = [story('201000132_exile_grave', '选择一名�
   condition: (gameState, playerState) =>
     playerState.grave.length >= 2 || gameState.players[getOpponentUid(gameState, playerState.uid)].grave.length >= 2,
   targetSpec: {
-    preselect: false,
-    title: '选择墓地卡牌',
-    description: '选择该玩家墓地中的2张卡放逐。',
-    minSelections: 2,
-    maxSelections: 2,
-    zones: ['GRAVE'],
-    controller: 'ANY',
-    step: 'GRAVE',
-    getCandidates: (gameState, playerState) => [
-      ...playerState.grave.map(card => ({ card, source: 'GRAVE' as any })),
-      ...gameState.players[getOpponentUid(gameState, playerState.uid)].grave.map(card => ({ card, source: 'GRAVE' as any }))
-    ]
+    modeTitle: '选择墓地归属',
+    modeDescription: '选择要放逐哪名玩家墓地中的2张卡。',
+    modeOptions: [{
+      id: MODE_SELF_GRAVE,
+      label: '自己的墓地',
+      title: '选择墓地卡牌',
+      description: '选择你墓地中的2张卡放逐。',
+      minSelections: 2,
+      maxSelections: 2,
+      zones: ['GRAVE'],
+      controller: 'SELF',
+      step: 'GRAVE',
+      condition: (_gameState, playerState) => playerState.grave.length >= 2,
+      getCandidates: (_gameState, playerState) =>
+        playerState.grave.map(card => ({ card, source: 'GRAVE' as any }))
+    }, {
+      id: MODE_OPPONENT_GRAVE,
+      label: '对手的墓地',
+      title: '选择墓地卡牌',
+      description: '选择对手墓地中的2张卡放逐。',
+      minSelections: 2,
+      maxSelections: 2,
+      zones: ['GRAVE'],
+      controller: 'OPPONENT',
+      step: 'GRAVE',
+      condition: (gameState, playerState) =>
+        gameState.players[getOpponentUid(gameState, playerState.uid)].grave.length >= 2,
+      getCandidates: (gameState, playerState) =>
+        gameState.players[getOpponentUid(gameState, playerState.uid)].grave.map(card => ({ card, source: 'GRAVE' as any }))
+    }]
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'PLAYER') {
@@ -40,10 +64,10 @@ const cardEffects: CardEffect[] = [story('201000132_exile_grave', '选择一名�
       return;
     }
     if (context?.step === 'GRAVE') {
-      const targetUid = context.targetUid;
+      const targetUid = context.targetUid || graveTargetUidForMode(gameState, playerState, context?.modeId || context?.selectedModeId);
       selections.forEach(id => {
-        const target = AtomicEffectExecutor.findCardById(gameState, id);
-        if (target?.cardlocation === 'GRAVE') moveCard(gameState, targetUid, target, 'EXILE', instance);
+        const target = gameState.players[targetUid]?.grave.find((card: Card) => card.gamecardId === id);
+        if (target) moveCard(gameState, targetUid, target, 'EXILE', instance);
       });
       if (ownUnits(playerState).some(unit => unit.faction === '仙雪原' && unit.godMark) && faceUpErosion(playerState).length + playerState.erosionBack.filter(Boolean).length > 0) {
         const erosions = [...faceUpErosion(playerState), ...playerState.erosionBack.filter((card): card is Card => !!card)];

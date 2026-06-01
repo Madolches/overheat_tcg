@@ -105,6 +105,7 @@ const createPeonyDestroyPaymentQuery = (gameState: any, playerState: any, instan
       sourceCardId: instance.gamecardId,
       effectId: '101000293_seiso_modes',
       step: 'PAY_DESTROY_PAIR',
+      resumeStackAfterCost: true,
       ownTargetId: ownTarget.gamecardId,
       oppTargetId: oppTarget.gamecardId
     }
@@ -337,6 +338,7 @@ const effect_101000293_seiso_modes: CardEffect = {
           sourceCardId: instance.gamecardId,
           effectId: '101000293_seiso_modes',
           step: 'PAY_DESTROY_PAIR',
+          resumeStackAfterCost: true,
           ownTargetId: ownTarget.gamecardId,
           oppTargetId: oppTarget.gamecardId
         }

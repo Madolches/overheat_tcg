@@ -1,6 +1,7 @@
-import { Card, GameState, PlayerState, CardEffect } from '../types/game';
+import { Card, GameState, PlayerState, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import { EventEngine } from '../services/EventEngine';
+import { exhaustCost } from './BaseUtil';
 
 const card: Card = {
   id: '104030451',
@@ -55,6 +56,49 @@ const card: Card = {
 
         return hasOtherFieldUnit && hasErosionUnit;
       },
+      targetSpec: {
+        targetGroups: [{
+          title: 'Select field unit',
+          description: 'Select 1 other non-god Adventurer Guild unit on your battlefield.',
+          minSelections: 1,
+          maxSelections: 1,
+          zones: ['UNIT'],
+          controller: 'SELF',
+          step: 'FIELD_UNIT',
+          getCandidates: (_gameState, playerState, instance) =>
+            playerState.unitZone
+              .filter((unit): unit is Card =>
+                !!unit &&
+                unit.gamecardId !== instance.gamecardId &&
+                !unit.godMark &&
+                unit.faction === '冒险家公会'
+              )
+              .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
+        }, {
+          title: 'Select erosion unit',
+          description: 'Select 1 face-up non-god Adventurer Guild unit in your erosion zone.',
+          minSelections: 1,
+          maxSelections: 1,
+          zones: ['EROSION_FRONT'],
+          controller: 'SELF',
+          step: 'EROSION_UNIT',
+          getCandidates: (_gameState, playerState) => {
+            const fieldSpecialNames = new Set(playerState.unitZone.filter(u => u && u.specialName).map(u => u!.specialName));
+            const itemSpecialNames = new Set(playerState.itemZone.filter(i => i && i.specialName).map(i => i!.specialName));
+            return playerState.erosionFront
+              .filter((card): card is Card =>
+                !!card &&
+                card.displayState === 'FRONT_UPRIGHT' &&
+                card.type === 'UNIT' &&
+                !card.godMark &&
+                card.faction === '冒险家公会' &&
+                (!card.specialName || (!fieldSpecialNames.has(card.specialName) && !itemSpecialNames.has(card.specialName)))
+              )
+              .map(card => ({ card, source: 'EROSION_FRONT' as TriggerLocation }));
+          }
+        }]
+      },
+      cost: exhaustCost,
       execute: async (card, gameState, playerState) => {
         const fieldUnits = playerState.unitZone.filter(u =>
           u !== null &&
@@ -75,9 +119,10 @@ const card: Card = {
           (!c.specialName || (!fieldSpecialNames.has(c.specialName) && !itemSpecialNames.has(c.specialName)))
         ) as Card[];
 
-        // 1. Cost: Exhaust
-        card.isExhausted = true;
-        gameState.logs.push(`${playerState.displayName} 横置了 ${card.fullName} 以触发效果。`);
+        if (!card.isExhausted) {
+          card.isExhausted = true;
+          gameState.logs.push(`${playerState.displayName} 横置了 ${card.fullName} 以触发效果。`);
+        }
 
         if (fieldUnits.length === 0 || erosionUnits.length === 0) {
           gameState.logs.push(`[龙翼看板娘[小婷]] 结算时已不存在有效的互换对象，效果发动失败。`);
@@ -99,6 +144,14 @@ const card: Card = {
         };
       },
       onQueryResolve: async (card, gameState, playerState, selections, context) => {
+        if (context?.declaredTargets?.length) {
+          const fieldUnitId = context.declaredTargets.find((target: any) => target.step === 'FIELD_UNIT')?.gamecardId;
+          const erosionUnitId = context.declaredTargets.find((target: any) => target.step === 'EROSION_UNIT')?.gamecardId;
+          if (fieldUnitId && erosionUnitId) {
+            context = { ...context, step: 2, fieldUnitId };
+            selections = [erosionUnitId];
+          }
+        }
         const step = context?.step || 1;
 
         if (step === 1) {

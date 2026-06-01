@@ -67,6 +67,36 @@ const cardEffects: CardEffect[] = [story('201000138_purify', '依据你的放逐
       const cards = selections.map(id => target.grave.find(card => card.gamecardId === id)).filter((card): card is Card => !!card);
       moveCardsToBottom(gameState, context.targetUid, cards, instance);
     }
+  },
+  targetSpec: {
+    preselect: false,
+    targetGroups: [{
+      title: 'Select grave cards to exile',
+      description: 'Select grave cards for the 5-exile effect.',
+      minSelections: 0,
+      maxSelections: 3,
+      zones: ['GRAVE'],
+      controller: 'ANY',
+      step: 'EXILE_5',
+      getCandidates: (gameState) =>
+        Object.entries(gameState.players).flatMap(([ownerUid, player]) =>
+          player.grave.map(card => ({ card, source: 'GRAVE' as any, ownerUid }))
+        )
+    }, {
+      title: 'Select grave cards to bottom',
+      description: 'Select non-Purify grave cards for the 15-bottom effect.',
+      minSelections: 0,
+      maxSelections: 5,
+      zones: ['GRAVE'],
+      controller: 'ANY',
+      step: 'BOTTOM_15',
+      getCandidates: (gameState) =>
+        Object.entries(gameState.players).flatMap(([ownerUid, player]) =>
+          player.grave
+            .filter(card => card.id !== '201000138')
+            .map(card => ({ card, source: 'GRAVE' as any, ownerUid }))
+        )
+    }]
   }
 })];
 

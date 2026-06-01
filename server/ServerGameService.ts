@@ -419,8 +419,9 @@ export const ServerGameService = {
           );
         });
 
-    candidates = candidates.filter(({ card }) => {
-      const ownerUid = AtomicEffectExecutor.findCardOwnerKey(gameState, card.gamecardId);
+    candidates = candidates.filter(candidate => {
+      const { card } = candidate;
+      const ownerUid = candidate.ownerUid || AtomicEffectExecutor.findCardOwnerKey(gameState, card.gamecardId);
       if (spec.controller === 'SELF' && ownerUid !== playerUid) return false;
       if (spec.controller === 'OPPONENT' && ownerUid === playerUid) return false;
       if (!ServerGameService.isLegalDeclaredTarget(gameState, sourceCard, card)) return false;
@@ -563,14 +564,18 @@ export const ServerGameService = {
       throw new Error(`请选择 ${activeTargetShape.minSelections === activeTargetShape.maxSelections ? activeTargetShape.minSelections : `${activeTargetShape.minSelections}-${activeTargetShape.maxSelections}`} 个合法对象`);
     }
 
-    const legalIds = new Set(ServerGameService.getTargetCandidates(gameState, playerUid, sourceCard, effect, activeTargetShape, previousTargets).map(candidate => candidate.card.gamecardId));
+    const legalCandidates = ServerGameService.getTargetCandidates(gameState, playerUid, sourceCard, effect, activeTargetShape, previousTargets);
+    const legalIds = new Set(legalCandidates.map(candidate => candidate.card.gamecardId));
     const declaredTargets: DeclaredEffectTarget[] = [];
 
     for (const id of selections) {
       if (!legalIds.has(id)) throw new Error('选择的对象不合法');
+      const candidate = legalCandidates.find(candidate => candidate.card.gamecardId === id);
       const located = ServerGameService.findCardLocation(gameState, id);
-      if (!located) throw new Error('选择的对象已不存在');
-      const { card, ownerUid, zone } = located;
+      if (!candidate && !located) throw new Error('选择的对象已不存在');
+      const card = candidate?.card || located!.card;
+      const ownerUid = candidate?.ownerUid || located?.ownerUid || AtomicEffectExecutor.findCardOwnerKey(gameState, card.gamecardId) || playerUid;
+      const zone = candidate?.source || located?.zone || (card.cardlocation as TriggerLocation);
       if (card.nextEffectProtection) {
         card.nextEffectProtection = false;
         gameState.logs.push(`[变装] [${card.fullName}] 抵消了来自 [${sourceCard.fullName}] 的一次指定对象效果。`);
@@ -581,6 +586,7 @@ export const ServerGameService = {
         gamecardId: card.gamecardId,
         ownerUid,
         zone,
+        costTarget: !!activeTargetShape.costTarget,
         sourceCardId: sourceCard.gamecardId,
         sourceCardName: sourceCard.fullName,
         effectIndex,
@@ -623,6 +629,7 @@ export const ServerGameService = {
 
   getValidDeclaredTargets(gameState: GameState, declaredTargets?: DeclaredEffectTarget[]) {
     return (declaredTargets || []).filter(target => {
+      if (target.costTarget) return true;
       const located = ServerGameService.findCardLocation(gameState, target.gamecardId);
       return !!located && located.ownerUid === target.ownerUid && located.zone === target.zone;
     });
@@ -4404,6 +4411,13 @@ export const ServerGameService = {
       }
 
       if (query.context?.cancelActivation) {
+        if (query.context?.resumeStackAfterCost && gameState.isResolvingStack) {
+          if (gameState.counterStack.length > 0) {
+            await ServerGameService.resolveCounterStack(gameState, onUpdate);
+          } else {
+            await ServerGameService.finishCounteringStack(gameState, onUpdate);
+          }
+        }
         return gameState;
       }
 

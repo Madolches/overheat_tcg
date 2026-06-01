@@ -2034,13 +2034,11 @@ async function testRedBatBladeItemAndTamiThresholds(): Promise<ScenarioResult> {
   const itemDrew = bladeState.players.BOT.hand.length === 1;
   const bladeCounted = totalUnitsSentFromFieldToGraveThisTurn(bladeState) >= 1;
 
-  const rafaUnit = cloneScriptCard(rafa as Card, 'UNIT');
   const tami = cloneScriptCard(bt07R11 as Card, 'UNIT');
-  const rafa = cloneScriptCard(bt05R07 as Card, 'UNIT');
+  const rafaUnit = cloneScriptCard(bt05R07 as Card, 'UNIT');
   const ally = testCard({ id: 'R11_ALLY', fullName: 'Tami Ally', color: 'RED', cardlocation: 'UNIT', power: 1000, basePower: 1000 });
   const tamiTarget = testCard({ id: 'R11_TARGET', fullName: 'Tami Target', cardlocation: 'UNIT' });
   const tamiState = game({
-    unitZone: [tami, rafa, ally, null, null, null],
     unitZone: [tami, ally, rafaUnit, null, null, null],
   }, {
     unitZone: [tamiTarget, null, null, null, null, null],
@@ -2049,8 +2047,6 @@ async function testRedBatBladeItemAndTamiThresholds(): Promise<ScenarioResult> {
   EventEngine.recalculateContinuousEffects(tamiState);
   const tamiThresholds =
     tami.power === 4500 &&
-    rafa.power === 4500 &&
-    ally.power === 2500 &&
     rafaUnit.power === 4500 &&
     tami.power === 4500 &&
     ally.power === 2500 &&
@@ -2169,6 +2165,8 @@ async function testNormalBattleDestroyDoesNotCountAsInterruptedBattle(): Promise
   return defenderDestroyed && returnedMain && exhaustedAttacker && noInterruptedLog
     ? pass(name, `destroyed=${defenderDestroyed}, phase=${state.phase}, exhausted=${exhaustedAttacker}`)
     : fail(name, `destroyed=${defenderDestroyed}, phase=${state.phase}, battle=${!!state.battleState}, exhausted=${exhaustedAttacker}, interruptedLog=${!noInterruptedLog}`);
+}
+
 function testThunderHighPowerRushThresholds(): ScenarioResult {
   const name = 'BT03-R04/BT07-R04 thunder rush thresholds';
   const flyer = cloneScriptCard(bt03R04 as Card, 'UNIT');

@@ -1,4 +1,4 @@
-import { Card, CardEffect } from '../types/game';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor, addTempPowerUntilEndOfTurn, attackingUnits, createSelectCardQuery, moveCardAsCost, ownUnits } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
@@ -25,6 +25,19 @@ const cardEffects: CardEffect[] = [{
   triggerLocation: ['ITEM'],
   description: '将这张卡送入墓地：选择你的1个<雷霆>单位，本回合力量+1000。',
   condition: (_gameState, playerState) => ownUnits(playerState).some(unit => unit.faction === '雷霆'),
+  targetSpec: {
+    title: 'Select Thunder unit',
+    description: 'Select 1 of your Thunder units.',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      ownUnits(playerState)
+        .filter(unit => unit.faction === '雷霆')
+        .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
+  },
   cost: async (gameState, playerState, instance) => {
     moveCardAsCost(gameState, playerState.uid, instance, 'GRAVE', instance);
     return true;

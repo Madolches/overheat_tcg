@@ -1,4 +1,4 @@
-import { Card, GameState, PlayerState, CardEffect } from '../types/game';
+import { Card, GameState, PlayerState, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import { EventEngine } from '../services/EventEngine';
 import { standardizeChoiceOptions } from './BaseUtil';
@@ -90,6 +90,20 @@ const handActivationEffect: CardEffect = {
       canPutItemOntoBattlefield(playerState, instance) &&
       canPayAccessCost(gameState, playerState, 2, instance.color, instance);
   },
+  targetSpec: {
+    title: 'Select units to return',
+    description: 'Select 2 of your non-god non-combat units to return to hand.',
+    minSelections: 2,
+    maxSelections: 2,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'RETURN_UNITS',
+    costTarget: true,
+    getCandidates: (gameState, playerState) =>
+      playerState.unitZone
+        .filter((unit): unit is Card => !!unit && !unit.godMark && isNonCombat(gameState, unit.gamecardId))
+        .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
+  },
   cost: async (gameState, playerState, card) => {
     if (!canPayAccessCost(gameState, playerState, 2, card.color, card)) {
       return false;
@@ -119,6 +133,14 @@ const handActivationEffect: CardEffect = {
   },
   onQueryResolve: async (card, gameState, playerState, selections, context) => {
     if (context.step === 1) {
+      const declaredReturnIds = (context.declaredTargets || [])
+        .filter((target: any) => target.step === 'RETURN_UNITS')
+        .map((target: any) => target.gamecardId);
+      if (declaredReturnIds.length === 2) {
+        await handActivationEffect.onQueryResolve!(card, gameState, playerState, declaredReturnIds, { ...context, step: 2 });
+        return;
+      }
+
       // Step 1: After payment, select 2 units to return to hand
       const targets = playerState.unitZone.filter(u =>
         u && !u.godMark && isNonCombat(gameState, u.gamecardId)

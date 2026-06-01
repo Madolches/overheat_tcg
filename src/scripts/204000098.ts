@@ -1,5 +1,7 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, canPutCardOntoBattlefieldByEffect, getOpponentUid, moveCard, moveRandomGraveToDeckBottom, putCardOntoField, wealthCount } from './BaseUtil';
+import { AtomicEffectExecutor, canPutCardOntoBattlefieldByEffect, createSelectCardQuery, getOpponentUid, moveCard, moveRandomGraveToDeckBottom, putCardOntoField, wealthCount } from './BaseUtil';
+
+const STEP_OPP_RUMMAGE_DISCARD = 'OPP_RUMMAGE_DISCARD';
 
 const disableMode = (instance: Card, gameState: any, mode: string) => {
   (instance as any).data = {
@@ -70,6 +72,17 @@ const cardEffects: CardEffect[] = [{
     }]
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step === STEP_OPP_RUMMAGE_DISCARD) {
+      const opponentUid = context.opponentUid || playerState.uid;
+      const opponent = gameState.players[opponentUid];
+      selections
+        .map(id => opponent.hand.find((card: Card) => card.gamecardId === id))
+        .filter((card: Card | undefined): card is Card => !!card)
+        .forEach(card => moveCard(gameState, opponentUid, card, 'GRAVE', instance));
+      disableMode(instance, gameState, 'OPP_RUMMAGE');
+      return;
+    }
+
     const mode = context?.modeId || context?.selectedModeId || selections[0];
     if (mode === 'RECOVER_DRAW') {
       moveRandomGraveToDeckBottom(gameState, playerState.uid, 2, instance);
@@ -82,10 +95,26 @@ const cardEffects: CardEffect[] = [{
       const opponentUid = getOpponentUid(gameState, playerState.uid);
       await AtomicEffectExecutor.execute(gameState, opponentUid, { type: 'DRAW', value: 3 }, instance);
       const opponent = gameState.players[opponentUid];
-      opponent.hand.slice(0, Math.min(3, opponent.hand.length)).forEach((card: Card) => {
-        moveCard(gameState, opponentUid, card, 'GRAVE', instance);
-      });
-      disableMode(instance, gameState, mode);
+      if (opponent.hand.length < 3) {
+        disableMode(instance, gameState, mode);
+        return;
+      }
+      createSelectCardQuery(
+        gameState,
+        opponentUid,
+        opponent.hand,
+        '选择舍弃手牌',
+        '选择自己的3张手牌舍弃。',
+        3,
+        3,
+        {
+          sourceCardId: instance.gamecardId,
+          effectId: '204000098_record_modes',
+          step: STEP_OPP_RUMMAGE_DISCARD,
+          opponentUid
+        },
+        () => 'HAND'
+      );
       return;
     }
 

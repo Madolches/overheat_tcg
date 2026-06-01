@@ -1,13 +1,22 @@
-import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, createSelectCardQuery, getOpponentUid, isNonGodUnit, millTop, moveCard, ownUnits, story } from './BaseUtil';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
+import { AtomicEffectExecutor, getOpponentUid, isNonGodUnit, millTop, moveCard, ownUnits, story } from './BaseUtil';
 
-const cardEffects: CardEffect[] = [story('203000127_prank', '选择你的1个非神蚀单位送入墓地。之后将对手卡组顶2张送入墓地。', async (instance, gameState, playerState) => {
-  createSelectCardQuery(gameState, playerState.uid, ownUnits(playerState).filter(isNonGodUnit), '选择送墓单位', '选择你的1个非神蚀单位送入墓地。', 1, 1, {
-    sourceCardId: instance.gamecardId,
-    effectId: '203000127_prank'
-  });
+const cardEffects: CardEffect[] = [story('203000127_prank', '选择你的1个非神蚀单位送入墓地。之后将对手卡组顶2张送入墓地。', async () => {
 }, {
   condition: (_gameState, playerState) => ownUnits(playerState).some(isNonGodUnit),
+  targetSpec: {
+    title: '选择送墓单位',
+    description: '选择你的1个非神蚀单位送入墓地。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      ownUnits(playerState)
+        .filter(isNonGodUnit)
+        .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (target?.cardlocation === 'UNIT') moveCard(gameState, playerState.uid, target, 'GRAVE', instance);

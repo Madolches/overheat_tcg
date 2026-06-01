@@ -1,4 +1,4 @@
-import { Card, CardEffect } from '../types/game';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import { addInfluence, createSelectCardQuery, destroyByEffect, getOpponentUid } from './BaseUtil';
 
@@ -30,6 +30,19 @@ const effect_105000476_activate: CardEffect = {
   condition: (gameState, playerState) => {
     const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
     return gameState.phase === 'MAIN' && !!opponent && opponent.hand.length >= 3 && playerState.itemZone.some(card => !!card);
+  },
+  targetSpec: {
+    title: 'Select item',
+    description: 'Select 1 of your items to destroy.',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['ITEM'],
+    controller: 'SELF',
+    step: 'DESTROY_ITEM',
+    getCandidates: (_gameState, playerState) =>
+      playerState.itemZone
+        .filter((card): card is Card => !!card)
+        .map(card => ({ card, source: 'ITEM' as TriggerLocation }))
   },
   execute: async (instance, gameState, playerState) => {
     const ownItems = playerState.itemZone.filter((card): card is Card => !!card);

@@ -81,7 +81,6 @@ const cardEffects: CardEffect[] = [story('203000094_silver_music_order', '选择
     redLowNonGodFieldCards(gameState).length > 0 ||
     canCounterRedPlay(gameState, playerState),
   targetSpec: {
-    preselect: false,
     modeOptions: [{
       id: 'DESTROY',
       label: '破坏红色卡',

@@ -14,6 +14,17 @@ const cardEffects: CardEffect[] = [{
   limitCount: 1,
   description: '横置你的X个单位：选择你的1个单位，本回合伤害+X、力量+X000。X不能小于2。',
   condition: (gameState, playerState) => boostCostUnits(gameState, playerState).length >= 2 && ownUnits(playerState).length > 0,
+  targetSpec: {
+    title: '选择获得增益的单位',
+    description: '选择你的1个单位，本回合伤害+X、力量+X000。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      ownUnits(playerState).map(card => ({ card, source: 'UNIT' as any }))
+  },
   cost: async (gameState, playerState, instance) => {
     const candidates = boostCostUnits(gameState, playerState);
     if (candidates.length < 2) return false;
@@ -73,11 +84,17 @@ const cardEffects: CardEffect[] = [{
       () => 'UNIT'
     );
   },
-  onQueryResolve: async (instance, gameState, _playerState, selections, context) => {
+  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'TARGET') {
       const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
-      const x = context.x || 0;
-      if (target?.cardlocation === 'UNIT' && x >= 2) {
+      const data = (instance as any).data || {};
+      const storedX = data.exhaustBoostCostTurn === gameState.turnCount ? Number(data.exhaustBoostCostX || 0) : 0;
+      const x = Number(context.x || storedX || 0);
+      if ((instance as any).data) {
+        delete (instance as any).data.exhaustBoostCostX;
+        delete (instance as any).data.exhaustBoostCostTurn;
+      }
+      if (target?.cardlocation === 'UNIT' && ownUnits(playerState).some(unit => unit.gamecardId === target.gamecardId) && x >= 2) {
         addTempDamage(target, instance, x);
         addTempPower(target, instance, x * 1000);
       }

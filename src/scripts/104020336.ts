@@ -1,8 +1,9 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, discardHandCost, ensureData, getOpponentUid, isBattleFreeContext, wealthCount } from './BaseUtil';
+import { AtomicEffectExecutor, createSelectCardQuery, discardHandCost, ensureData, getOpponentUid, isBattleFreeContext, wealthCount } from './BaseUtil';
 
 const MODE_BATTLE_SHELTER = 'BATTLE_SHELTER';
 const MODE_OPPONENT_RUMMAGE = 'OPPONENT_RUMMAGE';
+const STEP_OPPONENT_RUMMAGE_DISCARD = 'OPPONENT_RUMMAGE_DISCARD';
 
 const selectedModeFromContext = (context?: any) =>
   context?.modeId || context?.selectedModeId || context?.declaredModeId;
@@ -57,6 +58,27 @@ const cardEffects: CardEffect[] = [{
   },
   cost: discardHandCost(2),
   onQueryResolve: async (instance, gameState, playerState, _selections, context) => {
+    if (context?.step === STEP_OPPONENT_RUMMAGE_DISCARD) {
+      const opponentUid = context.opponentUid || playerState.uid;
+      const opponent = gameState.players[opponentUid];
+      const activationPlayerUid =
+        context.activationPlayerUid ||
+        AtomicEffectExecutor.findCardOwnerKey(gameState, instance.gamecardId) ||
+        playerState.uid;
+
+      _selections.forEach(id => {
+        const card = opponent.hand.find((candidate: Card) => candidate.gamecardId === id);
+        if (card) {
+          AtomicEffectExecutor.moveCard(gameState, opponentUid, 'HAND', opponentUid, 'GRAVE', card.gamecardId, true, {
+            effectSourcePlayerUid: activationPlayerUid,
+            effectSourceCardId: instance.gamecardId
+          });
+        }
+      });
+      disableTradeUntilNextOwnTurn(instance, gameState);
+      return;
+    }
+
     const mode = selectedModeFromContext(context);
     if (mode === MODE_BATTLE_SHELTER) {
       const battlingOwnUnits = (gameState.battleState?.attackers || [])
@@ -90,14 +112,27 @@ const cardEffects: CardEffect[] = [{
     const opponentUid = getOpponentUid(gameState, playerState.uid);
     await AtomicEffectExecutor.execute(gameState, opponentUid, { type: 'DRAW', value: 3 }, instance);
     const opponent = gameState.players[opponentUid];
-    const discards = opponent.hand.slice(0, Math.min(3, opponent.hand.length));
-    discards.forEach(card => {
-      AtomicEffectExecutor.moveCard(gameState, opponentUid, 'HAND', opponentUid, 'GRAVE', card.gamecardId, true, {
-        effectSourcePlayerUid: playerState.uid,
-        effectSourceCardId: instance.gamecardId
-      });
-    });
-    disableTradeUntilNextOwnTurn(instance, gameState);
+    if (opponent.hand.length < 3) {
+      disableTradeUntilNextOwnTurn(instance, gameState);
+      return;
+    }
+    createSelectCardQuery(
+      gameState,
+      opponentUid,
+      opponent.hand,
+      '选择舍弃手牌',
+      '选择自己的3张手牌舍弃。',
+      3,
+      3,
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '104020336_modes',
+        step: STEP_OPPONENT_RUMMAGE_DISCARD,
+        opponentUid,
+        activationPlayerUid: playerState.uid
+      },
+      () => 'HAND'
+    );
   }
 }];
 

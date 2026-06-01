@@ -28,24 +28,47 @@ const effect_204000025_activation: CardEffect = {
     return false;
   },
   targetSpec: {
-    preselect: false,
-    title: '选择封印目标',
-    description: '请选择一个单位，然后封印其一个“启”效果。',
-    minSelections: 1,
-    maxSelections: 1,
-    zones: ['UNIT'],
-    controller: 'ANY',
-    step: 'SELECT_UNIT',
-    getCandidates: (gameState, playerState, instance) => {
-      const playPhase = (instance as any).__playSnapshot?.phase;
-      const isMainMode = playPhase === 'MAIN' || (!playPhase && gameState.phase === 'MAIN' && playerState.isTurn);
-      if (!isMainMode) return [];
-      return Object.values(gameState.players).flatMap(player =>
+    modeTitle: '选择效果',
+    modeDescription: '选择要执行的效果。',
+    modeOptions: [{
+      id: 'MAIN_SEAL',
+      label: '封印启效果',
+      title: '选择封印目标',
+      description: '请选择一个单位，然后封印其一个“启”效果。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'ANY',
+      step: 'SELECT_UNIT',
+      condition: (gameState, playerState, instance) => {
+        const playPhase = (instance as any).__playSnapshot?.phase;
+        return playPhase === 'MAIN' || (!playPhase && gameState.phase === 'MAIN' && playerState.isTurn);
+      },
+      getCandidates: gameState => Object.values(gameState.players).flatMap(player =>
         player.unitZone
           .filter((card): card is Card => !!card && !!card.effects?.some(effect => effect.type === 'ACTIVATE'))
           .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
-      );
-    }
+      )
+    }, {
+      id: 'COUNTER_NEGATE',
+      label: '无效发动',
+      title: '无效发动',
+      description: '对抗阶段，使对手的一次发动无效。',
+      minSelections: 0,
+      maxSelections: 0,
+      zones: [],
+      step: 'COUNTER_NEGATE',
+      condition: (gameState, playerState, instance) => {
+        const playPhase = (instance as any).__playSnapshot?.phase;
+        const isCounterMode = playPhase === 'COUNTERING' || (!playPhase && gameState.phase === 'COUNTERING');
+        return isCounterMode && gameState.counterStack.some(item =>
+          (item.type === 'PLAY' || item.type === 'EFFECT') &&
+          !item.isNegated &&
+          item.ownerUid !== playerState.uid
+        );
+      },
+      getCandidates: () => []
+    }]
   },
   execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
     const playPhase = (instance as any).__playSnapshot?.phase;
@@ -143,6 +166,18 @@ const effect_204000025_activation: CardEffect = {
     }
   },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
+    const selectedMode = context?.selectedModeId || context?.modeId || context?.declaredModeId;
+    if (selectedMode === 'COUNTER_NEGATE' || context.step === 'COUNTER_NEGATE') {
+      const item = [...gameState.counterStack]
+        .reverse()
+        .find(i => (i.type === 'PLAY' || i.type === 'EFFECT') && !i.isNegated && i.ownerUid !== playerState.uid);
+      if (item) {
+        item.isNegated = true;
+        gameState.logs.push(`[${instance.fullName}] 成功拦截并使 [${item.card?.fullName || '效果'}] 无效。`);
+      }
+      return;
+    }
+
     if (context.step === 'SELECT_ANY_TARGET' && selections.length > 0) {
       const selectedId = selections[0];
 

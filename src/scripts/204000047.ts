@@ -1,5 +1,18 @@
 import { Card, GameState, PlayerState } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import { allCardsOnField } from './BaseUtil';
+
+const fufengTargets = (gameState: GameState, playerState: PlayerState, source: Card) => {
+  const isFuhuaPresent = playerState.unitZone.some(c => c && c.specialName === '风花');
+  const filter = {
+    onField: true,
+    godMark: isFuhuaPresent ? undefined : false
+  };
+
+  return allCardsOnField(gameState).filter(card =>
+    AtomicEffectExecutor.matchesFilter(card, filter as any, source)
+  );
+};
 
 const card: Card = {
   id: '204000047',
@@ -20,41 +33,15 @@ const card: Card = {
       id: 'fufeng_activate',
       type: 'ACTIVATE',
       triggerLocation: ['HAND', 'PLAY'],
-      condition: (gameState: GameState, playerState: PlayerState, card: Card) => {
-        // Can only be played if there is at least one valid target unit on the battlefield
-        const isFuhuaPresent = playerState.unitZone.some(c => c && c.specialName === '风花');
-        const filter = {
-          onField: true,
-          type: 'UNIT',
-          godMark: isFuhuaPresent ? undefined : false
-        };
-
-        return Object.values(gameState.players).some(p => 
-          p.unitZone.some(u => u && AtomicEffectExecutor.matchesFilter(u, filter as any, card))
-        );
-      },
-      description: '选择战场上一个非神蚀的单位卡返回持有者手牌。若你的战场上存在「风花」单位，可以选择战场上一个神蚀单位返回持有者手牌。',
+      condition: (gameState: GameState, playerState: PlayerState, card: Card) =>
+        fufengTargets(gameState, playerState, card).length > 0,
+      description: '选择战场上1张非神蚀卡返回持有者手牌。若你的战场上存在「风花」单位，可以选择战场上1张神蚀卡返回持有者手牌。',
       execute: async (card: Card, gameState: GameState, playerState: PlayerState) => {
         // 1. Check for Fuhua on your side
         const isFuhuaPresent = playerState.unitZone.some(c => c && c.specialName === '风花');
 
-        // 2. Define target filter based on presence of Fuhua
-        const filter = {
-          onField: true,
-          type: 'UNIT',
-          // If no Fuhua, must NOT be a God unit
-          godMark: isFuhuaPresent ? undefined : false
-        };
-
-        // 3. Find valid targets across all players
-        const allPotentialTargets: Card[] = [];
-        Object.values(gameState.players).forEach(player => {
-          player.unitZone.forEach(u => {
-            if (u && AtomicEffectExecutor.matchesFilter(u, filter as any, card)) {
-              allPotentialTargets.push(u);
-            }
-          });
-        });
+        // 2. Find valid targets across all players
+        const allPotentialTargets = fufengTargets(gameState, playerState, card);
 
         if (allPotentialTargets.length === 0) {
           gameState.logs.push(`[歌月拂风] 没有合法目标。`);
@@ -66,9 +53,9 @@ const card: Card = {
           id: Math.random().toString(36).substring(7),
           type: 'SELECT_CARD',
           playerUid: playerState.uid,
-          options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, allPotentialTargets.map(t => ({ card: t, source: 'UNIT' as any }))),
-          title: '选择返回手牌的单位',
-          description: isFuhuaPresent ? '选择战场上一个单位返回持有者手牌。' : '选择战场上一个非神格单位返回持有者手牌。',
+          options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, allPotentialTargets.map(t => ({ card: t, source: t.cardlocation as any }))),
+          title: '选择返回手牌的卡',
+          description: isFuhuaPresent ? '选择战场上1张卡返回持有者手牌。' : '选择战场上1张非神蚀卡返回持有者手牌。',
           minSelections: 1,
           maxSelections: 1,
           callbackKey: 'EFFECT_RESOLVE',
@@ -86,20 +73,20 @@ const card: Card = {
           targetFilter: { gamecardId: targetId }
         }, card);
 
-        gameState.logs.push(`${playerState.displayName} 发动了 [歌月拂风]，将一个单位返回手牌。`);
+        gameState.logs.push(`${playerState.displayName} 发动了 [歌月拂风]，将一张卡返回手牌。`);
       },
       targetSpec: {
-        title: '选择返回手牌的单位',
-        description: '选择战场上一个单位返回持有者手牌。',
+        title: '选择返回手牌的卡',
+        description: '选择战场上1张卡返回持有者手牌。',
         minSelections: 1,
         maxSelections: 1,
-        zones: ['UNIT'],
+        zones: ['UNIT', 'ITEM'],
         getCandidates: (gameState, playerState, card) => {
           const isFuhuaPresent = playerState.unitZone.some(c => c && c.specialName === '风花');
-          const filter = { onField: true, type: 'UNIT', godMark: isFuhuaPresent ? undefined : false };
+          const filter = { onField: true, godMark: isFuhuaPresent ? undefined : false };
           return Object.values(gameState.players)
-            .flatMap(player => player.unitZone.filter((unit): unit is Card => !!unit && AtomicEffectExecutor.matchesFilter(unit, filter as any, card)))
-            .map(card => ({ card, source: 'UNIT' as any }));
+            .flatMap(player => [...player.unitZone, ...player.itemZone].filter((unit): unit is Card => !!unit && AtomicEffectExecutor.matchesFilter(unit, filter as any, card)))
+            .map(card => ({ card, source: card.cardlocation as any }));
         }
       }
     }

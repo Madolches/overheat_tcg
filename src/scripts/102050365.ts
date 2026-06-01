@@ -1,12 +1,18 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { createSelectCardQuery, forbidAttackAndDefenseContinuous, isNonGodFieldCard, moveCardAsCost } from './BaseUtil';
+import { forbidAttackAndDefenseContinuous, isNonGodFieldCard, moveCardAsCost } from './BaseUtil';
 
 const costCandidates = (playerState: any, instance: Card) =>
   [
     ...playerState.unitZone.filter((card: Card | null): card is Card => !!card),
     ...playerState.itemZone.filter((card: Card | null): card is Card => !!card),
   ].filter(card => card.gamecardId !== instance.gamecardId && isNonGodFieldCard(card));
+
+const disableContinuousUntilTurnEnd = (instance: Card, turnCount: number) => {
+  (instance as any).data = {
+    ...((instance as any).data || {}),
+    celiaContinuousDisabledTurn: turnCount
+  };
+};
 
 const cardEffects: CardEffect[] = [{
   id: '102050365_caged_continuous',
@@ -25,27 +31,34 @@ const cardEffects: CardEffect[] = [{
   limitCount: 1,
   description: '回合1次：将己方战场上1张非神蚀卡送入墓地。本回合中，这张卡所有持续能力无效。',
   condition: (_gameState, playerState, instance) => costCandidates(playerState, instance).length > 0,
-  execute: async (instance, gameState, playerState) => {
-    createSelectCardQuery(
-      gameState,
-      playerState.uid,
-      costCandidates(playerState, instance),
-      '选择费用',
-      '选择己方战场上1张非神蚀卡送入墓地。',
-      1,
-      1,
-      { sourceCardId: instance.gamecardId, effectId: '102050365_disable_continuous' },
-      card => card.cardlocation as any
-    );
+  targetSpec: {
+    title: '选择费用',
+    description: '选择己方战场上1张非神蚀卡送入墓地作为费用。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT', 'ITEM'],
+    controller: 'SELF',
+    step: 'NON_GOD_FIELD_COST',
+    costTarget: true,
+    getCandidates: (_gameState, playerState, instance) =>
+      costCandidates(playerState, instance).map(card => ({
+        card,
+        source: card.cardlocation as any,
+        ownerUid: playerState.uid
+      }))
   },
-  onQueryResolve: async (instance, gameState, playerState, selections) => {
-    const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
-    if (!target || !costCandidates(playerState, instance).some(card => card.gamecardId === target.gamecardId)) return;
+  cost: async (gameState, playerState, instance, context?: any) => {
+    const targetId = context?.declaredTargets?.find((target: any) => target.step === 'NON_GOD_FIELD_COST')?.gamecardId;
+    const target = targetId ? costCandidates(playerState, instance).find(card => card.gamecardId === targetId) : undefined;
+    if (!target) return false;
     moveCardAsCost(gameState, playerState.uid, target, 'GRAVE', instance);
-    (instance as any).data = {
-      ...((instance as any).data || {}),
-      celiaContinuousDisabledTurn: gameState.turnCount
-    };
+    return true;
+  },
+  execute: async (instance, gameState) => {
+    disableContinuousUntilTurnEnd(instance, gameState.turnCount);
+  },
+  onQueryResolve: async (instance, gameState) => {
+    disableContinuousUntilTurnEnd(instance, gameState.turnCount);
   }
 }];
 

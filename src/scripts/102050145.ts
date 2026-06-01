@@ -1,5 +1,5 @@
-import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, createPlayerSelectQuery, createSelectCardQuery, damagePlayerByEffect, ensureData, getOpponentUid, isBattleFreeContext, moveCardAsCost, ownUnits } from './BaseUtil';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
+import { AtomicEffectExecutor, createPlayerSelectQuery, createSelectCardQuery, damagePlayerByEffect, ensureData, getOpponentUid, isBattleFreeContext, moveCardAsCost, ownUnits, recordUnitSentFromFieldToGrave } from './BaseUtil';
 
 const isSmallLost = (instance: Card, turn: number) =>
   Number(ensureData(instance).smallActivateLostUntilTurn || 0) > turn;
@@ -22,6 +22,27 @@ const cardEffects: CardEffect[] = [{
     canUseInBattleFreeOrDamageRequest(gameState, playerState) &&
     !isSmallLost(instance, gameState.turnCount) &&
     ownUnits(playerState).length > 0,
+  targetSpec: {
+    title: 'Select cost unit',
+    description: 'Select 1 of your units to send to grave as cost.',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'SAC',
+    costTarget: true,
+    getCandidates: (_gameState, playerState) =>
+      ownUnits(playerState).map(card => ({ card, source: 'UNIT' as TriggerLocation }))
+  },
+  cost: async (gameState, playerState, instance, context?: any) => {
+    const targetId = context?.declaredTargets?.find((target: any) => target.step === 'SAC')?.gamecardId;
+    const target = targetId ? ownUnits(playerState).find(unit => unit.gamecardId === targetId) : undefined;
+    if (!target) return false;
+    moveCardAsCost(gameState, playerState.uid, target, 'GRAVE', instance);
+    recordUnitSentFromFieldToGrave(gameState, playerState.uid, target);
+    gameState.logs.push(`[${instance.fullName}] paid cost with [${target.fullName}].`);
+    return true;
+  },
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,
@@ -36,9 +57,23 @@ const cardEffects: CardEffect[] = [{
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'SAC') {
+      if (context?.declaredTargets?.length) {
+        const data = ensureData(instance);
+        data.smallActivateLostUntilTurn = gameState.turnCount + 2;
+        data.smallActivateLostSourceName = instance.fullName;
+        createPlayerSelectQuery(
+          gameState,
+          playerState.uid,
+          'Select damage player',
+          'Select 1 player to deal 1 damage.',
+          { sourceCardId: instance.gamecardId, effectId: '102050145_sac_damage', step: 'DAMAGE1' }
+        );
+        return;
+      }
       const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
       if (!target || target.cardlocation !== 'UNIT') return;
       moveCardAsCost(gameState, playerState.uid, target, 'GRAVE', instance);
+      recordUnitSentFromFieldToGrave(gameState, playerState.uid, target);
       gameState.logs.push(`[${instance.fullName}] 将 [${target.fullName}] 送入墓地作为费用。`);
       const data = ensureData(instance);
       data.smallActivateLostUntilTurn = gameState.turnCount + 2;
