@@ -91,8 +91,8 @@ const handActivationEffect: CardEffect = {
       canPayAccessCost(gameState, playerState, 2, instance.color, instance);
   },
   targetSpec: {
-    title: 'Select units to return',
-    description: 'Select 2 of your non-god non-combat units to return to hand.',
+    title: '选择返回手牌的单位',
+    description: '选择你的2个非神蚀且未参战的单位返回手牌。',
     minSelections: 2,
     maxSelections: 2,
     zones: ['UNIT'],

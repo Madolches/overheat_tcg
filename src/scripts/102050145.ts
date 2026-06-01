@@ -23,8 +23,8 @@ const cardEffects: CardEffect[] = [{
     !isSmallLost(instance, gameState.turnCount) &&
     ownUnits(playerState).length > 0,
   targetSpec: {
-    title: 'Select cost unit',
-    description: 'Select 1 of your units to send to grave as cost.',
+    title: '选择费用单位',
+    description: '选择你的1个单位送入墓地作为费用。',
     minSelections: 1,
     maxSelections: 1,
     zones: ['UNIT'],
@@ -64,8 +64,8 @@ const cardEffects: CardEffect[] = [{
         createPlayerSelectQuery(
           gameState,
           playerState.uid,
-          'Select damage player',
-          'Select 1 player to deal 1 damage.',
+          '选择伤害玩家',
+          '选择1名玩家，给予其1点伤害。',
           { sourceCardId: instance.gamecardId, effectId: '102050145_sac_damage', step: 'DAMAGE1' }
         );
         return;

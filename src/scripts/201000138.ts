@@ -71,8 +71,8 @@ const cardEffects: CardEffect[] = [story('201000138_purify', '依据你的放逐
   targetSpec: {
     preselect: false,
     targetGroups: [{
-      title: 'Select grave cards to exile',
-      description: 'Select grave cards for the 5-exile effect.',
+      title: '选择要放逐的墓地卡',
+      description: '选择5张以上效果要放逐的墓地卡。',
       minSelections: 0,
       maxSelections: 3,
       zones: ['GRAVE'],
@@ -83,8 +83,8 @@ const cardEffects: CardEffect[] = [story('201000138_purify', '依据你的放逐
           player.grave.map(card => ({ card, source: 'GRAVE' as any, ownerUid }))
         )
     }, {
-      title: 'Select grave cards to bottom',
-      description: 'Select non-Purify grave cards for the 15-bottom effect.',
+      title: '选择放回卡组底的墓地卡',
+      description: '选择15张以上效果要放回卡组底的《净化》以外墓地卡。',
       minSelections: 0,
       maxSelections: 5,
       zones: ['GRAVE'],

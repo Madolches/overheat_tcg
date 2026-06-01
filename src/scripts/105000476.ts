@@ -32,8 +32,8 @@ const effect_105000476_activate: CardEffect = {
     return gameState.phase === 'MAIN' && !!opponent && opponent.hand.length >= 3 && playerState.itemZone.some(card => !!card);
   },
   targetSpec: {
-    title: 'Select item',
-    description: 'Select 1 of your items to destroy.',
+    title: '选择道具',
+    description: '选择你的1张道具卡破坏。',
     minSelections: 1,
     maxSelections: 1,
     zones: ['ITEM'],

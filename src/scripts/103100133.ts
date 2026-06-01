@@ -17,8 +17,8 @@ const cardEffects: CardEffect[] = [{
       gameState,
       playerState.uid,
       candidates,
-      'Select cost units',
-      'Select X of your non-god units to send to grave as cost.',
+      '选择费用单位',
+      '选择任意数量你的非神蚀单位送入墓地作为费用。',
       1,
       candidates.length,
       {

@@ -2,9 +2,26 @@ import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import { canPutUnitOntoBattlefield, createSelectCardQuery, markExileAtEndOfTurn, moveCard, silenceAllEffectsUntil, story } from './BaseUtil';
 
+const hasTwoOpenUnitSlots = (playerState: any) =>
+  playerState.unitZone.filter((slot: Card | null) => slot === null).length >= 2;
+
+const isReviveCandidate = (card: Card) =>
+  card.type === 'UNIT' && !card.godMark;
+
+const canRevivePair = (playerState: any, first: Card, second: Card) => {
+  if (!hasTwoOpenUnitSlots(playerState)) return false;
+  if (first.gamecardId === second.gamecardId || first.id !== second.id) return false;
+  if (!isReviveCandidate(first) || !isReviveCandidate(second)) return false;
+  if (!!first.specialName && !!second.specialName && first.specialName === second.specialName) return false;
+  return canPutUnitOntoBattlefield(playerState, first) && canPutUnitOntoBattlefield(playerState, second);
+};
+
+const uniqueCards = (cards: Card[]) =>
+  cards.filter((card, index, self) => self.findIndex(entry => entry.gamecardId === card.gamecardId) === index);
+
 const getRevivePairs = (playerState: any) => {
-  if (playerState.unitZone.filter((slot: Card | null) => slot === null).length < 2) return [];
-  const graveUnits = playerState.grave.filter((card: Card) => card.type === 'UNIT' && !card.godMark);
+  if (!hasTwoOpenUnitSlots(playerState)) return [];
+  const graveUnits = playerState.grave.filter(isReviveCandidate);
   const byId = new Map<string, Card[]>();
   graveUnits.forEach(card => {
     const list = byId.get(card.id) || [];
@@ -16,13 +33,11 @@ const getRevivePairs = (playerState: any) => {
   byId.forEach(cards => {
     if (cards.length < 2) return;
     for (let i = 0; i < cards.length; i += 1) {
-      for (let j = i + 1; j < cards.length; j += 1) {
+      for (let j = 0; j < cards.length; j += 1) {
+        if (i === j) continue;
         const first = cards[i];
         const second = cards[j];
-        if (!canPutUnitOntoBattlefield(playerState, first)) continue;
-        const blockedBySecondName = !!second.specialName && playerState.unitZone.some((unit: Card | null) => unit?.specialName === second.specialName);
-        const sameSpecialNamePair = !!first.specialName && !!second.specialName && first.specialName === second.specialName;
-        if (blockedBySecondName || sameSpecialNamePair) continue;
+        if (!canRevivePair(playerState, first, second)) continue;
         pairs.push({ first, second });
       }
     }
@@ -37,10 +52,32 @@ const markEndExile = (instance: Card, gameState: any, playerState: any, targetId
   }
 };
 
+const revivePair = (instance: Card, gameState: any, playerState: any, first: Card, second: Card) => {
+  if (!canRevivePair(playerState, first, second)) return;
+
+  const firstId = first.gamecardId;
+  const secondId = second.gamecardId;
+  moveCard(gameState, playerState.uid, first, 'UNIT', instance);
+  const liveFirst = AtomicEffectExecutor.findCardById(gameState, firstId);
+  if (liveFirst?.cardlocation === 'UNIT') {
+    silenceAllEffectsUntil(liveFirst, instance, gameState.turnCount);
+    markEndExile(instance, gameState, playerState, firstId);
+  }
+
+  const liveSecondCandidate = playerState.grave.find((card: Card) => card.gamecardId === secondId);
+  if (!liveSecondCandidate || !canPutUnitOntoBattlefield(playerState, liveSecondCandidate)) return;
+  moveCard(gameState, playerState.uid, liveSecondCandidate, 'UNIT', instance);
+  const liveSecond = AtomicEffectExecutor.findCardById(gameState, secondId);
+  if (liveSecond?.cardlocation === 'UNIT') {
+    silenceAllEffectsUntil(liveSecond, instance, gameState.turnCount);
+    markEndExile(instance, gameState, playerState, secondId);
+  }
+};
+
 const cardEffects: CardEffect[] = [story('203000146_double_revive', '只能在你的主要阶段使用。从墓地选择2张同名的非神蚀单位卡放置到战场上，它们本回合失去所有能力，回合结束时放逐。', async (instance, gameState, playerState) => {
   const pairs = getRevivePairs(playerState);
   if (pairs.length === 0) return;
-  const firstOptions = pairs.map(pair => pair.first).filter((card, index, self) => self.findIndex(entry => entry.gamecardId === card.gamecardId) === index);
+  const firstOptions = uniqueCards(pairs.map(pair => pair.first));
   createSelectCardQuery(
     gameState,
     playerState.uid,
@@ -60,6 +97,34 @@ const cardEffects: CardEffect[] = [story('203000146_double_revive', '只能在�
   limitCount: 1,
   limitNameType: true,
   targetSpec: {
+    targetGroups: [{
+      title: '选择第一张单位',
+      description: '选择墓地中的1张可组成同名组合的非神蚀单位卡。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['GRAVE'],
+      controller: 'SELF',
+      step: 'FIRST',
+      getCandidates: (_gameState, playerState) =>
+        uniqueCards(getRevivePairs(playerState).map(pair => pair.first))
+          .map(card => ({ card, source: 'GRAVE' as any }))
+    }, {
+      title: '选择第二张单位',
+      description: '选择与第一张同名的另一张非神蚀单位卡。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['GRAVE'],
+      controller: 'SELF',
+      step: 'SECOND',
+      getCandidates: (_gameState, playerState, _instance, declaredTargets) => {
+        const firstId = declaredTargets?.find(target => target.step === 'FIRST')?.gamecardId;
+        if (!firstId) return [];
+        return uniqueCards(getRevivePairs(playerState)
+          .filter(pair => pair.first.gamecardId === firstId)
+          .map(pair => pair.second))
+          .map(card => ({ card, source: 'GRAVE' as any }));
+      }
+    }],
     title: '选择第一张单位',
     description: '选择墓地中的1张可组成同名组合的非神蚀单位卡。',
     minSelections: 1,
@@ -76,6 +141,16 @@ const cardEffects: CardEffect[] = [story('203000146_double_revive', '只能在�
     }
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.declaredTargets) {
+      if (context.declaredTargets.length < 2) return;
+      const firstId = context.declaredTargets.find((target: any) => target.step === 'FIRST')?.gamecardId || selections[0];
+      const secondId = context.declaredTargets.find((target: any) => target.step === 'SECOND')?.gamecardId || selections.find(id => id !== firstId);
+      const first = firstId ? playerState.grave.find((card: Card) => card.gamecardId === firstId) : undefined;
+      const second = secondId ? playerState.grave.find((card: Card) => card.gamecardId === secondId) : undefined;
+      if (first && second) revivePair(instance, gameState, playerState, first, second);
+      return;
+    }
+
     if (context?.step === 'FIRST') {
       const first = selections[0] ? playerState.grave.find((card: Card) => card.gamecardId === selections[0]) : undefined;
       if (!first) return;
@@ -100,28 +175,7 @@ const cardEffects: CardEffect[] = [story('203000146_double_revive', '只能在�
     if (context?.step === 'SECOND') {
       const first = playerState.grave.find((card: Card) => card.gamecardId === context.firstId && card.id === context.reviveId);
       const second = selections[0] ? playerState.grave.find((card: Card) => card.gamecardId === selections[0] && card.id === context.reviveId) : undefined;
-      if (!first || !second) return;
-      if (!canPutUnitOntoBattlefield(playerState, first)) return;
-      if (!!second.specialName && playerState.unitZone.some((unit: Card | null) => unit?.specialName === second.specialName)) return;
-      if (!!first.specialName && !!second.specialName && first.specialName === second.specialName) return;
-
-      const firstId = first.gamecardId;
-      const secondId = second.gamecardId;
-      moveCard(gameState, playerState.uid, first, 'UNIT', instance);
-      const liveFirst = AtomicEffectExecutor.findCardById(gameState, firstId);
-      if (liveFirst?.cardlocation === 'UNIT') {
-        silenceAllEffectsUntil(liveFirst, instance, gameState.turnCount);
-        markEndExile(instance, gameState, playerState, firstId);
-      }
-
-      const liveSecondCandidate = playerState.grave.find((card: Card) => card.gamecardId === secondId);
-      if (!liveSecondCandidate || !canPutUnitOntoBattlefield(playerState, liveSecondCandidate)) return;
-      moveCard(gameState, playerState.uid, liveSecondCandidate, 'UNIT', instance);
-      const liveSecond = AtomicEffectExecutor.findCardById(gameState, secondId);
-      if (liveSecond?.cardlocation === 'UNIT') {
-        silenceAllEffectsUntil(liveSecond, instance, gameState.turnCount);
-        markEndExile(instance, gameState, playerState, secondId);
-      }
+      if (first && second) revivePair(instance, gameState, playerState, first, second);
     }
   }
 }), {
