@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Download, Hash, Loader2, LogIn, Play, Plus, Save, Search, Timer, Trash2, Upload, Users, X, ArrowRightLeft, Radio, Network } from 'lucide-react';
+import { ArrowLeft, Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Download, Hash, Loader2, LogIn, Play, Plus, Save, Search, Timer, Trash2, Upload, Users, X, ArrowRightLeft, Radio, Network, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useCardCatalog } from '../hooks/useCardCatalog';
 import { Card, CardType, GamePhase, GameState, PlayerState, SandboxCardSetup, SandboxEditableZone, SandboxFile, SandboxPlayerKey, SandboxPlayerSetup } from '../types/game';
@@ -89,7 +89,7 @@ type SelectedCardTarget = EditingTarget & {
   card: SandboxCardSetup;
 };
 
-type CenterPopover = 'turn' | 'timer' | 'phase' | 'bot' | 'export' | null;
+type CenterPopover = 'settings' | 'phase' | 'bot' | 'export' | 'room' | null;
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
 
@@ -503,52 +503,48 @@ export const SandboxSetup: React.FC = () => {
     <div className="mx-auto w-full max-w-3xl rounded-2xl border border-white/10 bg-zinc-950/95 p-2 shadow-2xl backdrop-blur-xl">
       <div className="flex flex-wrap items-center justify-center gap-2">
         <div className="relative">
-          <button title="设置回合数" onClick={() => setCenterPopover(centerPopover === 'turn' ? null : 'turn')} className={centerIconButton}>
-            <Hash className="h-4 w-4 text-blue-400" />
-            <span className="ml-1.5 tabular-nums">{sandbox.turnCount}</span>
+          <button title="对局设置" onClick={() => setCenterPopover(centerPopover === 'settings' ? null : 'settings')} className={centerIconButton}>
+            <Settings className="h-4 w-4 text-blue-400" />
+            <ChevronDown className="ml-1 h-3.5 w-3.5 text-zinc-500" />
           </button>
-          {centerPopover === 'turn' && (
+          {centerPopover === 'settings' && (
             <div className={centerPopoverClass}>
-              <div className="mb-2 text-[10px] font-black tracking-widest text-zinc-500">回合数</div>
-              <input
-                autoFocus
-                type="number"
-                min={1}
-                max={999}
-                value={sandbox.turnCount}
-                onChange={event => setSandbox(prev => ({ ...prev, turnCount: Math.max(1, Math.min(999, Number(event.target.value) || 1)) }))}
-                className="w-full rounded-lg border border-zinc-800 bg-black px-3 py-2 text-center text-sm font-black outline-none focus:border-red-500"
-              />
-            </div>
-          )}
-        </div>
+              <div className="mb-3 text-[10px] font-black tracking-widest text-zinc-500">对局设置</div>
+              
+              <div className="mb-3 space-y-1">
+                <label className="block text-xs font-bold text-zinc-400">当前回合数</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={999}
+                  value={sandbox.turnCount}
+                  onChange={event => setSandbox(prev => ({ ...prev, turnCount: Math.max(1, Math.min(999, Number(event.target.value) || 1)) }))}
+                  className="w-full rounded-lg border border-zinc-800 bg-black px-3 py-2 text-sm font-black outline-none focus:border-red-500"
+                />
+              </div>
 
-        <button
-          title="切换回合玩家"
-          onClick={() => setSandbox(prev => ({ ...prev, currentTurn: prev.currentTurn === 'player' ? 'opponent' : 'player' }))}
-          className={centerIconButton}
-        >
-          <ArrowRightLeft className="h-4 w-4 text-purple-400" />
-          <span className="ml-1.5">{sandbox.currentTurn === 'player' ? '我方' : '对手'}</span>
-        </button>
+              <div className="mb-3 space-y-1">
+                <label className="block text-xs font-bold text-zinc-400">当前回合玩家</label>
+                <button
+                  onClick={() => setSandbox(prev => ({ ...prev, currentTurn: prev.currentTurn === 'player' ? 'opponent' : 'player' }))}
+                  className="flex w-full items-center justify-center rounded-lg border border-zinc-800 bg-black px-3 py-2 text-sm font-black hover:border-red-500"
+                >
+                  <ArrowRightLeft className="mr-2 h-4 w-4 text-purple-400" />
+                  {sandbox.currentTurn === 'player' ? '我方' : '对手'}
+                </button>
+              </div>
 
-        <div className="relative">
-          <button title="设置时间" onClick={() => setCenterPopover(centerPopover === 'timer' ? null : 'timer')} className={centerIconButton}>
-            <Timer className="h-4 w-4 text-yellow-400" />
-            <span className="ml-1.5 tabular-nums">{sandbox.turnTimerLimit || 300}s</span>
-          </button>
-          {centerPopover === 'timer' && (
-            <div className={centerPopoverClass}>
-              <div className="mb-2 text-[10px] font-black tracking-widest text-zinc-500">时间设置</div>
-              <input
-                autoFocus
-                type="number"
-                min={30}
-                max={999}
-                value={sandbox.turnTimerLimit || 300}
-                onChange={event => setSandbox(prev => ({ ...prev, turnTimerLimit: Math.max(30, Math.min(999, Number(event.target.value) || 300)) }))}
-                className="w-full rounded-lg border border-zinc-800 bg-black px-3 py-2 text-center text-sm font-black outline-none focus:border-red-500"
-              />
+              <div className="space-y-1">
+                <label className="block text-xs font-bold text-zinc-400">回合时间 (秒)</label>
+                <input
+                  type="number"
+                  min={30}
+                  max={999}
+                  value={sandbox.turnTimerLimit || 300}
+                  onChange={event => setSandbox(prev => ({ ...prev, turnTimerLimit: Math.max(30, Math.min(999, Number(event.target.value) || 300)) }))}
+                  className="w-full rounded-lg border border-zinc-800 bg-black px-3 py-2 text-sm font-black outline-none focus:border-red-500"
+                />
+              </div>
             </div>
           )}
         </div>
@@ -613,33 +609,60 @@ export const SandboxSetup: React.FC = () => {
         <button title="运行人机沙盒" onClick={startBotGame} disabled={starting} className={cn(centerIconButton, 'bg-red-600/90 text-white hover:bg-red-500')}>
           {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
         </button>
-      </div>
+        <div className="relative">
+          <button title="联机房间" onClick={() => setCenterPopover(centerPopover === 'room' ? null : 'room')} className={centerIconButton}>
+            <Network className="h-4 w-4 text-cyan-400" />
+            <ChevronDown className="ml-1 h-3.5 w-3.5 text-zinc-500" />
+          </button>
+          {centerPopover === 'room' && (
+            <div className={centerPopoverClass}>
+              <div className="mb-3 text-[10px] font-black tracking-widest text-zinc-500">联机房间</div>
+              
+              <div className="mb-4">
+                <button 
+                  onClick={createRoom} 
+                  disabled={starting} 
+                  className="flex w-full items-center justify-center rounded-lg bg-cyan-600/90 px-3 py-2 text-xs font-black text-white hover:bg-cyan-500 disabled:opacity-50"
+                >
+                  {starting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Network className="mr-1.5 h-3.5 w-3.5" />}
+                  生成房间码
+                </button>
+                {createdRoomCode && (
+                  <div className="mt-2 text-center">
+                    <p className="text-[10px] text-zinc-400">已生成房间:</p>
+                    <button
+                      title="点击进入房间"
+                      onClick={() => createdRoomGameId && navigate(`/battle/${createdRoomGameId}`, { state: { seat: 'player' } })}
+                      className="mt-1 w-full truncate rounded border border-cyan-500/30 bg-cyan-950/40 py-1.5 font-mono text-sm font-black tracking-[0.25em] text-cyan-200 hover:border-cyan-500/60"
+                    >
+                      {createdRoomCode}
+                    </button>
+                  </div>
+                )}
+              </div>
 
-      <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-        <div className="flex h-11 min-w-0 flex-1 min-w-[140px] max-w-[200px] items-center rounded-xl border border-blue-500/25 bg-black/70 px-3">
-          {createdRoomCode ? (
-            <button
-              title="进入已生成房间"
-              onClick={() => createdRoomGameId && navigate(`/battle/${createdRoomGameId}`, { state: { seat: 'player' } })}
-              className="w-full truncate font-mono text-sm font-black tracking-[0.25em] text-blue-200"
-            >
-              {createdRoomCode}
-            </button>
-          ) : (
-            <input
-              value={roomCode}
-              onChange={event => setRoomCode(event.target.value.replace(/\D/g, '').slice(0, 8))}
-              placeholder="输入房间码"
-              className="w-full bg-transparent text-center font-mono text-sm font-black tracking-[0.18em] text-blue-100 outline-none placeholder:tracking-normal placeholder:text-zinc-600"
-            />
+              <div className="border-t border-white/10 pt-3">
+                <label className="mb-1 block text-[10px] font-bold text-zinc-400">加入其他房间</label>
+                <div className="flex gap-2">
+                  <input
+                    value={roomCode}
+                    onChange={event => setRoomCode(event.target.value.replace(/\D/g, '').slice(0, 8))}
+                    placeholder="输入8位房间码"
+                    className="w-full min-w-0 rounded-lg border border-zinc-800 bg-black px-3 py-2 text-center font-mono text-xs font-black outline-none focus:border-cyan-500"
+                  />
+                  <button 
+                    title="加入" 
+                    onClick={joinRoom} 
+                    disabled={joining || roomCode.length !== 8} 
+                    className="flex shrink-0 items-center justify-center rounded-lg bg-zinc-800 px-3 text-white hover:bg-zinc-700 disabled:opacity-50"
+                  >
+                    {joining ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4 text-teal-400" />}
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
         </div>
-        <button title="生成房间码" onClick={createRoom} disabled={starting} className={centerIconButton}>
-          <Network className="h-4 w-4 text-cyan-400" />
-        </button>
-        <button title="加入房间" onClick={joinRoom} disabled={joining || roomCode.length !== 8} className={centerIconButton}>
-          {joining ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4 text-teal-400" />}
-        </button>
         <div className="relative">
           <button title="导出 .sbx" onClick={() => setCenterPopover(centerPopover === 'export' ? null : 'export')} className={centerIconButton}>
             <Download className="h-4 w-4 text-indigo-400" />
