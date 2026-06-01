@@ -10,10 +10,10 @@ const cardEffects: CardEffect[] = [{
   condition: (gameState, playerState) =>
     canActivateDefaultTiming(gameState, playerState) &&
     playerState.grave.length >= 3 &&
-    ownUnits(playerState).some(unit => unit.isExhausted && unit.faction === '圣王国' && isNonGodUnit(unit)),
+    ownUnits(playerState).some(unit => unit.faction === '圣王国' && isNonGodUnit(unit)),
   targetSpec: {
-    title: 'Select reset unit',
-    description: 'Select 1 exhausted same-faction non-godmark unit, ready it, and give it power +500 this turn.',
+    title: '选择重置单位',
+    description: '选择1个同派系非神蚀单位，将其重置，并在本回合中力量+500。',
     minSelections: 1,
     maxSelections: 1,
     zones: ['UNIT'],
@@ -21,7 +21,7 @@ const cardEffects: CardEffect[] = [{
     step: 'TARGET',
     getCandidates: (_gameState, playerState, instance) =>
       ownUnits(playerState)
-        .filter(unit => unit.isExhausted && unit.faction === instance.faction && isNonGodUnit(unit))
+        .filter(unit => unit.faction === instance.faction && isNonGodUnit(unit))
         .map(card => ({ card, source: 'UNIT' as any }))
   },
   cost: async (gameState, playerState, instance) => {
@@ -46,16 +46,21 @@ const cardEffects: CardEffect[] = [{
     selected.forEach(card => moveCardAsCost(gameState, playerState.uid, card, 'EXILE', instance));
   },
   execute: async (instance, gameState, playerState) => {
-    createSelectCardQuery(gameState, playerState.uid, ownUnits(playerState).filter(unit => unit.isExhausted && unit.faction === '圣王国' && isNonGodUnit(unit)), '选择重置单位', '选择战场上1个横置的<圣王国>非神蚀单位，重置并本回合力量+500。', 1, 1, {
+    createSelectCardQuery(gameState, playerState.uid, ownUnits(playerState).filter(unit => unit.faction === '圣王国' && isNonGodUnit(unit)), '选择重置单位', '选择战场上1个<圣王国>非神蚀单位，重置并本回合力量+500。', 1, 1, {
       sourceCardId: instance.gamecardId,
       effectId: '101130441_reset_boost',
       step: 'TARGET'
     });
   },
-  onQueryResolve: async (instance, gameState, _playerState, selections, context) => {
+  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step !== 'TARGET') return;
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
-    if (target?.cardlocation !== 'UNIT' || !target.isExhausted) return;
+    if (
+      target?.cardlocation !== 'UNIT' ||
+      AtomicEffectExecutor.findCardOwnerKey(gameState, target.gamecardId) !== playerState.uid ||
+      target.faction !== instance.faction ||
+      !isNonGodUnit(target)
+    ) return;
     readyByEffect(gameState, target, instance);
     addTempPower(target, instance, 500);
   }

@@ -26,8 +26,8 @@ const cardEffects: CardEffect[] = [{
   description: '将这张卡送入墓地：选择你的1个<雷霆>单位，本回合力量+1000。',
   condition: (_gameState, playerState) => ownUnits(playerState).some(unit => unit.faction === '雷霆'),
   targetSpec: {
-    title: 'Select Thunder unit',
-    description: 'Select 1 of your Thunder units.',
+    title: '选择雷霆单位',
+    description: '选择你的1个<雷霆>单位。',
     minSelections: 1,
     maxSelections: 1,
     zones: ['UNIT'],

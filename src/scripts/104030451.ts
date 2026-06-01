@@ -58,8 +58,8 @@ const card: Card = {
       },
       targetSpec: {
         targetGroups: [{
-          title: 'Select field unit',
-          description: 'Select 1 other non-god Adventurer Guild unit on your battlefield.',
+          title: '选择战场单位',
+          description: '选择你的战场上1个这张卡以外的非神蚀<冒险家公会>单位。',
           minSelections: 1,
           maxSelections: 1,
           zones: ['UNIT'],
@@ -75,8 +75,8 @@ const card: Card = {
               )
               .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
         }, {
-          title: 'Select erosion unit',
-          description: 'Select 1 face-up non-god Adventurer Guild unit in your erosion zone.',
+          title: '选择侵蚀区单位',
+          description: '选择你的侵蚀区中1张正面非神蚀<冒险家公会>单位卡。',
           minSelections: 1,
           maxSelections: 1,
           zones: ['EROSION_FRONT'],
