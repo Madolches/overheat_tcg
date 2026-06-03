@@ -33,6 +33,7 @@ import {
   scorePlayableCard,
   scorePaymentSacrificeValue
 } from './ai/hardStrategy';
+import { ADVENTURER_GUILD_CARD_IDS } from './ai/decks/adventurerGuildStrategy';
 
 type PaymentSummary = {
   success: boolean;
@@ -41,6 +42,13 @@ type PaymentSummary = {
   erosionCostCards?: { id: string; name: string }[];
   feijingCard?: { id: string; name: string; destination: TriggerLocation };
 };
+
+export const HARD_AI_DEFAULT_OPENING_CARD_IDS = [
+  ADVENTURER_GUILD_CARD_IDS.albert,
+  ADVENTURER_GUILD_CARD_IDS.association,
+  ADVENTURER_GUILD_CARD_IDS.xiaoting,
+  ADVENTURER_GUILD_CARD_IDS.foxMerchant,
+] as const;
 
 export const ServerGameService = {
   shouldSkipVisualDelay(gameState: GameState) {
@@ -7767,7 +7775,7 @@ export const ServerGameService = {
   },
 
   // Create a practice game with a bot
-  async createPracticeGame(deck: Card[]) {
+  async createPracticeGame(deck: Card[], botDifficulty: BotDifficulty = 'simple') {
     // Auth check placeholder removed (always truthy in temp environment)
 
     const validation = ServerGameService.validateDeck(deck);
@@ -7834,15 +7842,15 @@ export const ServerGameService = {
       isHandPublic: 0,
       timeRemaining: GAME_TIMEOUTS.MAIN_PHASE_TOTAL,
       confrontationStrategy: 'AUTO',
+      botDifficulty,
     };
 
-    // Initial Draw 4 for both
-    for (let i = 0; i < 4; i++) {
-      const card1 = myState.deck.pop();
-      if (card1) myState.hand.push(card1);
-      const card2 = botState.deck.pop();
-      if (card2) botState.hand.push(card2);
-    }
+    ServerGameService.drawInitialHand(myState, 4);
+    ServerGameService.drawInitialHand(
+      botState,
+      4,
+      botDifficulty === 'hard' ? HARD_AI_DEFAULT_OPENING_CARD_IDS : undefined
+    );
 
     // Random first player
     const uids = [({ uid: "temp", displayName: "temp" } as any).uid, 'BOT_PLAYER'];
@@ -9181,15 +9189,18 @@ export const ServerGameService = {
           },
         });
       } else if (query.callbackKey === 'TRIGGER_CHOICE') {
-        selections = ['YES'];
+        selections = ServerGameService.getBotQuerySelectionsForPlayer(gameState, playerUid, query);
+        if (selections.length === 0) selections = ['YES'];
         ServerGameService.recordAiDecision(gameState, playerUid, {
           action: 'TRIGGER_CHOICE',
           subject: query.title || '发动提示',
-          reason: '自动确认可发动的触发效果，优先让卡组引擎继续运转。',
+          reason: selections[0] === 'NO'
+            ? 'Deck-specific hard AI declined this optional trigger.'
+            : 'Deck-specific hard AI accepted this trigger when it advances the current plan.',
           details: {
             callback: query.callbackKey,
             type: query.type,
-            selection: 'YES',
+            selection: selections[0] || 'YES',
           },
         });
       } else if (query.callbackKey === 'TRIGGER_ORDER_CHOICE') {
@@ -10383,6 +10394,29 @@ export const ServerGameService = {
     return array;
   },
 
+  drawInitialHand(player: PlayerState, count = 4, preferredCardIds?: readonly string[]) {
+    const drawnCards: Card[] = [];
+
+    for (const cardId of preferredCardIds || []) {
+      if (drawnCards.length >= count) break;
+      const cardIndex = player.deck.findIndex(card => card?.id === cardId);
+      if (cardIndex === -1) continue;
+      const [card] = player.deck.splice(cardIndex, 1);
+      if (card) drawnCards.push(card);
+    }
+
+    while (drawnCards.length < count) {
+      const card = player.deck.pop();
+      if (!card) break;
+      drawnCards.push(card);
+    }
+
+    drawnCards.forEach(card => {
+      card.cardlocation = 'HAND';
+      player.hand.push(card);
+    });
+  },
+
   async createPracticeGameState(
     deck: Card[],
     playerUid: string | number,
@@ -10481,11 +10515,12 @@ export const ServerGameService = {
       botDeckProfileId,
     };
 
-    // Draw 4
-    for (let i = 0; i < 4; i++) {
-      const c1 = myState.deck.pop(); if (c1) { c1.cardlocation = 'HAND'; myState.hand.push(c1); }
-      const c2 = botState.deck.pop(); if (c2) { c2.cardlocation = 'HAND'; botState.hand.push(c2); }
-    }
+    ServerGameService.drawInitialHand(myState, 4);
+    ServerGameService.drawInitialHand(
+      botState,
+      4,
+      botDifficulty === 'hard' ? HARD_AI_DEFAULT_OPENING_CARD_IDS : undefined
+    );
 
     const gameState: GameState = {
       gameId: "temp",

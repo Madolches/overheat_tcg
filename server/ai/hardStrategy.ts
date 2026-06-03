@@ -3101,6 +3101,11 @@ export function chooseQuerySelections(
   const requiredSelectionCount = Math.max(0, Math.min(minSelections, maxSelections, selectableOptions.length));
   const maxSelectionCount = Math.max(requiredSelectionCount, Math.min(maxSelections, selectableOptions.length));
 
+  if (difficulty === 'hard') {
+    const adventurerGuildSelections = chooseAdventurerGuildQuerySelections(gameState, playerUid, query, profile);
+    if (adventurerGuildSelections) return adventurerGuildSelections;
+  }
+
   if (query.callbackKey === 'TRIGGER_CHOICE') return ['YES'];
   if (query.callbackKey === 'TRIGGER_ORDER_CHOICE') {
     return selectableOptions[0]?.id ? [selectableOptions[0].id] : [];
@@ -3112,9 +3117,6 @@ export function chooseQuerySelections(
       .map(option => option.card?.gamecardId || option.id)
       .filter(Boolean) as string[];
   }
-
-  const adventurerGuildSelections = chooseAdventurerGuildQuerySelections(gameState, playerUid, query, profile);
-  if (adventurerGuildSelections) return adventurerGuildSelections;
 
   if (query.type === 'SELECT_CHOICE') {
     const yes = selectableOptions.find(option => option.id === 'YES');

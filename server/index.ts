@@ -25,7 +25,7 @@ import {
     validatePassword,
     validateUsername
 } from './registration';
-import { ServerGameService } from './ServerGameService';
+import { HARD_AI_DEFAULT_OPENING_CARD_IDS, ServerGameService } from './ServerGameService';
 import { PlayerState, Card, GAME_TIMEOUTS, GameState, BattleLogEntry, SandboxFile, SandboxPlayerKey, SandboxPlayerSetup, SandboxCardSetup, GamePhase } from '../src/types/game';
 import { EventEngine } from '../src/services/EventEngine';
 import { addBattleLog, battleLogText, normalizeBattleLogs } from '../src/lib/battleLog';
@@ -4246,7 +4246,13 @@ app.post('/api/user/craft', async (req, res): Promise<void> => {
 
 // Socket.IO logic
 // Helper to create initial player state
-function createInitialPlayer(deckCards: Card[], displayName: string, isFirst: boolean, turnTimerLimit?: number): PlayerState {
+function createInitialPlayer(
+    deckCards: Card[],
+    displayName: string,
+    isFirst: boolean,
+    turnTimerLimit?: number,
+    preferredOpeningCardIds?: readonly string[]
+): PlayerState {
     const fullDeck: Card[] = deckCards.map(c => {
         const uniqueId = Math.random().toString(36).substring(2, 10);
         return {
@@ -4265,8 +4271,20 @@ function createInitialPlayer(deckCards: Card[], displayName: string, isFirst: bo
         [fullDeck[i], fullDeck[j]] = [fullDeck[j], fullDeck[i]];
     }
 
-    // Draw initial 4 cards
-    const hand = fullDeck.splice(0, 4).map(c => ({ ...c, cardlocation: 'HAND' as any }));
+    const hand: Card[] = [];
+    for (const cardId of preferredOpeningCardIds || []) {
+        if (hand.length >= 4) break;
+        const cardIndex = fullDeck.findIndex(card => card?.id === cardId);
+        if (cardIndex === -1) continue;
+        const [card] = fullDeck.splice(cardIndex, 1);
+        if (card) hand.push({ ...card, cardlocation: 'HAND' as any });
+    }
+
+    while (hand.length < 4) {
+        const card = fullDeck.shift();
+        if (!card) break;
+        hand.push({ ...card, cardlocation: 'HAND' as any });
+    }
 
     return {
         uid: '', // Will be set by caller
@@ -4435,7 +4453,13 @@ io.on('connection', (socket) => {
                             gameState.players[userIdStr] = player;
 
                             if (gameState.mode === 'practice' && !gameState.players['BOT_PLAYER']) {
-                                const botPlayer = createInitialPlayer(deckCards, '机器人', !isFirst, gameState.turnTimerLimit);
+                                const botPlayer = createInitialPlayer(
+                                    deckCards,
+                                    '机器人',
+                                    !isFirst,
+                                    gameState.turnTimerLimit,
+                                    gameState.botDifficulty === 'hard' ? HARD_AI_DEFAULT_OPENING_CARD_IDS : undefined
+                                );
                                 botPlayer.uid = 'BOT_PLAYER';
                                 botPlayer.mulliganDone = true;
                                 botPlayer.botDifficulty = gameState.botDifficulty === 'hard' ? 'hard' : 'simple';
