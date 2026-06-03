@@ -626,6 +626,8 @@ export interface GameState {
   };
   drawAnimationResume?: {
     playerUid: string;
+    cardId?: string;
+    card?: Card;
     resumeAt: number;
     visualStateEmitted?: boolean;
   };

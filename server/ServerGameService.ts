@@ -6847,6 +6847,45 @@ export const ServerGameService = {
     await ServerGameService.executeDrawPhase(gameState, player, onUpdate);
   },
 
+  async completeDrawAnimationResume(gameState: GameState, player: PlayerState, onUpdate?: (state: GameState) => Promise<void>) {
+    const resume = gameState.drawAnimationResume;
+    if (!resume || resume.playerUid !== player.uid) return false;
+
+    const pendingCardId = resume.cardId || resume.card?.gamecardId;
+    const deckIndex = pendingCardId
+      ? player.deck.findIndex(card => card.gamecardId === pendingCardId)
+      : player.deck.length - 1;
+    const card = deckIndex >= 0 ? player.deck.splice(deckIndex, 1)[0] : undefined;
+
+    if (!card) {
+      delete gameState.drawAnimationResume;
+      delete gameState.animationHint;
+      delete gameState.animationUntil;
+      gameState.logs.push(`[抽卡异常] ${player.displayName} 的待抽卡牌已不在卡组中。`);
+      return false;
+    }
+
+    card.cardlocation = 'HAND';
+    player.hand.push(card);
+    gameState.logs.push(`${player.displayName} 抽了一张卡`);
+    EventEngine.dispatchEvent(gameState, {
+      type: 'CARD_DRAWN',
+      playerUid: player.uid,
+      data: { cardId: card.gamecardId }
+    });
+    await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
+
+    delete gameState.drawAnimationResume;
+    delete gameState.animationUntil;
+    if (gameState.pendingQuery) {
+      return true;
+    }
+    gameState.phase = 'EROSION';
+    await ServerGameService.executeErosionPhase(gameState, player);
+    delete gameState.animationHint;
+    return true;
+  },
+
   async executeDrawPhase(gameState: GameState, player: PlayerState, onUpdate?: (state: GameState) => Promise<void>) {
     if (player.skipDrawPhase) {
       player.skipDrawPhase = false;
@@ -6899,26 +6938,9 @@ export const ServerGameService = {
       return;
     }
 
-    let drewCard = false;
-    let drawnCard: Card | undefined;
-
     // Check effects at DRAW phase (TODO)
-    if (player.deck.length > 0) {
-      const card = player.deck.pop();
-      if (card) {
-        card.cardlocation = 'HAND';
-        player.hand.push(card);
-        drewCard = true;
-        drawnCard = card;
-        gameState.logs.push(`${player.displayName} 抽了一张卡`);
-        EventEngine.dispatchEvent(gameState, {
-          type: 'CARD_DRAWN',
-          playerUid: player.uid,
-          data: { cardId: card.gamecardId }
-        });
-        await ServerGameService.checkTriggeredEffects(gameState);
-      }
-    } else {
+    const drawnCard = player.deck[player.deck.length - 1];
+    if (!drawnCard) {
       // 1. During the card drawing stage, there are no cards available for drawing
       gameState.logs.push(`[游戏结束] ${player.displayName} 在抽牌阶段卡组已空，判负。`);
       gameState.gameStatus = 2;
@@ -6927,43 +6949,37 @@ export const ServerGameService = {
       return; // Stop processing further phases
     }
 
-    if (drewCard) {
-      gameState.animationUntil = Date.now() + 2000;
-      if (drawnCard) {
-        gameState.animationHint = {
-          id: `draw_${player.uid}_${drawnCard.gamecardId}_${Date.now()}`,
-          type: 'DRAW_CARD',
-          playerUid: player.uid,
-          cardId: drawnCard.gamecardId,
-          card: { ...drawnCard },
-          revealTo: 'owner',
-          durationMs: 2000,
-          createdAt: Date.now()
-        };
-      }
-      if (onUpdate) {
-        await onUpdate(gameState);
-      }
-      if (gameState.pendingQuery) {
-        return;
-      }
-      if (onUpdate) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      } else {
-        gameState.drawAnimationResume = {
-          playerUid: player.uid,
-          resumeAt: gameState.animationUntil || Date.now() + 2000
-        };
-        return;
-      }
-    }
+    gameState.animationUntil = Date.now() + 2000;
+    gameState.animationHint = {
+      id: `draw_${player.uid}_${drawnCard.gamecardId}_${Date.now()}`,
+      type: 'DRAW_CARD',
+      playerUid: player.uid,
+      cardId: drawnCard.gamecardId,
+      card: { ...drawnCard, cardlocation: 'HAND' },
+      revealTo: 'owner',
+      durationMs: 2000,
+      createdAt: Date.now()
+    };
+    gameState.drawAnimationResume = {
+      playerUid: player.uid,
+      cardId: drawnCard.gamecardId,
+      card: { ...drawnCard, cardlocation: 'HAND' },
+      resumeAt: gameState.animationUntil
+    };
 
-    // Automatically move to EROSION phase
-    delete gameState.drawAnimationResume;
-    delete gameState.animationHint;
-    delete gameState.animationUntil;
-    gameState.phase = 'EROSION';
-    await ServerGameService.executeErosionPhase(gameState, player);
+    if (onUpdate) {
+      await onUpdate(gameState);
+    }
+    if (gameState.pendingQuery) {
+      return;
+    }
+    if (onUpdate) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      await ServerGameService.completeDrawAnimationResume(gameState, player, onUpdate);
+      return;
+    } else {
+      return;
+    }
   },
 
   async executeErosionPhase(gameState: GameState, player: PlayerState) {

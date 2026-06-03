@@ -1,7 +1,7 @@
 import React, { RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, ArrowRight, Flame, Play, RefreshCw, Shield, Sparkles, Swords, Trophy, Zap } from 'lucide-react';
+import { Flame, Play, RefreshCw, Shield, Sparkles, Swords, Trophy, Zap } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { Card, CardType, Rarity } from '../types/game';
 
@@ -690,24 +690,45 @@ const ConfrontationAnimation: React.FC<{ event: BattleAnimationEvent }> = ({ eve
       animate={{ opacity: [0, 1, 1, 0] }}
       exit={{ opacity: 0 }}
       transition={{ duration: 3, times: [0, 0.08, 0.88, 1], ease: 'easeOut' }}
-      className="absolute inset-0 flex items-center justify-center bg-black/10"
+      className="absolute inset-0 flex items-end justify-center bg-black/5 px-3 pb-[18vh] md:pb-[13vh]"
     >
       <motion.div
-        initial={{ y: -96, scale: 0.96 }}
-        animate={{ y: [-96, 0, 18], scale: [0.96, 1, 0.98] }}
+        initial={{ y: 42, scale: 0.98 }}
+        animate={{ y: [42, 0, 8], scale: [0.98, 1, 0.99] }}
         transition={{ duration: 3, times: [0, 0.2, 1], ease: 'easeOut' }}
-        className="relative flex w-[min(86vw,820px)] flex-col gap-3"
+        className="relative w-full max-w-[min(96vw,1100px)] overflow-hidden rounded-xl border border-cyan-100/25 bg-zinc-950/88 px-3 py-3 shadow-[0_0_46px_rgba(8,145,178,0.45)] backdrop-blur-md md:px-5"
       >
-        <div className="absolute left-1/2 top-2 h-[calc(100%-1rem)] w-1 -translate-x-1/2 rounded-full bg-gradient-to-b from-cyan-200/0 via-cyan-100/75 to-cyan-200/0 shadow-[0_0_24px_rgba(103,232,249,0.8)]" />
-        {items.map((item, index) => (
-          <ConfrontationChainRow key={`${item.linkNumber}-${item.sourceCardId || item.title}-${index}`} item={item} index={index} />
-        ))}
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-100/85 to-transparent" />
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <div className="flex h-7 w-7 items-center justify-center rounded border border-cyan-100/35 bg-cyan-300/10 text-cyan-100 shadow-[0_0_18px_rgba(103,232,249,0.55)]">
+              <Zap className="h-4 w-4" />
+            </div>
+            <div>
+              <div className="text-[10px] font-black tracking-[0.28em] text-cyan-100">CHAIN</div>
+              <div className="text-xs font-black italic text-white/75 md:text-sm">对抗连锁 L1-L{items[items.length - 1]?.linkNumber || 1}</div>
+            </div>
+          </div>
+          <div className="rounded border border-white/10 bg-black/45 px-2 py-1 text-[10px] font-black tracking-widest text-white/45">
+            后入先结算
+          </div>
+        </div>
+        <div className="flex items-stretch gap-2 overflow-x-auto pb-1 custom-scrollbar">
+          {items.map((item, index) => (
+            <ConfrontationChainNode
+              key={`${item.linkNumber}-${item.sourceCardId || item.title}-${index}`}
+              item={item}
+              index={index}
+              isLatest={index === items.length - 1}
+            />
+          ))}
+        </div>
       </motion.div>
     </motion.div>
   );
 };
 
-const ConfrontationChainRow: React.FC<{ item: BattleAnimationChainItem; index: number }> = ({ item, index }) => {
+const ConfrontationChainNode: React.FC<{ item: BattleAnimationChainItem; index: number; isLatest: boolean }> = ({ item, index, isLatest }) => {
   const isMine = item.side === 'player';
   const isOpponent = item.side === 'opponent';
   const hasCard = !!item.cardImageUrl;
@@ -721,74 +742,63 @@ const ConfrontationChainRow: React.FC<{ item: BattleAnimationChainItem; index: n
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: -28, x: isMine ? 32 : isOpponent ? -32 : 0, scale: 0.96 }}
-      animate={{ opacity: [0, 1, 1, 0], y: [-28, 0, 0, 22], x: [isMine ? 32 : isOpponent ? -32 : 0, 0, 0, 0], scale: [0.96, 1, 1, 0.98] }}
-      transition={{ duration: 2.72, delay: index * 0.12, times: [0, 0.12, 0.88, 1], ease: 'easeOut' }}
+      initial={{ opacity: 0, y: 24, scale: 0.94 }}
+      animate={{ opacity: [0, 1, 1, 0], y: [24, 0, 0, 12], scale: [0.94, isLatest ? 1.05 : 1, isLatest ? 1.03 : 1, 0.98] }}
+      transition={{ duration: 2.72, delay: index * 0.1, times: [0, 0.14, 0.88, 1], ease: 'easeOut' }}
       className={cn(
-        "relative z-10 grid grid-cols-[1fr_auto_1fr] items-center gap-3",
-        isMine ? "justify-items-end" : isOpponent ? "justify-items-start" : "justify-items-center"
+        "relative flex min-w-[12.5rem] max-w-[13.5rem] shrink-0 items-center gap-2 overflow-hidden rounded-lg border bg-black/70 p-2 shadow-lg md:min-w-[15rem] md:max-w-[16rem] md:p-2.5",
+        isMine ? "border-cyan-200/50 shadow-cyan-500/20" : isOpponent ? "border-red-200/45 shadow-red-500/20" : "border-white/20",
+        isLatest && "ring-2 ring-[#d7b45a]/80 shadow-[0_0_30px_rgba(215,180,90,0.45)]"
       )}
     >
-      <div className={cn("w-full", isOpponent ? "flex justify-end" : "hidden md:block")} />
-      <div className="flex h-11 w-11 items-center justify-center rounded-full border border-cyan-100/40 bg-black/80 text-base font-black text-cyan-100 shadow-[0_0_28px_rgba(103,232,249,0.75)]">
+      <div className={cn("absolute inset-x-0 top-0 h-1", isMine ? "bg-cyan-300/75" : isOpponent ? "bg-red-400/75" : "bg-white/35")} />
+      <div className={cn(
+        "flex h-10 w-10 shrink-0 items-center justify-center rounded border text-sm font-black shadow-[0_0_18px_rgba(103,232,249,0.42)]",
+        isMine ? "border-cyan-100/45 bg-cyan-300/15 text-cyan-100" : isOpponent ? "border-red-100/45 bg-red-500/15 text-red-100" : "border-white/20 bg-white/10 text-white"
+      )}>
         L{item.linkNumber}
       </div>
-      <div className={cn("w-full", isMine ? "flex justify-start" : "hidden md:block")} />
-
-      <div
-        className={cn(
-          "col-span-3 row-start-1 flex items-center gap-3",
-          isMine ? "justify-start pl-[calc(50%+2.25rem)] md:pl-[calc(50%+2.75rem)]" : "justify-end pr-[calc(50%+2.25rem)] md:pr-[calc(50%+2.75rem)]",
-          !isMine && !isOpponent && "justify-center pl-0 pr-0"
+      <div className="relative flex h-16 aspect-[3/4] shrink-0 items-center justify-center overflow-hidden rounded border border-white/15 bg-zinc-950 md:h-20">
+        {hasCard ? (
+          <img
+            src={item.cardImageUrl}
+            alt={item.cardName || item.title}
+            className="h-full w-full object-cover"
+            draggable={false}
+            referrerPolicy="no-referrer"
+          />
+        ) : (
+          <Icon className={cn("h-7 w-7", isOpponent ? "text-red-100" : "text-cyan-100")} />
         )}
-      >
-        {isMine && <ArrowLeft className="h-7 w-7 text-cyan-100 drop-shadow-[0_0_10px_rgba(103,232,249,0.9)]" />}
-        <div
-          className={cn(
-            "relative flex h-[92px] w-[250px] items-center gap-3 overflow-hidden rounded-lg border bg-zinc-950/88 p-3 shadow-[0_0_34px_rgba(8,145,178,0.45)] backdrop-blur-md md:h-[108px] md:w-[300px]",
-            isMine ? "border-cyan-200/45" : "border-red-200/35"
-          )}
-        >
-          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/70 to-transparent" />
-          <div className="absolute bottom-1 left-1 rounded bg-black/85 px-1.5 py-0.5 text-[8px] font-black leading-none text-cyan-100 shadow-[0_0_10px_rgba(103,232,249,0.8)] md:text-[9px]">
-            L{item.linkNumber}
-          </div>
-          <div className="relative flex h-full aspect-[3/4] shrink-0 items-center justify-center overflow-hidden rounded border border-white/15 bg-black/60">
-            {hasCard ? (
-              <>
-                <img
-                  src={item.cardImageUrl}
-                  alt={item.cardName || item.title}
-                  className="h-full w-full object-cover"
-                  draggable={false}
-                  referrerPolicy="no-referrer"
-                />
-                {(item.type === 'PLAY' || item.type === 'EFFECT') && (
-                  <div className="absolute left-1/2 top-1 -translate-x-1/2 rounded bg-cyan-100/95 px-1.5 py-0.5 text-[9px] font-black leading-none text-black shadow-[0_0_12px_rgba(103,232,249,0.9)]">
-                    L{item.linkNumber}
-                  </div>
-                )}
-              </>
-            ) : (
-              <Icon className="h-8 w-8 text-cyan-100 md:h-10 md:w-10" />
-            )}
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className={cn("mb-1 text-[10px] font-black tracking-[0.2em]", isMine ? "text-cyan-200" : "text-red-200")}>
-              {isMine ? '我方对抗' : isOpponent ? '对方对抗' : '对抗'}
-            </div>
-            <div className="line-clamp-2 text-sm font-black leading-tight text-white md:text-base">
-              {item.cardName || item.title}
-            </div>
-            {item.subtitle && (
-              <div className="mt-1 line-clamp-1 text-[10px] leading-tight text-white/55 md:text-xs">
-                {item.subtitle}
-              </div>
-            )}
-          </div>
-        </div>
-        {isOpponent && <ArrowRight className="h-7 w-7 text-red-100 drop-shadow-[0_0_10px_rgba(248,113,113,0.9)]" />}
+        {isLatest && (
+          <motion.div
+            animate={{ opacity: [0.25, 0.75, 0.25] }}
+            transition={{ duration: 0.9, repeat: Infinity }}
+            className="absolute inset-0 border-2 border-[#d7b45a]"
+          />
+        )}
       </div>
+      <div className="min-w-0 flex-1">
+        <div className={cn("mb-1 text-[9px] font-black tracking-[0.18em]", isMine ? "text-cyan-200" : isOpponent ? "text-red-200" : "text-white/60")}>
+          {isMine ? '我方对抗' : isOpponent ? '对方对抗' : '对抗'}
+        </div>
+        <div className="line-clamp-2 text-xs font-black leading-tight text-white md:text-sm">
+          {item.cardName || item.title}
+        </div>
+        {item.subtitle && (
+          <div className="mt-1 line-clamp-1 text-[10px] leading-tight text-white/50">
+            {item.subtitle}
+          </div>
+        )}
+        {isLatest && (
+          <div className="mt-1 inline-flex rounded bg-[#d7b45a]/90 px-1.5 py-0.5 text-[8px] font-black leading-none text-black">
+            最新链节
+          </div>
+        )}
+      </div>
+      {index > 0 && (
+        <div className="absolute -left-2 top-1/2 hidden h-px w-4 -translate-y-1/2 bg-cyan-100/50 md:block" />
+      )}
     </motion.div>
   );
 };

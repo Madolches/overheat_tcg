@@ -1196,11 +1196,7 @@ setInterval(async () => {
                             return;
                         }
 
-                        delete gameState.drawAnimationResume;
-                        delete gameState.animationHint;
-                        delete gameState.animationUntil;
-                        gameState.phase = 'EROSION';
-                        await ServerGameService.executeErosionPhase(gameState, player);
+                        await ServerGameService.completeDrawAnimationResume(gameState, player, async () => {});
                         await syncAndSaveState(gameId, gameState, { source: 'drawAnimationResume' });
                         triggerBotIfNeeded(gameState, gameId);
                         return;

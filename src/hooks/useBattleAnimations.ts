@@ -174,7 +174,7 @@ export function useBattleAnimations(game: GameState | null, perspectiveUid?: str
         type: 'card-draw',
         side: sideForUid(ownerUid, perspectiveUid, game),
         title: isNormalDrawPhase ? '抽牌' : '卡组加入手牌',
-        cardName: hintedCard?.fullName || hintedCard?.name || '抽到的卡',
+        cardName: hintedCard?.fullName || '抽到的卡',
         cardImageUrl: hintedCard ? getCardPreviewImage(hintedCard) : undefined,
         sourceCardId: game.animationHint.cardId,
         playerUid: ownerUid,

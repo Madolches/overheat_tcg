@@ -156,6 +156,8 @@ interface StandardPopupProps {
   isHidden?: boolean;
   squarePanel?: boolean;
   instant?: boolean;
+  presentation?: 'center' | 'duel-bottom';
+  optionLayout?: 'grid' | 'row';
 }
 
 const getOptionId = (option: PopupOption) => option.selectionId || option.card?.gamecardId || option.card?.id || option.id || '';
@@ -398,9 +400,13 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
   onHide,
   isHidden = false,
   squarePanel = false,
-  instant = false
+  instant = false,
+  presentation = 'center',
+  optionLayout
 }) => {
   if (!isOpen) return null;
+  const isDuelBottom = presentation === 'duel-bottom';
+  const isRowLayout = optionLayout === 'row' || isDuelBottom;
 
   const renderedOptions: PopupOption[] = options || cards.map(card => ({
     id: card.gamecardId || card.id,
@@ -427,40 +433,60 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
         exit={{ opacity: 0 }}
         transition={{ duration: 0 }}
         className={cn(
-          "fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 backdrop-blur-xl p-4 md:p-8",
+          isDuelBottom
+            ? "fixed inset-0 z-[1000] flex items-end justify-center bg-gradient-to-t from-black/60 via-black/15 to-transparent p-0 md:p-4"
+            : "fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 backdrop-blur-xl p-4 md:p-8",
           "transition-none",
           isHidden ? "opacity-0 pointer-events-none invisible" : "opacity-100 pointer-events-auto visible"
         )}
-        onClick={onClose}
+        onClick={isDuelBottom ? undefined : onClose}
       >
         <motion.div
-          initial={{ scale: 1, opacity: 1, y: 0 }}
-          animate={isHidden ? { scale: 1, opacity: 0, y: 0 } : { scale: 1, opacity: 1, y: 0 }}
-          exit={{ scale: 1, opacity: 0, y: 0 }}
+          initial={isDuelBottom ? { opacity: 1, y: 0 } : { scale: 1, opacity: 1, y: 0 }}
+          animate={isHidden
+            ? (isDuelBottom ? { opacity: 0, y: 18 } : { scale: 1, opacity: 0, y: 0 })
+            : (isDuelBottom ? { opacity: 1, y: 0 } : { scale: 1, opacity: 1, y: 0 })}
+          exit={isDuelBottom ? { opacity: 0, y: 18 } : { scale: 1, opacity: 0, y: 0 }}
           transition={{ duration: 0 }}
           className={cn(
-            "relative w-full bg-zinc-900/90 border border-white/10 rounded-[2rem] shadow-2xl overflow-hidden flex flex-col",
+            "relative w-full bg-zinc-900/90 border border-white/10 shadow-2xl overflow-hidden flex flex-col",
             "transition-none",
-            squarePanel
-              ? "max-w-[22rem] md:max-w-[24rem] max-h-[90vh]"
-              : (mode === 'double_selection' && !children) ? "max-w-md" : "max-w-6xl max-h-[90vh]",
+            isDuelBottom
+              ? "max-w-[min(118rem,100vw)] max-h-[44vh] rounded-t-xl border-x-0 border-b-0 bg-zinc-950/94 shadow-[0_-18px_70px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-xl md:rounded-xl md:border md:max-h-[42vh]"
+              : cn(
+                  "rounded-[2rem]",
+                  squarePanel
+                    ? "max-w-[22rem] md:max-w-[24rem] max-h-[90vh]"
+                    : (mode === 'double_selection' && !children) ? "max-w-md" : "max-w-6xl max-h-[90vh]"
+                ),
             isHidden && "pointer-events-none"
           )}
           onClick={e => e.stopPropagation()}
         >
 
           {/* Background Accents */}
-          <div className="absolute inset-0 pointer-events-none overflow-hidden opacity-20">
+          {!isDuelBottom && <div className="absolute inset-0 pointer-events-none overflow-hidden opacity-20">
             <div className="absolute -top-24 -right-24 w-64 h-64 bg-[#f27d26] blur-[100px] rounded-full" />
             <div className="absolute -bottom-24 -left-24 w-64 h-64 bg-red-600 blur-[100px] rounded-full" />
-          </div>
+          </div>}
+          {isDuelBottom && (
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-200/70 to-transparent" />
+          )}
 
           {/* Header */}
-          <div className="relative z-10 px-6 py-6 md:px-10 md:py-8 border-b border-white/5 flex flex-col items-center text-center shrink-0">
+          <div className={cn(
+            "relative z-10 border-b border-white/5 shrink-0",
+            isDuelBottom
+              ? "flex flex-col gap-2 px-3 py-2 text-left md:px-5 md:py-3"
+              : "px-6 py-6 md:px-10 md:py-8 flex flex-col items-center text-center"
+          )}>
             {onHide && (
               <button 
                 onClick={onHide}
-                className="absolute left-6 top-6 p-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 hover:text-white transition-all flex items-center gap-2 group border border-white/5"
+                className={cn(
+                  "absolute p-2 px-3 bg-white/5 hover:bg-white/10 text-white/50 hover:text-white transition-all flex items-center gap-2 group border border-white/5",
+                  isDuelBottom ? "right-3 top-2 rounded-md md:right-5 md:top-3" : "left-6 top-6 rounded-xl"
+                )}
                 title="隐藏窗口以查看战场"
               >
                 <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
@@ -473,64 +499,80 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
             {onClose && (
               <button 
                 onClick={onClose}
-                className="absolute right-4 top-4 p-2 rounded-full hover:bg-white/10 text-white/50 hover:text-white transition-all group"
+                className={cn(
+                  "absolute p-2 hover:bg-white/10 text-white/50 hover:text-white transition-all group",
+                  isDuelBottom ? "right-3 top-2 rounded-md md:right-5 md:top-3" : "right-4 top-4 rounded-full"
+                )}
               >
                 <X className="w-6 h-6 group-hover:rotate-90 transition-transform" />
               </button>
             )}
 
-            <div className="flex items-center justify-center gap-3 mb-2">
+            <div className={cn("flex items-center gap-3", isDuelBottom ? "justify-start pr-24" : "justify-center mb-2")}>
               {mode === 'double_selection' && <Sparkles className="w-6 h-6 text-[#f27d26] animate-pulse" />}
               {(mode === 'card_selection' || mode === 'player_selection' || mode === 'choice_selection') && <Zap className="w-6 h-6 text-[#f27d26]" />}
               {mode === 'payment_selection' && <Loader2 className="w-6 h-6 text-[#f27d26] animate-spin" />}
-              <h2 className="text-xl md:text-3xl font-black italic uppercase tracking-tighter text-white">
+              <h2 className={cn(
+                "font-black italic uppercase tracking-tighter text-white",
+                isDuelBottom ? "truncate text-sm md:text-xl" : "text-xl md:text-3xl"
+              )}>
                 {title}
               </h2>
             </div>
             
             {description && (
-              <p className="text-zinc-400 text-xs md:text-sm tracking-widest uppercase max-w-2xl leading-relaxed">
+              <p className={cn(
+                "text-zinc-400 text-xs md:text-sm uppercase leading-relaxed",
+                isDuelBottom ? "line-clamp-2 max-w-[calc(100%-6rem)] tracking-wide md:max-w-5xl" : "tracking-widest max-w-2xl"
+              )}>
                 {description}
               </p>
             )}
 
             {/* Selection Status */}
             {(mode === 'card_selection' || mode === 'player_selection' || mode === 'choice_selection') && maxSelections > 0 && (
-              <div className="mt-4 px-4 py-1.5 bg-white/5 rounded-full border border-white/10 text-[10px] md:text-xs font-black text-zinc-500 uppercase tracking-widest">
+              <div className={cn(
+                "px-4 py-1.5 bg-white/5 border border-white/10 text-[10px] md:text-xs font-black text-zinc-500 uppercase tracking-widest",
+                isDuelBottom ? "absolute bottom-2 right-3 rounded-md md:right-5 md:bottom-3" : "mt-4 rounded-full"
+              )}>
                 选择进度: {selectedIds.length} / {maxSelections} (至少 {minSelections})
               </div>
             )}
 
             {/* Payment Status */}
             {mode === 'payment_selection' && paymentCost !== undefined && (
-              <div className="mt-4 flex items-center justify-center gap-6">
+              <div className={cn("flex items-center gap-6", isDuelBottom ? "absolute bottom-2 right-3 md:right-5 md:bottom-3" : "mt-4 justify-center")}>
                 <div className="flex items-center gap-2">
                   <span className="text-zinc-500 text-[10px] font-bold tracking-widest">需求</span>
-                  <span className="text-2xl md:text-3xl font-black text-red-500">{paymentCost}</span>
+                  <span className={cn("font-black text-red-500", isDuelBottom ? "text-xl md:text-2xl" : "text-2xl md:text-3xl")}>{paymentCost}</span>
                 </div>
                 <div className="h-8 w-px bg-white/10" />
                 <div className="flex items-center gap-2">
                   <span className="text-zinc-500 text-[10px] font-bold tracking-widest">已选</span>
-                  <span className="text-2xl md:text-3xl font-black text-white">{paymentCurrent}</span>
+                  <span className={cn("font-black text-white", isDuelBottom ? "text-xl md:text-2xl" : "text-2xl md:text-3xl")}>{paymentCurrent}</span>
                 </div>
               </div>
             )}
           </div>
 
           {/* Content Body */}
-          <div className="relative z-10 flex-1 overflow-y-auto p-6 md:p-10 custom-scrollbar">
+          <div className={cn(
+            "relative z-10 flex-1 custom-scrollbar",
+            isDuelBottom ? "overflow-hidden p-3 md:p-4" : "overflow-y-auto p-6 md:p-10"
+          )}>
             {children}
             {mode === 'double_selection' ? (
-              <div className="flex flex-col gap-6 items-center">
-                <div className="flex gap-4 w-full">
+              <div className={cn("flex flex-col items-center", isDuelBottom ? "gap-3" : "gap-6")}>
+                <div className={cn("flex gap-3 w-full", isDuelBottom ? "max-w-2xl" : "gap-4")}>
                   <button
                     onClick={onConfirm}
                     disabled={confirmDisabled}
                     className={cn(
-                      "flex-1 py-4 rounded-2xl font-black italic uppercase tracking-widest transition-all hover:scale-105 active:scale-95 shadow-xl text-sm",
+                      "flex-1 font-black italic uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-95 shadow-xl text-sm",
+                      isDuelBottom ? "rounded-md py-3" : "rounded-2xl py-4",
                       confirmDisabled 
                         ? "bg-zinc-800 text-zinc-500 cursor-not-allowed opacity-50 shadow-none hover:scale-100" 
-                        : confirmType === 'primary' ? "bg-[#f27d26] text-white shadow-[#f27d26]/20" :
+                        : confirmType === 'primary' ? "bg-[#d7b45a] text-black shadow-[#d7b45a]/20" :
                           confirmType === 'danger' ? "bg-red-600 text-white shadow-red-600/20" :
                           "bg-amber-500 text-black shadow-amber-500/20"
                     )}
@@ -539,14 +581,21 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
                   </button>
                   <button
                     onClick={onCancel || onClose}
-                    className="flex-1 py-4 bg-zinc-800 text-white border border-white/10 rounded-2xl font-black italic uppercase tracking-widest transition-all hover:bg-zinc-700 hover:scale-105 active:scale-95 text-sm"
+                    className={cn(
+                      "flex-1 bg-zinc-800 text-white border border-white/10 font-black italic uppercase tracking-widest transition-all hover:bg-zinc-700 hover:scale-[1.02] active:scale-95 text-sm",
+                      isDuelBottom ? "rounded-md py-3" : "rounded-2xl py-4"
+                    )}
                   >
                     {cancelText}
                   </button>
                 </div>
               </div>
             ) : (mode === 'card_selection' || mode === 'card_display' || mode === 'player_selection' || mode === 'choice_selection') ? (
-              <div className="grid grid-cols-2 lg:grid-cols-5 gap-5 md:gap-8 place-items-center">
+              <div className={cn(
+                isRowLayout
+                  ? "flex w-full items-start gap-3 overflow-x-auto overflow-y-hidden pb-2 pr-2 custom-scrollbar"
+                  : "grid grid-cols-2 lg:grid-cols-5 gap-5 md:gap-8 place-items-center"
+              )}>
                 {renderedOptions.map((option, i) => {
                   const card = option.card;
                   const optionId = getOptionId(option);
@@ -557,13 +606,14 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
 
                   if (shouldDrawOption) {
                     return (
-                      <VisualOptionCard
-                        key={`${optionId || i}-${i}`}
-                        option={option}
-                        isSelected={isSelected}
-                        selectionOrder={selectionOrder}
-                        onClick={() => handleOptionClick(option)}
-                      />
+                      <div key={`${optionId || i}-${i}`} className={cn(isRowLayout && "w-36 shrink-0 md:w-44")}>
+                        <VisualOptionCard
+                          option={option}
+                          isSelected={isSelected}
+                          selectionOrder={selectionOrder}
+                          onClick={() => handleOptionClick(option)}
+                        />
+                      </div>
                     );
                   }
 
@@ -585,7 +635,8 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
                       onMouseEnter={() => onCardHover?.(card)}
                       onMouseLeave={() => onCardHover?.(null)}
                       className={cn(
-                        "w-full aspect-[3/4] rounded-xl md:rounded-2xl overflow-hidden border-2 transition-all relative shrink-0",
+                        "aspect-[3/4] rounded-xl md:rounded-2xl overflow-hidden border-2 transition-all relative shrink-0",
+                        isRowLayout ? "w-24 md:w-32 lg:w-36" : "w-full",
                         highlightedIds.includes(card.gamecardId) && "z-20 !border-yellow-400 ring-2 ring-yellow-400 shadow-[0_0_20px_rgba(250,204,21,0.95)]",
                         option.disabled && "opacity-40 grayscale cursor-not-allowed",
                         isSelected
@@ -624,18 +675,35 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
 
           {/* Footer Actions */}
           {(mode === 'card_selection' || mode === 'player_selection' || mode === 'choice_selection' || mode === 'payment_selection') && (
-            <div className="relative z-10 p-6 md:p-8 border-t border-white/5 bg-black/20 flex flex-col items-center gap-4 shrink-0">
-              <button
-                onClick={onSelectionComplete}
-                disabled={(mode === 'card_selection' || mode === 'player_selection' || mode === 'choice_selection') && selectedIds.length < minSelections}
-                className="px-12 py-4 bg-[#f27d26] text-white font-black italic uppercase tracking-[0.2em] rounded-xl hover:bg-[#f27d26]/80 transition-all disabled:opacity-30 disabled:cursor-not-allowed shadow-xl shadow-[#f27d26]/20 hover:scale-105 active:scale-95"
-              >
-                {mode === 'payment_selection' ? '确认支付' : confirmText}
-              </button>
-              <div className="flex items-center gap-2 text-zinc-600 uppercase text-[10px] font-black tracking-widest">
+            <div className={cn(
+              "relative z-10 border-t border-white/5 bg-black/20 flex shrink-0",
+              isDuelBottom ? "items-center justify-between gap-3 px-3 py-2 md:px-5 md:py-3" : "p-6 md:p-8 flex-col items-center gap-4"
+            )}>
+              <div className={cn("items-center gap-2 text-zinc-600 uppercase text-[10px] font-black tracking-widest", isDuelBottom ? "hidden md:flex" : "flex")}>
                 <Loader2 className="w-3 h-3 animate-spin" />
                 等待确认
               </div>
+              {mode === 'payment_selection' && onCancel && (
+                <button
+                  onClick={onCancel}
+                  className={cn(
+                    "border border-white/10 bg-zinc-800 text-white font-black italic uppercase tracking-[0.18em] transition-all hover:bg-zinc-700 active:scale-95",
+                    isDuelBottom ? "rounded-md px-6 py-3 text-xs md:px-10" : "rounded-xl px-10 py-4"
+                  )}
+                >
+                  {cancelText}
+                </button>
+              )}
+              <button
+                onClick={onSelectionComplete}
+                disabled={(mode === 'card_selection' || mode === 'player_selection' || mode === 'choice_selection') && selectedIds.length < minSelections}
+                className={cn(
+                  "bg-[#d7b45a] text-black font-black italic uppercase tracking-[0.2em] hover:bg-[#e7c76b] transition-all disabled:opacity-30 disabled:cursor-not-allowed shadow-xl shadow-[#d7b45a]/20 hover:scale-[1.02] active:scale-95",
+                  isDuelBottom ? "ml-auto w-full rounded-md px-8 py-3 md:w-auto md:px-14" : "px-12 py-4 rounded-xl"
+                )}
+              >
+                {mode === 'payment_selection' ? '确认支付' : confirmText}
+              </button>
             </div>
           )}
 
