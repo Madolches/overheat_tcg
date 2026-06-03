@@ -120,6 +120,16 @@ const effect_104000298_irodori_recover: CardEffect = {
       card => card.cardlocation as any
     );
   },
+  targetSpec: {
+    title: '选择回收卡',
+    description: '选择你墓地或侵蚀前区中的1张符合条件的卡加入手牌。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['GRAVE', 'EROSION_FRONT'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) =>
+      recoverCandidates(playerState).map((card: Card) => ({ card, source: card.cardlocation as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const selected = recoverCandidates(playerState).find((card: Card) => card.gamecardId === selections[0]);
     if (selected) {

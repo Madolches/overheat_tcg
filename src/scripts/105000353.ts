@@ -58,18 +58,36 @@ const effect_105000353_alchemy_power: CardEffect = {
     event?.data?.zone === 'UNIT' &&
     enteredFromDeckByAlchemy(instance, gameState, event) &&
     getPowerCostCandidates(gameState, playerState).length > 0,
-  execute: async (instance, gameState, playerState) => {
+  cost: async (gameState, playerState, instance) => {
+    const candidates = getPowerCostCandidates(gameState, playerState);
+    if (candidates.length === 0) return false;
     createSelectCardQuery(
       gameState,
       playerState.uid,
-      getPowerCostCandidates(gameState, playerState),
+      candidates,
       '选择炼金费用',
       '选择墓地中1张本回合因炼金效果送墓的菲晶单位放逐。',
       1,
       1,
-      { sourceCardId: instance.gamecardId, effectId: '105000353_alchemy_power', step: 'EXILE_COST' },
+      { sourceCardId: instance.gamecardId, effectId: '105000353_alchemy_power', step: 'EXILE_COST', skipEffectResolveAfterCost: true },
       () => 'GRAVE'
     );
+    return true;
+  },
+  onCostResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step !== 'EXILE_COST') return;
+    const selected = AtomicEffectExecutor.findCardById(gameState, selections[0]);
+    if (!selected || !getPowerCostCandidates(gameState, playerState).some(card => card.gamecardId === selected.gamecardId)) {
+      context.cancelActivation = true;
+      return;
+    }
+    moveCardAsCost(gameState, playerState.uid, selected, 'EXILE', instance);
+  },
+  execute: async (instance, gameState) => {
+    const liveSelf = AtomicEffectExecutor.findCardById(gameState, instance.gamecardId);
+    if (!liveSelf) return;
+    liveSelf.basePower = 3000;
+    liveSelf.power = 3000;
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step !== 'EXILE_COST') return;

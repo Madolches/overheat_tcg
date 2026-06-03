@@ -13,6 +13,19 @@ const cardEffects: CardEffect[] = [{
     event.data?.zone === 'UNIT' &&
     ownUnits(playerState).some(unit => unit.isShenyi) &&
     playerState.grave.some(card => card.type === 'UNIT' && !card.godMark),
+  targetSpec: {
+    title: '选择加入手牌的单位',
+    description: '选择你的墓地中的1张非神蚀单位卡，将其加入手牌。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      playerState.grave
+        .filter(card => card.type === 'UNIT' && !card.godMark)
+        .map(card => ({ card, source: 'GRAVE' as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,

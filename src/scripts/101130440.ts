@@ -1,4 +1,4 @@
-import { Card, CardEffect } from '../types/game';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor, addTempDamage, addTempKeyword, addTempPower, createSelectCardQuery, ownUnits } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
@@ -19,6 +19,18 @@ const cardEffects: CardEffect[] = [{
       sourceCardId: instance.gamecardId,
       effectId: '101130440_reset_boost'
     });
+  },
+  targetSpec: {
+    title: '选择强化单位',
+    description: '选择你的1个<圣王国>单位，本回合伤害+1、力量+1000并获得【英勇】。',
+    minSelections: 0,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) =>
+      ownUnits(playerState)
+        .filter(unit => unit.faction === '圣王国')
+        .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;

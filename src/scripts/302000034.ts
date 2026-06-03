@@ -15,6 +15,16 @@ const cardEffects: CardEffect[] = [{
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(gameState, playerState.uid, attackingUnits(gameState), '选择攻击单位', '选择1个参与攻击的单位，这次战斗中力量+1000。', 0, 1, { sourceCardId: instance.gamecardId, effectId: '302000034_attack_boost' }, () => 'UNIT');
   },
+  targetSpec: {
+    title: '选择攻击单位',
+    description: '选择1个参与攻击的单位，这次战斗中力量+1000。',
+    minSelections: 0,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    getCandidates: gameState =>
+      attackingUnits(gameState).map(card => ({ card, source: 'UNIT' as TriggerLocation }))
+  },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (target?.cardlocation === 'UNIT') addTempPowerUntilEndOfTurn(target, instance, 1000, gameState);

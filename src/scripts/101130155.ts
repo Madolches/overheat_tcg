@@ -1,4 +1,4 @@
-import { Card, CardEffect, GameEvent } from '../types/game';
+import { Card, CardEffect, GameEvent, TriggerLocation } from '../types/game';
 import { createSelectCardQuery, ownUnits } from './BaseUtil';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 
@@ -18,6 +18,18 @@ const cardEffects: CardEffect[] = [{
     ownUnits(playerState).some(unit => !unit.godMark && unit.isExhausted),
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(gameState, playerState.uid, ownUnits(playerState).filter(unit => !unit.godMark && unit.isExhausted), '选择重置单位', '选择你的1个非神蚀单位重置。', 0, 1, { sourceCardId: instance.gamecardId, effectId: '101130155_enter_reset' }, () => 'UNIT');
+  },
+  targetSpec: {
+    title: '选择重置单位',
+    description: '选择你的1个横置的非神蚀单位，将其重置。',
+    minSelections: 0,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) =>
+      ownUnits(playerState)
+        .filter(unit => !unit.godMark && unit.isExhausted)
+        .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;

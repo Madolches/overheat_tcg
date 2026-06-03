@@ -407,6 +407,9 @@ export class EventEngine {
           if ((card as any).data?.tempShenyiUntilTurn === gameState.turnCount) {
             card.isShenyi = true;
           }
+          if (card.effects?.some(effect => effect.grantedByEquipSourceId)) {
+            card.effects = card.effects.filter(effect => !effect.grantedByEquipSourceId);
+          }
           if ((card as any).data) {
             if ((card as any).data.cannotExhaustContinuous) {
               delete (card as any).data.cannotExhaustContinuous;

@@ -22,7 +22,18 @@ const cardEffects: CardEffect[] = [{
     condition: (gameState, playerState, instance, event) =>
       event?.playerUid !== playerState.uid &&
       event.data?.attackerIds?.includes(instance.gamecardId) &&
-      playerState.grave.length > 0,
+      playerState.grave.length >= 2,
+    targetSpec: {
+      title: '选择放回卡组底的卡',
+      description: '选择你的墓地中的2张卡，放置到卡组底。',
+      minSelections: 2,
+      maxSelections: 2,
+      zones: ['GRAVE'],
+      controller: 'SELF',
+      step: 'BOTTOM_GRAVE',
+      getCandidates: (_gameState, playerState) =>
+        playerState.grave.map(card => ({ card, source: 'GRAVE' as TriggerLocation }))
+    },
     execute: async (instance, gameState, playerState) => {
       const count = Math.min(2, playerState.grave.length);
       createSelectCardQuery(

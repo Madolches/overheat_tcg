@@ -1,4 +1,4 @@
-import { Card, GameState, PlayerState, CardEffect, GameEvent } from '../types/game';
+import { Card, GameState, PlayerState, CardEffect, GameEvent, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import { EventEngine } from '../services/EventEngine';
 
@@ -43,8 +43,21 @@ const trigger_104010122_1: CardEffect = {
       }
     };
   },
+  targetSpec: {
+    title: '选择强化的单位',
+    description: '选择你的1个蓝色非神蚀单位，本回合中伤害+1、力量+1000。回合结束时，将那个单位返回手牌。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: '1',
+    getCandidates: (_gameState, playerState) =>
+      playerState.unitZone
+        .filter((u): u is Card => !!u && AtomicEffectExecutor.matchesColor(u, 'BLUE') && !u.godMark)
+        .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
+  },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
-    if (context.step === 1) {
+    if (context.step === 1 || context.step === '1') {
       const targetId = selections[0];
       const targetUnit = playerState.unitZone.find(u => u?.gamecardId === targetId);
 

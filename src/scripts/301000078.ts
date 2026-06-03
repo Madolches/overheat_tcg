@@ -24,6 +24,17 @@ const cardEffects: CardEffect[] = [universalEquipEffect, substituteEffect, {
     event.data?.zone === 'ITEM' &&
     event.data?.targetZone === 'GRAVE' &&
     playerState.grave.length >= 2,
+  targetSpec: {
+    title: '选择墓地的卡',
+    description: '选择你的墓地中的2张卡，将其放置到卡组底。',
+    minSelections: 2,
+    maxSelections: 2,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    step: 'BOTTOM_GRAVE',
+    getCandidates: (_gameState, playerState) =>
+      playerState.grave.map(card => ({ card, source: 'GRAVE' as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(gameState, playerState.uid, playerState.grave, '选择墓地的卡', '选择你的墓地中的2张卡，将其放置到卡组底。', 2, 2, { sourceCardId: instance.gamecardId, effectId: '301000078_destroyed_bottom' }, () => 'GRAVE');
   },

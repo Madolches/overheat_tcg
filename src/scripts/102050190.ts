@@ -1,4 +1,4 @@
-import { Card, CardEffect } from '../types/game';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { createSelectCardQuery, damagePlayerByEffect, faceUpErosion, getOpponentUid, moveCard } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
@@ -27,6 +27,16 @@ const cardEffects: CardEffect[] = [{
       { sourceCardId: instance.gamecardId, effectId: '102050190_end_damage' },
       () => 'EROSION_FRONT'
     );
+  },
+  targetSpec: {
+    title: '选择送入墓地的侵蚀卡',
+    description: '选择你的侵蚀区的2张正面卡，将其送入墓地。',
+    minSelections: 0,
+    maxSelections: 2,
+    zones: ['EROSION_FRONT'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) =>
+      faceUpErosion(playerState).map(card => ({ card, source: 'EROSION_FRONT' as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     if (selections.length !== 2) return;

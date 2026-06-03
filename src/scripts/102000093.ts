@@ -25,6 +25,18 @@ const cardEffects: CardEffect[] = [{
         { sourceCardId: instance.gamecardId, effectId: '102000093_red_buffs' }
       );
     },
+    targetSpec: {
+      title: '选择红色单位',
+      description: '选择你的最多2个红色单位，本回合中伤害+1、力量+500。',
+      minSelections: 0,
+      maxSelections: 2,
+      zones: ['UNIT'],
+      controller: 'SELF',
+      getCandidates: (_gameState, playerState) =>
+        ownUnits(playerState)
+          .filter(unit => AtomicEffectExecutor.matchesColor(unit, 'RED'))
+          .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
+    },
     onQueryResolve: async (instance, _gameState, playerState, selections) => {
       selections
         .map(id => ownUnits(playerState).find(unit => unit.gamecardId === id))

@@ -63,6 +63,16 @@ const cardEffects: CardEffect[] = [{
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    title: '选择对手单位',
+    description: '选择对手战场上的1个单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    getCandidates: (gameState, playerState) =>
+      opponentUnits(gameState, playerState.uid).map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = opponentUnits(gameState, playerState.uid).find(unit => unit.gamecardId === selections[0]);
     if (!target) return;
@@ -106,6 +116,16 @@ const cardEffects: CardEffect[] = [{
       { sourceCardId: instance.gamecardId, effectId: '103090421_self_resonance_revive_silver_music' },
       () => 'GRAVE'
     );
+  },
+  targetSpec: {
+    title: '选择放置单位',
+    description: '选择墓地中1张卡名含有《银乐》的单位放置到战场。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) =>
+      silverMusicGraveUnits(playerState).map(card => ({ card, source: 'GRAVE' as any }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     if (!selections[0]) return;

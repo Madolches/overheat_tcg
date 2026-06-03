@@ -1,4 +1,4 @@
-import { Card, CardEffect, GameEvent } from '../types/game';
+import { Card, CardEffect, GameEvent, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import { EventEngine } from '../services/EventEngine';
 import { createSelectCardQuery, getOpponentUid } from './BaseUtil';
@@ -35,6 +35,18 @@ const effect_105120165_forced_attack: CardEffect = {
       1,
       { sourceCardId: instance.gamecardId, effectId: '105120165_forced_attack' }
     );
+  },
+  targetSpec: {
+    title: '选择对手单位',
+    description: '选择对手的1个单位，使其下一回合能攻击则必须攻击。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    getCandidates: (gameState, playerState) =>
+      gameState.players[getOpponentUid(gameState, playerState.uid)].unitZone
+        .filter((card): card is Card => !!card)
+        .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = AtomicEffectExecutor.findCardById(gameState, selections[0]);

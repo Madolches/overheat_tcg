@@ -40,7 +40,55 @@ const cardEffects: CardEffect[] = [
         { sourceCardId: instance.gamecardId, effectId: '103080315_unit_to_deck_put_grave_unit', step: 'TARGET' }
       );
     },
+    targetSpec: {
+      title: '选择墓地单位',
+      description: '选择墓地中1张非神蚀单位卡放置到战场。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['GRAVE'],
+      controller: 'SELF',
+      step: 'TARGET',
+      getCandidates: (_gameState, playerState) =>
+        graveNonGodUnits(playerState).map(card => ({ card, source: 'GRAVE' as any }))
+    },
+    cost: async (gameState, playerState, instance, context?: any) => {
+      const targetId = context?.declaredTargets?.[0]?.gamecardId;
+      const target = targetId
+        ? graveNonGodUnits(playerState).find((card: Card) => card.gamecardId === targetId)
+        : undefined;
+      if (!target || playerState.hand.length === 0) return false;
+      createSelectCardQuery(
+        gameState,
+        playerState.uid,
+        playerState.hand,
+        '支付舍弃费用',
+        `选择1张手牌舍弃以发动 [${instance.fullName}]。`,
+        1,
+        1,
+        {
+          sourceCardId: instance.gamecardId,
+          effectId: '103080315_unit_to_deck_put_grave_unit',
+          step: 'DISCARD_COST',
+          costType: 'DISCARD_HAND_COST',
+          discardCostAmount: 1,
+          skipEffectResolveAfterCost: true
+        },
+        () => 'HAND'
+      );
+      return true;
+    },
+    onCostResolve: async (_instance, _gameState, _playerState, _selections, context) => {
+      if (context?.step !== 'DISCARD_COST') return;
+    },
     onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+      if (context?.step === 'TARGET' && context?.declaredTargets) {
+        const target = graveNonGodUnits(playerState).find((card: Card) => card.gamecardId === selections[0]);
+        if (target) putUnitOntoField(gameState, playerState.uid, target, instance);
+        return;
+      }
+
+      if (context?.step === 'DISCARD_COST') return;
+
       if (context?.step === 'TARGET') {
         const target = graveNonGodUnits(playerState).find((card: Card) => card.gamecardId === selections[0]);
         if (!target || playerState.hand.length === 0) return;

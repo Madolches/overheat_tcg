@@ -55,6 +55,21 @@ const cardEffects: CardEffect[] = [{
       card => card.cardlocation as any
     );
   },
+  targetSpec: {
+    title: '选择破坏目标',
+    description: '选择对手战场上的1张卡，将其破坏。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT', 'ITEM'],
+    controller: 'OPPONENT',
+    getCandidates: (gameState, playerState) => {
+      const opponentUid = getOpponentUid(gameState, playerState.uid);
+      const opponent = gameState.players[opponentUid];
+      return [...opponent.unitZone, ...opponent.itemZone]
+        .filter((card): card is Card => !!card)
+        .map(card => ({ card, source: card.cardlocation as any }));
+    }
+  },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (!target || (target.cardlocation !== 'UNIT' && target.cardlocation !== 'ITEM')) return;

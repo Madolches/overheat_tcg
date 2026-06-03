@@ -3,7 +3,7 @@ import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import { canPutUnitOntoBattlefield, createSelectCardQuery, moveCardAsCost, ownUnits, putUnitOntoField } from './BaseUtil';
 
 const isBeastGodUnit = (card: Card) =>
-  card.type === 'UNIT' && (card.fullName.includes('兽神') || !!card.specialName?.includes('兽神'));
+  card.type === 'UNIT' && (card.fullName.includes('\u517d\u795e') || !!card.specialName?.includes('\u517d\u795e'));
 
 const isWhiteOrBlueAccessThreeOrLessNonGodUnit = (card: Card) =>
   card.type === 'UNIT' &&
@@ -84,7 +84,7 @@ const effect_103000302_irodori_revive: CardEffect = {
   limitCount: 1,
   limitNameType: true,
   triggerLocation: ['UNIT'],
-  description: '同名1回合1次：这个单位通过异彩能力进入战场时，舍弃1张手牌，可以将墓地中符合条件的单位放置到战场。',
+  description: '同名1回合1次：这个单位通过异彩能力进入战场时，选择你墓地中的1张符合条件的单位卡，舍弃1张手牌：将选择的单位卡放置到战场上。',
   condition: (gameState, playerState, instance, event) =>
     event?.sourceCardId === instance.gamecardId &&
     event.data?.targetZone === 'UNIT' &&
@@ -92,6 +92,32 @@ const effect_103000302_irodori_revive: CardEffect = {
     playerState.hand.length > 0 &&
     ownUnits(playerState).length < 6 &&
     reviveCandidates(playerState).length > 0,
+  cost: async (gameState, playerState, instance) => {
+    const candidates = playerState.hand.filter((card: Card) => card.gamecardId !== instance.gamecardId);
+    if (candidates.length === 0) return false;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      candidates,
+      '舍弃手牌',
+      '舍弃1张手牌作为费用。',
+      1,
+      1,
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '103000302_irodori_revive',
+        step: 'DISCARD_COST',
+        costType: 'DISCARD_HAND_COST',
+        discardCostAmount: 1,
+        skipEffectResolveAfterCost: true
+      },
+      () => 'HAND'
+    );
+    return true;
+  },
+  onCostResolve: async (_instance, _gameState, _playerState, _selections, context) => {
+    if (context?.step !== 'DISCARD_COST') return;
+  },
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,
@@ -105,52 +131,28 @@ const effect_103000302_irodori_revive: CardEffect = {
       () => 'GRAVE'
     );
   },
+  targetSpec: {
+    title: '选择放置单位',
+    description: '选择墓地中的1张白色或蓝色ACCESS 3以下非神蚀单位，或卡名含有《兽神》的单位卡放置到战场上。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      reviveCandidates(playerState).map(card => ({ card, source: 'GRAVE' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context?.step === 'TARGET') {
-      const target = selections[0] ? reviveCandidates(playerState).find((card: Card) => card.gamecardId === selections[0]) : undefined;
-      const discardCandidates = playerState.hand.filter((card: Card) => card.gamecardId !== instance.gamecardId);
-      if (!target || discardCandidates.length === 0) return;
-      createSelectCardQuery(
-        gameState,
-        playerState.uid,
-        discardCandidates,
-        '舍弃手牌',
-        '舍弃1张手牌作为费用。',
-        1,
-        1,
-        { sourceCardId: instance.gamecardId, effectId: '103000302_irodori_revive', step: 'DISCARD', targetId: target.gamecardId },
-        () => 'HAND'
-      );
-      return;
-    }
-
-    if (context?.step !== 'DISCARD') return;
-    const discard = playerState.hand.find((card: Card) => card.gamecardId === selections[0] && card.gamecardId !== instance.gamecardId);
-    const target = context?.targetId ? reviveCandidates(playerState).find((card: Card) => card.gamecardId === context.targetId) : undefined;
-    if (discard && target) {
-      moveCardAsCost(gameState, playerState.uid, discard, 'GRAVE', instance);
-      putUnitOntoField(gameState, playerState.uid, target, instance);
-    }
+    if (context?.step !== 'TARGET') return;
+    const target = selections[0] ? reviveCandidates(playerState).find((card: Card) => card.gamecardId === selections[0]) : undefined;
+    if (target) putUnitOntoField(gameState, playerState.uid, target, instance);
   }
 };
 
-/**
- * Auto-generated from Card.xlsx + Card2.xlsx.
- * Source CardID: 103000302
- * Card2 Row: 532
- * Card Row: 352
- * Source CardNo: SP03-G04
- * Package: SP03(SR,XSR)
- * ID Source: card-xlsx
- * Keywords: N/A
- * Card Detail:
- * 【启】异彩2。
- * 【诱】〖同名1回合1次〗{这个单位通过异彩能力进入战场时，选择你墓中的1张白色或蓝色的ACCESS+3以下的非神蚀单位卡，或卡名含有《兽神》的单位卡}[舍弃1张手牌]：你可以将被选择的单位卡放置到战场上。
- */
 const card: Card = {
   id: '103000302',
-  fullName: '兽神之铃音「贝儿」',
-  specialName: '贝儿',
+  fullName: '\u517d\u795e\u4e4b\u94c3\u97f3\u300c\u8d1d\u513f\u300d',
+  specialName: '\u8d1d\u513f',
   type: 'UNIT',
   color: 'GREEN',
   gamecardId: null as any,

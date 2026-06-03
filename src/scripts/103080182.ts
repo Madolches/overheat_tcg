@@ -1,4 +1,4 @@
-import { Card, CardEffect } from '../types/game';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor, addTempDamage, addTempKeyword, addTempPower, allUnitsOnField, createSelectCardQuery, grantedTotemReviveFromGrave, isSpiritEffectEvent } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
@@ -22,6 +22,16 @@ const cardEffects: CardEffect[] = [{
       { sourceCardId: instance.gamecardId, effectId: '103080182_spirit_targeted' },
       () => 'UNIT'
     );
+  },
+  targetSpec: {
+    title: '选择单位',
+    description: '选择战场上的1个单位，本回合中伤害+1、力量+1000并获得【歼灭】。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    getCandidates: gameState =>
+      allUnitsOnField(gameState).map(card => ({ card, source: 'UNIT' as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;

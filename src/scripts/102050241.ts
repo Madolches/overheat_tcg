@@ -26,6 +26,18 @@ const cardEffects: CardEffect[] = [{
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    title: '选择重置单位',
+    description: '选择你的1个横置的<伊列宇王国>神蚀单位，将其重置。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) =>
+      ownUnits(playerState)
+        .filter(unit => unit.isExhausted && unit.godMark && isFaction(unit, '伊列宇王国'))
+        .map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (target) readyByEffect(gameState, target, instance);

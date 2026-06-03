@@ -50,6 +50,16 @@ const cardEffects: CardEffect[] = [{
       card => card.cardlocation as any
     );
   },
+  targetSpec: {
+    title: '选择破坏目标',
+    description: '选择战场中1个非神蚀单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    getCandidates: (gameState) =>
+      nonGodUnitTargets(gameState).map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0]
       ? nonGodUnitTargets(gameState).find(card => card.gamecardId === selections[0])

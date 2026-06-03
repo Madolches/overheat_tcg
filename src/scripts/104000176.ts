@@ -152,6 +152,19 @@ const effect_104000176_trigger: CardEffect = {
     }
     return false;
   },
+  targetSpec: {
+    title: '选择回收至手牌的卡牌',
+    description: '选择最多两张侵蚀区域的正面卡牌加入手牌。',
+    minSelections: 1,
+    maxSelections: 2,
+    zones: ['EROSION_FRONT'],
+    controller: 'SELF',
+    step: 'SALVAGE',
+    getCandidates: (_gameState, playerState) =>
+      playerState.erosionFront
+        .filter((card): card is Card => !!card)
+        .map(card => ({ card, source: 'EROSION_FRONT' as TriggerLocation }))
+  },
   execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
     const frontCards = playerState.erosionFront.filter(c => c !== null) as Card[];
     if (frontCards.length > 0) {

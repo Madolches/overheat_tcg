@@ -1046,6 +1046,103 @@ export const universalEquipEffect: CardEffect = {
   }
 };
 
+export const somelinStorybookGrantedActivate = (sourceEquipId: string): CardEffect => ({
+  id: `305000080_granted_activate:${sourceEquipId}`,
+  type: 'ACTIVATE',
+  triggerLocation: ['UNIT'],
+  grantedByEquipSourceId: sourceEquipId,
+  description: '由索美琳童话集赋予：横置这个单位，公开你的卡组顶1张卡。你可以将那张卡加入手牌，并将1张手牌放置到卡组底。若没有加入手牌，将公开的卡按原样放回。',
+  condition: (gameState, playerState, unit) => {
+    const sourceEquip = AtomicEffectExecutor.findCardById(gameState, sourceEquipId);
+    return !!sourceEquip &&
+      sourceEquip.cardlocation === 'ITEM' &&
+      sourceEquip.equipTargetId === unit.gamecardId &&
+      unit.cardlocation === 'UNIT' &&
+      !unit.isExhausted &&
+      !((unit as any).data?.cannotExhaustUntilTurn >= gameState.turnCount) &&
+      playerState.deck.length > 0;
+  },
+  cost: async (gameState, _playerState, unit) => {
+    const sourceEquip = AtomicEffectExecutor.findCardById(gameState, sourceEquipId);
+    if (
+      !sourceEquip ||
+      sourceEquip.cardlocation !== 'ITEM' ||
+      sourceEquip.equipTargetId !== unit.gamecardId ||
+      unit.isExhausted ||
+      (unit as any).data?.cannotExhaustUntilTurn >= gameState.turnCount
+    ) {
+      return false;
+    }
+
+    unit.isExhausted = true;
+    return true;
+  },
+  execute: async (unit, gameState, playerState) => {
+    const sourceEquip = AtomicEffectExecutor.findCardById(gameState, sourceEquipId);
+    if (!sourceEquip || sourceEquip.equipTargetId !== unit.gamecardId) return;
+
+    const topCard = revealDeckCards(gameState, playerState.uid, 1, unit)[0];
+    if (!topCard) return;
+
+    createChoiceQuery(
+      gameState,
+      playerState.uid,
+      '将公开的卡加入手牌？',
+      `公开${topCard.fullName}。你可以将其加入手牌。`,
+      [
+        { id: 'YES', label: '加入手牌' },
+        { id: 'NO', label: '按原样放回' }
+      ],
+      {
+        sourceCardId: unit.gamecardId,
+        effectId: `305000080_granted_activate:${sourceEquipId}`,
+        step: '305000080_CHOOSE_ADD',
+        revealedCardId: topCard.gamecardId,
+        sourceEquipId
+      }
+    );
+  },
+  onQueryResolve: async (unit, gameState, playerState, selections, context) => {
+    const sourceEquip = AtomicEffectExecutor.findCardById(gameState, context?.sourceEquipId || sourceEquipId);
+    if (!sourceEquip || sourceEquip.equipTargetId !== unit.gamecardId) return;
+
+    if (context?.step === '305000080_CHOOSE_ADD') {
+      if (selections[0] !== 'YES') return;
+
+      await AtomicEffectExecutor.execute(gameState, playerState.uid, {
+        type: 'MOVE_FROM_DECK',
+        targetFilter: { gamecardId: context.revealedCardId },
+        destinationZone: 'HAND'
+      }, unit);
+
+      createSelectCardQuery(
+        gameState,
+        playerState.uid,
+        [...playerState.hand],
+        '选择手牌',
+        '选择1张手牌放置到卡组底。',
+        1,
+        1,
+        {
+          sourceCardId: unit.gamecardId,
+          effectId: `305000080_granted_activate:${sourceEquip.gamecardId}`,
+          step: '305000080_PUT_TO_BOTTOM',
+          sourceEquipId: sourceEquip.gamecardId
+        },
+        () => 'HAND'
+      );
+      return;
+    }
+
+    if (context?.step !== '305000080_PUT_TO_BOTTOM') return;
+
+    const chosenCard = AtomicEffectExecutor.findCardById(gameState, selections[0]);
+    if (!chosenCard) return;
+
+    moveCard(gameState, playerState.uid, chosenCard, 'DECK', unit, { insertAtBottom: true });
+  }
+});
+
 export const ownerOf = (gameState: GameState, card: Card) =>
   Object.values(gameState.players).find(player =>
     [...player.hand, ...player.deck, ...player.grave, ...player.exile, ...player.unitZone, ...player.itemZone, ...player.erosionFront, ...player.erosionBack, ...player.playZone]

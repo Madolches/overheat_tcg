@@ -31,6 +31,18 @@ const cardEffects: CardEffect[] = [{
         card => card.cardlocation || 'UNIT'
       );
     },
+    targetSpec: {
+      title: '选择放逐对象',
+      description: '选择战场上的1张这个单位以外的卡，将其放逐。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT', 'ITEM'],
+      controller: 'ANY',
+      getCandidates: (gameState, _playerState, instance) =>
+        allCardsOnField(gameState)
+          .filter(card => card.gamecardId !== instance.gamecardId)
+          .map(card => ({ card, source: card.cardlocation as TriggerLocation }))
+    },
     onQueryResolve: async (instance, gameState, playerState, selections) => {
       const target = allCardsOnField(gameState).find(card => card.gamecardId === selections[0]);
       if (!target) return;

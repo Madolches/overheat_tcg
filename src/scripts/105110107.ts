@@ -1,6 +1,6 @@
 import { Card, CardEffect, GameEvent, GameState, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { createSelectCardQuery, moveCard } from './BaseUtil';
+import { createSelectCardQuery, moveCard, paymentCost } from './BaseUtil';
 
 const getItemTargets = (gameState: GameState, playerUid: string) => {
   const playerState = gameState.players[playerUid];
@@ -16,6 +16,7 @@ const effect_105110107_enter: CardEffect = {
   triggerLocation: ['UNIT'],
   triggerEvent: 'CARD_ENTERED_ZONE',
   isMandatory: false,
+  cost: paymentCost(0, 'YELLOW'),
   description: '当这张卡进入战场时，你可以选择你的卡组或墓地中的1张道具卡，放置到卡组顶。',
   condition: (gameState, playerState, instance, event?: GameEvent) => {
     if (

@@ -1,4 +1,4 @@
-import { Card, CardEffect } from '../types/game';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor, addTempPower, createChoiceQuery, createSelectCardQuery, isNonGodUnit, markSpiritTargeted, moveCard, ownUnits } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
@@ -16,6 +16,43 @@ const cardEffects: CardEffect[] = [{
     if (ownUnits(playerState).some(isNonGodUnit)) options.push({ id: 'BOOST', label: '力量+500' });
     if (options.length === 0) return;
     createChoiceQuery(gameState, playerState.uid, '选择效果', '选择1项效果执行。', options, { sourceCardId: instance.gamecardId, effectId: '103080181_enter_choice', step: 'CHOICE' });
+  },
+  targetSpec: {
+    modeTitle: '选择效果',
+    modeDescription: '选择1项效果执行。',
+    modeOptions: [{
+      id: 'RETURN',
+      label: '回收地鬼降灵',
+      title: '选择地鬼降灵',
+      description: '选择你的墓地中的1张《地鬼降灵》，将其加入手牌。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['GRAVE'],
+      controller: 'SELF',
+      step: 'RETURN',
+      condition: (_gameState, playerState) =>
+        playerState.grave.some(card => card.fullName.includes('地鬼降灵')),
+      getCandidates: (_gameState, playerState) =>
+        playerState.grave
+          .filter(card => card.fullName.includes('地鬼降灵'))
+          .map(card => ({ card, source: 'GRAVE' as TriggerLocation }))
+    }, {
+      id: 'BOOST',
+      label: '力量+500',
+      title: '选择单位',
+      description: '选择你的1个非神蚀单位，本回合中力量+500。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'SELF',
+      step: 'BOOST',
+      condition: (_gameState, playerState) =>
+        ownUnits(playerState).some(isNonGodUnit),
+      getCandidates: (_gameState, playerState) =>
+        ownUnits(playerState)
+          .filter(isNonGodUnit)
+          .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
+    }]
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'RETURN') {

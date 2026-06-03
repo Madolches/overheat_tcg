@@ -1,4 +1,4 @@
-import { Card, CardEffect } from '../types/game';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { addInfluence, appendEndResolution, canPutUnitOntoBattlefield, createSelectCardQuery, ensureData, erosionCost, getOpponentUid, moveCard } from './BaseUtil';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 
@@ -22,6 +22,18 @@ const cardEffects: CardEffect[] = [{
       sourceCardId: instance.gamecardId,
       effectId: '103000424_control'
     });
+  },
+  targetSpec: {
+    title: '选择控制权目标',
+    description: '选择对手的1个非神蚀单位，直到对手回合结束为止得到其控制权。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    getCandidates: (gameState, playerState) =>
+      gameState.players[getOpponentUid(gameState, playerState.uid)].unitZone
+        .filter((unit): unit is Card => !!unit && !unit.godMark && canPutUnitOntoBattlefield(playerState, unit))
+        .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;

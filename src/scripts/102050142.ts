@@ -1,4 +1,4 @@
-import { Card, CardEffect } from '../types/game';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor, appendEndResolution, createSelectCardQuery, ensureData, getOpponentUid, moveCard, ownUnits } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
@@ -25,6 +25,18 @@ const cardEffects: CardEffect[] = [{
       1,
       { sourceCardId: instance.gamecardId, effectId: '102050142_goddess_control' }
     );
+  },
+  targetSpec: {
+    title: '选择取得控制权的单位',
+    description: '选择对手的1个ACCESS值2以下的非神蚀单位，将其重置，并在本回合得到控制权。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    getCandidates: (gameState, playerState) =>
+      ownUnits(gameState.players[getOpponentUid(gameState, playerState.uid)])
+        .filter(unit => !unit.godMark && (unit.acValue || 0) <= 2)
+        .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const opponentUid = getOpponentUid(gameState, playerState.uid);

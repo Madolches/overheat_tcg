@@ -26,6 +26,16 @@ const cardEffects: CardEffect[] = [{
         { sourceCardId: instance.gamecardId, effectId: '101140097_grave_to_deck_buff' }
       );
     },
+    targetSpec: {
+      title: '选择单位',
+      description: '选择你的1个单位，本回合中伤害+1、力量+500。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'SELF',
+      getCandidates: (_gameState, playerState) =>
+        ownUnits(playerState).map(card => ({ card, source: 'UNIT' as TriggerLocation }))
+    },
     onQueryResolve: async (instance, _gameState, playerState, selections) => {
       const target = ownUnits(playerState).find(unit => unit.gamecardId === selections[0]);
       if (target) {

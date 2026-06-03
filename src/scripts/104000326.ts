@@ -12,6 +12,11 @@ const cardEffects: CardEffect[] = [{
     event?.sourceCardId === instance.gamecardId &&
     instance.cardlocation === 'HAND' &&
     canPutUnitOntoBattlefield(playerState, instance),
+  cost: async (gameState, playerState, instance) => {
+    if (instance.cardlocation !== 'HAND') return false;
+    gameState.logs.push(`[${instance.fullName}] 展示这张卡并大喊“OverHeat Dice Draw”作为费用。`);
+    return true;
+  },
   execute: async (instance, gameState, playerState) => {
     moveCard(gameState, playerState.uid, instance, 'UNIT', instance);
     const moved = playerState.unitZone.find(unit => unit?.gamecardId === instance.gamecardId);

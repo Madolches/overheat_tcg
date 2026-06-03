@@ -85,7 +85,7 @@ const effect_103000273_enter_boost: CardEffect = {
   triggerLocation: ['UNIT'],
   limitCount: 1,
   limitNameType: true,
-  description: '【诱】同名1回合1次，你的战场上有白色或蓝色单位，这个单位进入战场时，选择你的1个非神蚀单位：本回合中，其伤害+1、力量+500。',
+  description: '【诱】同名1回合1次，你的战场上有白色或蓝色单位，这个单位进入战场时，选择你的1个非神蚀单位：本回合中，其伤害+1、力量+1500。',
   condition: (_gameState, playerState, instance, event) =>
     event?.sourceCardId === instance.gamecardId &&
     event.data?.zone === 'UNIT' &&
@@ -98,18 +98,30 @@ const effect_103000273_enter_boost: CardEffect = {
       playerState.uid,
       candidates,
       '选择强化单位',
-      '选择你的1个非神蚀单位，本回合中伤害+1、力量+500。',
+      '选择你的1个非神蚀单位，本回合中伤害+1、力量+1500。',
       1,
       1,
       { sourceCardId: instance.gamecardId, effectId: '103000273_enter_boost' },
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    title: '选择强化单位',
+    description: '选择你的1个非神蚀单位，本回合中伤害+1、力量+1500。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) =>
+      ownUnits(playerState)
+        .filter(unit => !unit.godMark)
+        .map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (!target || target.cardlocation !== 'UNIT' || target.godMark) return;
     addTempDamage(target, instance, 1);
-    addTempPower(target, instance, 500);
+    addTempPower(target, instance, 1500);
   }
 };
 

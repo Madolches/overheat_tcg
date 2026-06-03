@@ -16,6 +16,18 @@ const effect_105000470_enter: CardEffect = {
     event?.type === 'CARD_ENTERED_ZONE' &&
     event.sourceCardId === instance.gamecardId &&
     event.data?.zone === 'UNIT',
+  targetSpec: {
+    preselect: false,
+    title: '选择单位',
+    description: '若公开的卡为神蚀卡，选择战场上1个单位返回手牌。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    step: 'RETURN_UNIT',
+    getCandidates: (gameState) =>
+      getBattlefieldUnits(gameState).map(card => ({ card, source: 'UNIT' as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     const revealedCard = (await shuffleAndRevealTopCards(gameState, playerState.uid, 1, instance))[0];
     if (!isVirtualGodMarkReveal(gameState, revealedCard)) return;

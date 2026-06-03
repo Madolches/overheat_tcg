@@ -1,4 +1,4 @@
-import { Card, CardEffect } from '../types/game';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor, canPutUnitOntoBattlefield, createSelectCardQuery, moveCard } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
@@ -30,6 +30,23 @@ const cardEffects: CardEffect[] = [{
       { sourceCardId: instance.gamecardId, effectId: '103090134_goddess_revive' },
       () => 'GRAVE'
     );
+  },
+  targetSpec: {
+    title: '选择复活单位',
+    description: '选择你的墓地中的1张<瑟诺布>非神蚀单位卡，将其放置到战场上。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) =>
+      playerState.grave
+        .filter(card =>
+          card.type === 'UNIT' &&
+          card.faction === '瑟诺布' &&
+          !card.godMark &&
+          canPutUnitOntoBattlefield(playerState, card)
+        )
+        .map(card => ({ card, source: 'GRAVE' as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;

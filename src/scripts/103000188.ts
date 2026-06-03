@@ -1,4 +1,4 @@
-import { Card, CardEffect } from '../types/game';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { addInfluence, battlingUnits, createSelectCardQuery, ensureData, faceUpErosion, getOpponentUid, moveCard, ownerUidOf } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
@@ -50,11 +50,23 @@ const cardEffects: CardEffect[] = [{
       () => 'EROSION_FRONT'
     );
   },
+  targetSpec: {
+    title: '选择翻面的侵蚀卡',
+    description: '选择那名玩家侵蚀区中的2张正面卡，将其翻面。',
+    minSelections: 2,
+    maxSelections: 2,
+    zones: ['EROSION_FRONT'],
+    controller: 'OPPONENT',
+    getCandidates: (gameState, playerState) =>
+      faceUpErosion(gameState.players[getOpponentUid(gameState, playerState.uid)])
+        .map(card => ({ card, source: 'EROSION_FRONT' as TriggerLocation }))
+  },
   onQueryResolve: async (instance, gameState, _playerState, selections, context) => {
-    const damaged = gameState.players[context.damagedUid];
+    const damagedUid = context?.damagedUid || getOpponentUid(gameState, _playerState.uid);
+    const damaged = gameState.players[damagedUid];
     selections.forEach(id => {
       const card = damaged.erosionFront.find(candidate => candidate?.gamecardId === id);
-      if (card) moveCard(gameState, context.damagedUid, card, 'EROSION_BACK', instance, { faceDown: true });
+      if (card) moveCard(gameState, damagedUid, card, 'EROSION_BACK', instance, { faceDown: true });
     });
   }
 }];

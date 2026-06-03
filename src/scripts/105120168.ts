@@ -15,6 +15,19 @@ const effect_105120168_enter: CardEffect = {
     event.sourceCardId === instance.gamecardId &&
     event.data?.zone === 'UNIT' &&
     playerState.grave.filter(card => isAlchemyCard(card) && card.specialName !== '艾尔蒙特').length >= 2,
+  targetSpec: {
+    title: '选择墓地卡',
+    description: '从你的墓地选择2张炼金卡放置到卡组底。',
+    minSelections: 2,
+    maxSelections: 2,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    step: 'BOTTOM_GRAVE',
+    getCandidates: (_gameState, playerState) =>
+      playerState.grave
+        .filter(card => isAlchemyCard(card) && card.specialName !== '艾尔蒙特')
+        .map(card => ({ card, source: 'GRAVE' as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     const candidates = playerState.grave.filter(card => isAlchemyCard(card) && card.specialName !== '艾尔蒙特');
 

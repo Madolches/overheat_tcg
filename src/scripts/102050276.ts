@@ -49,25 +49,39 @@ const sacrificeYellowOrBlueNonGodUnit = (gameState: any, playerState: any, insta
   return true;
 };
 
-const yellowOrBlueNonGodUnitCost: CardEffect['cost'] = async (gameState, playerState, instance) => {
+const yellowOrBlueNonGodUnitCost = (effectId: string): CardEffect['cost'] => async (gameState, playerState, instance) => {
   const candidates = ownUnits(playerState).filter(isYellowOrBlueNonGodUnit);
   if (candidates.length === 0) return false;
   createSelectCardQuery(
     gameState,
     playerState.uid,
     candidates,
-    '选择送入墓地的单位',
-    '选择你的战场上的1个黄色或蓝色非神蚀单位送入墓地。',
+    '选择费用单位',
+    '选择你的战场上的1个黄色或蓝色非神蚀单位送入墓地作为费用。',
     1,
     1,
     {
       sourceCardId: instance.gamecardId,
-      effectId: '102050276_main_damage',
-      costType: '102050276_SAC_YELLOW_BLUE'
+      effectId,
+      costType: '102050276_SAC_YELLOW_BLUE',
+      skipEffectResolveAfterCost: true
     },
     () => 'UNIT'
   );
   return true;
+};
+
+const resolveYellowOrBlueNonGodUnitCost: CardEffect['onCostResolve'] = async (
+  instance,
+  gameState,
+  playerState,
+  selections,
+  context
+) => {
+  if (context?.costType !== '102050276_SAC_YELLOW_BLUE') return;
+  if (!sacrificeYellowOrBlueNonGodUnit(gameState, playerState, instance, selections)) {
+    context.cancelActivation = true;
+  }
 };
 
 const effect_102050276_irodori_enter: CardEffect = {
@@ -76,7 +90,7 @@ const effect_102050276_irodori_enter: CardEffect = {
   triggerLocation: ['HAND'],
   limitCount: 1,
   limitNameType: true,
-  description: '【启】【异彩3】同名1回合1次，将墓地3种颜色的非神蚀单位各1张放逐：将手牌中的这张卡放置到战场上。',
+  description: '【启】【异彩】将墓地3种颜色的非神蚀单位各1张放逐：将手牌中的这张卡放置到战场上。',
   condition: (_gameState, playerState, instance) =>
     instance.cardlocation === 'HAND' &&
     playerState.isTurn &&
@@ -119,22 +133,9 @@ const effect_102050276_battle_boost: CardEffect = {
     gameState.phase === 'BATTLE_FREE' &&
     battlingUnits(gameState).some(unit => unit.gamecardId === instance.gamecardId) &&
     ownUnits(playerState).some(isYellowOrBlueNonGodUnit),
-  execute: async (instance, gameState, playerState) => {
-    createSelectCardQuery(
-      gameState,
-      playerState.uid,
-      ownUnits(playerState).filter(isYellowOrBlueNonGodUnit),
-      '选择送入墓地的单位',
-      '选择你战场上的1个黄色或蓝色非神蚀单位送入墓地，使此单位本次战斗伤害+2、力量+1500。',
-      1,
-      1,
-      { sourceCardId: instance.gamecardId, effectId: '102050276_battle_boost', step: 'SAC' },
-      () => 'UNIT'
-    );
-  },
-  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context?.step !== 'SAC') return;
-    if (!sacrificeYellowOrBlueNonGodUnit(gameState, playerState, instance, selections)) return;
+  cost: yellowOrBlueNonGodUnitCost('102050276_battle_boost'),
+  onCostResolve: resolveYellowOrBlueNonGodUnitCost,
+  execute: async (instance, gameState) => {
     addTempDamage(instance, instance, 2);
     addTempPower(instance, instance, 1500);
     gameState.logs.push(`[${instance.fullName}] 本次战斗中伤害+2、力量+1500。`);
@@ -147,66 +148,27 @@ const effect_102050276_main_damage: CardEffect = {
   triggerLocation: ['UNIT'],
   limitCount: 1,
   limitNameType: true,
-  description: '【启】同名1回合1次，你的主要阶段中，选择1名对手，将你的战场上的1个黄色或蓝色非神蚀单位送入墓地：给予选择的玩家2点伤害。',
+  description: '【启】同名1回合1次，主要阶段，选择1名对手，将你的战场上的1个黄色或蓝色非神蚀单位送入墓地：给予选择的玩家2点伤害。',
   condition: (gameState, playerState) =>
     playerState.isTurn &&
     gameState.phase === 'MAIN' &&
     ownUnits(playerState).some(isYellowOrBlueNonGodUnit),
-  cost: yellowOrBlueNonGodUnitCost,
+  cost: yellowOrBlueNonGodUnitCost('102050276_main_damage'),
+  onCostResolve: resolveYellowOrBlueNonGodUnitCost,
   execute: async (instance, gameState, playerState) => {
     await damagePlayerByEffect(gameState, playerState.uid, getOpponentUid(gameState, playerState.uid), 2, instance);
-    return;
-    createSelectCardQuery(
-      gameState,
-      playerState.uid,
-      ownUnits(playerState).filter(isYellowOrBlueNonGodUnit),
-      '选择送入墓地的单位',
-      '选择你战场上的1个黄色或蓝色非神蚀单位送入墓地，之后给予对手2点伤害。',
-      1,
-      1,
-      { sourceCardId: instance.gamecardId, effectId: '102050276_main_damage', step: 'SAC' },
-      () => 'UNIT'
-    );
-  },
-  onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context?.costType === '102050276_SAC_YELLOW_BLUE') {
-      if (!sacrificeYellowOrBlueNonGodUnit(gameState, playerState, instance, selections)) {
-        context.cancelActivation = true;
-      }
-      return;
-    }
-
-    if (context?.step === 'SAC') {
-      // Legacy fallback for stack entries created before cost separation.
-      if (!sacrificeYellowOrBlueNonGodUnit(gameState, playerState, instance, selections)) return;
-      await damagePlayerByEffect(gameState, playerState.uid, getOpponentUid(gameState, playerState.uid), 2, instance);
-    }
   }
 };
 
-/**
- * Auto-generated from Card.xlsx + Card2.xlsx.
- * Source CardID: 102050276
- * Card2 Row: 435
- * Card Row: 318
- * Source CardNo: SP02-R01
- * Package: SP02(SR,XSR)
- * ID Source: card-xlsx
- * Keywords: N/A
- * Card Detail:
- * 【启】【异彩3】（〖同名1回合1次〗[将你的墓地中的3种颜色的非神蚀单位卡各1张放逐]:将手牌中的这张卡放置到战场上）。
- * 【诱】{这个单位参与的战斗的战斗自由步骤开始时}[将你的战场上的1个黄色或蓝色非神蚀单位送入墓地]:这次战斗中，你可以使这个单位+2+1500。
- * 【启】〖同名1回合1次〗{你的主要阶段中，选择1名对手}[将你的战场上的1个黄色或蓝色非神蚀单位送入墓地]:给予选择的玩家2点伤害。
- */
 const card: Card = {
   id: '102050276',
-  fullName: '炽月·女王「凯萨琳」',
-  specialName: '凯萨琳',
+  fullName: '\u70bd\u6708\u00b7\u5973\u738b\u300c\u51ef\u8428\u7433\u300d',
+  specialName: '\u51ef\u8428\u7433',
   type: 'UNIT',
   color: 'RED',
   gamecardId: null as any,
   colorReq: { RED: 3 },
-  faction: '伊列宇王国',
+  faction: '\u4f0a\u5217\u5b87\u738b\u56fd',
   acValue: 3,
   power: 2500,
   basePower: 2500,

@@ -21,7 +21,7 @@ const cardEffects: CardEffect[] = [{
     event?.playerUid === playerState.uid &&
     !playerState.isTurn &&
     canPutUnitOntoBattlefield(playerState, instance) &&
-    ownUnits(playerState).filter(unit => unit.color === 'WHITE').length >= 2 &&
+    ownUnits(playerState).filter(unit => AtomicEffectExecutor.matchesColor(unit, 'WHITE')).length >= 2 &&
     faceUpErosion(playerState).length >= 1,
   cost: erosionCost(1),
   execute: async (instance, gameState, playerState) => {

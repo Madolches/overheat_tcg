@@ -111,6 +111,20 @@ const effect_103000275_attack_tap: CardEffect = {
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    title: '选择横置目标',
+    description: '选择对手的1个非神蚀单位，将其横置。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    getCandidates: (gameState, playerState) => {
+      const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
+      return ownUnits(opponent)
+        .filter(unit => !unit.godMark)
+        .map(card => ({ card, source: 'UNIT' as any }));
+    }
+  },
   onQueryResolve: async (_instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (target?.cardlocation === 'UNIT' && !target.godMark) {

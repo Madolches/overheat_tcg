@@ -29,6 +29,18 @@ const cardEffects: CardEffect[] = [{
         () => 'GRAVE'
       );
     },
+    targetSpec: {
+      title: '选择放置到战场的单位',
+      description: '选择你的墓地中的1个力量2000以下的绿色非神蚀单位，放置到战场上。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['GRAVE'],
+      controller: 'SELF',
+      getCandidates: (_gameState, playerState) =>
+        playerState.grave
+          .filter(card => isNonGodUnit(card) && card.color === 'GREEN' && (card.power || 0) <= 2000 && canPutUnitOntoBattlefield(playerState, card))
+          .map(card => ({ card, source: 'GRAVE' as TriggerLocation }))
+    },
     onQueryResolve: async (instance, gameState, playerState, selections) => {
       const target = playerState.grave.find(card => card.gamecardId === selections[0] && isNonGodUnit(card) && card.color === 'GREEN' && (card.power || 0) <= 2000 && canPutUnitOntoBattlefield(playerState, card));
       if (target) moveCard(gameState, playerState.uid, target, 'UNIT', instance);

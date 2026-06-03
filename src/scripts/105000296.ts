@@ -107,6 +107,18 @@ const effect_105000296_irodori_blink: CardEffect = {
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    title: '选择放逐再登场单位',
+    description: '选择你战场上的1个红色或黄色的非神蚀单位，或卡名含有《天魔》的单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) =>
+      ownUnits(playerState)
+        .filter(isRedOrYellowNonGodOrTenma)
+        .map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
     if (!target || target.cardlocation !== 'UNIT' || !isRedOrYellowNonGodOrTenma(target)) return;

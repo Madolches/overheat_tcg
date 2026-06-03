@@ -24,6 +24,18 @@ const cardEffects: CardEffect[] = [{
         { sourceCardId: instance.gamecardId, effectId: '102050090_attack_lock' }
       );
     },
+    targetSpec: {
+      title: '选择不能防御的单位',
+      description: '选择对手的最多2个力量3000以上的单位，本回合中不能宣言防御。',
+      minSelections: 0,
+      maxSelections: 2,
+      zones: ['UNIT'],
+      controller: 'OPPONENT',
+      getCandidates: (gameState, playerState) =>
+        ownUnits(gameState.players[getOpponentUid(gameState, playerState.uid)])
+          .filter(unit => (unit.power || 0) >= 3000)
+          .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
+    },
     onQueryResolve: async (instance, gameState, _playerState, selections) => {
       allUnitsOnField(gameState)
         .filter(unit => selections.includes(unit.gamecardId))
@@ -60,6 +72,16 @@ const cardEffects: CardEffect[] = [{
         { sourceCardId: instance.gamecardId, effectId: '102050090_goddess_entry' },
         card => card.cardlocation || 'UNIT'
       );
+    },
+    targetSpec: {
+      title: '选择强化单位',
+      description: '选择战场上的最多2个单位，本回合中伤害+1、力量+1000。',
+      minSelections: 0,
+      maxSelections: 2,
+      zones: ['UNIT'],
+      controller: 'ANY',
+      getCandidates: gameState =>
+        allUnitsOnField(gameState).map(card => ({ card, source: 'UNIT' as TriggerLocation }))
     },
     onQueryResolve: async (instance, gameState, _playerState, selections) => {
       const targets = allUnitsOnField(gameState).filter(unit => selections.includes(unit.gamecardId));

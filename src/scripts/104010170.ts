@@ -1,6 +1,6 @@
 import { Card, GameState, PlayerState, CardEffect, GameEvent, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { standardizeChoiceOptions } from './BaseUtil';
+import { paymentCost, standardizeChoiceOptions } from './BaseUtil';
 
 const trigger_104010170: CardEffect = {
   id: '舞姬触发',
@@ -11,6 +11,7 @@ const trigger_104010170: CardEffect = {
   isMandatory: false,
   limitCount: 1,
   limitNameType: true,
+  cost: paymentCost(0, 'BLUE'),
   condition: (gameState: GameState, playerState: PlayerState, instance: Card, event?: GameEvent) => {
     // 1. Entry event check
     const isSelf = event?.type === 'CARD_ENTERED_ZONE' &&
@@ -20,10 +21,23 @@ const trigger_104010170: CardEffect = {
     if (!isSelf || !isTargetZone) return false;
 
     // 2. Must have two or more blue units in the unit area (including self)
-    const blueUnits = playerState.unitZone.filter(u => u && u.color === 'BLUE');
+    const blueUnits = playerState.unitZone.filter(u => u && AtomicEffectExecutor.matchesColor(u, 'BLUE'));
     if (blueUnits.length < 2) return false;
 
     return true;
+  },
+  targetSpec: {
+    title: '选择返回手牌的单位',
+    description: '选择你的1个单位，将其返回持有者手牌。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'RETURN_UNIT',
+    getCandidates: (_gameState, playerState) =>
+      playerState.unitZone
+        .filter((unit): unit is Card => !!unit)
+        .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
   },
   execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
     // Step 1: Select a unit to return to hand
@@ -48,6 +62,9 @@ const trigger_104010170: CardEffect = {
     };
   },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
+    if (context.step === 'RETURN_UNIT') {
+      context.step = 1;
+    }
     if (context.step === 1) {
       const targetId = selections[0];
       const targetCard = playerState.unitZone.find(u => u?.gamecardId === targetId);

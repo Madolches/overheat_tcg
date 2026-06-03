@@ -1,5 +1,5 @@
 import { Card, GameState } from '../types/game';
-import { grantedTotemReviveFromGrave } from '../scripts/BaseUtil';
+import { grantedTotemReviveFromGrave, somelinStorybookGrantedActivate } from '../scripts/BaseUtil';
 
 const modules = import.meta.glob('../scripts/*.ts');
 
@@ -46,6 +46,15 @@ export function hydrateCard(card: Card | null) {
   }
   if (masterCard && masterCard.effects) {
     // Re-assign effects to restore functions lost during JSON serialization
+    const runtimeGrantedEffects = (card.effects || [])
+      .filter(effect => effect.grantedByEquipSourceId)
+      .map(effect => {
+        if (String(effect.id || '').startsWith('305000080_granted_activate:') && effect.grantedByEquipSourceId) {
+          return somelinStorybookGrantedActivate(effect.grantedByEquipSourceId);
+        }
+        return effect;
+      });
+
     card.effects = masterCard.effects.map((originalEffect, idx) => {
       const runtimeEffect = card.effects ? card.effects[idx] : null;
       return {
@@ -65,6 +74,13 @@ export function hydrateCard(card: Card | null) {
         hideFromCardInfluence: originalEffect.hideFromCardInfluence ?? runtimeEffect?.hideFromCardInfluence
       };
     });
+    if (runtimeGrantedEffects.length) {
+      const baseIds = new Set(card.effects.map(effect => effect.id));
+      card.effects = [
+        ...card.effects,
+        ...runtimeGrantedEffects.filter(effect => !baseIds.has(effect.id))
+      ];
+    }
   }
   if (
     card.type === 'UNIT' &&

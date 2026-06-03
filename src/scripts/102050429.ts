@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, createSelectCardQuery, faceUpErosion, moveCard, nameContains } from './BaseUtil';
+import { AtomicEffectExecutor, createSelectCardQuery, faceUpErosion, moveCard, moveCardAsCost, nameContains } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
   id: '102050429_ten_recycle',
@@ -15,8 +15,25 @@ const cardEffects: CardEffect[] = [{
     playerState.isTurn &&
     instance.cardlocation === 'UNIT' &&
     faceUpErosion(playerState).filter(card => nameContains(card, '血焰')).length >= 2,
+  cost: async (gameState, playerState, instance) => {
+    if (instance.cardlocation !== 'UNIT') return false;
+    moveCardAsCost(gameState, playerState.uid, instance, 'EXILE', instance);
+    return true;
+  },
+  targetSpec: {
+    title: '选择回收卡牌',
+    description: '选择侵蚀区中最多2张卡名含有《血焰》的正面卡加入手牌。',
+    minSelections: 0,
+    maxSelections: 2,
+    zones: ['EROSION_FRONT'],
+    controller: 'SELF',
+    step: 'RECYCLE',
+    getCandidates: (_gameState, playerState) =>
+      faceUpErosion(playerState)
+        .filter(card => nameContains(card, '血焰'))
+        .map(card => ({ card, source: 'EROSION_FRONT' as any }))
+  },
   execute: async (instance, gameState, playerState) => {
-    moveCard(gameState, playerState.uid, instance, 'EXILE', instance);
     createSelectCardQuery(gameState, playerState.uid, faceUpErosion(playerState).filter(card => nameContains(card, '血焰')), '选择回收卡牌', '选择侵蚀区中2张卡名含有《血焰》的正面卡加入手牌。', 0, 2, {
       sourceCardId: instance.gamecardId,
       effectId: '102050429_ten_recycle'

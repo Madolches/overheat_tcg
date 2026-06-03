@@ -54,6 +54,20 @@ const effect_104030125_trigger: CardEffect = {
       };
     }
   },
+  targetSpec: {
+    title: '选择攻击目标',
+    description: '选择对手的1个非神蚀单位，本回合中你的单位可以攻击那个单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    getCandidates: (gameState, playerState) => {
+      const opponentId = gameState.playerIds.find(id => id !== playerState.uid)!;
+      return gameState.players[opponentId].unitZone
+        .filter((u): u is Card => !!u && !u.godMark)
+        .map(card => ({ card, source: 'UNIT' as TriggerLocation }));
+    }
+  },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[]) => {
     if (selections.length > 0) {
       playerState.markedUnitAttackTarget = selections[0];

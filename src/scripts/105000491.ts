@@ -1,4 +1,4 @@
-import { Card, CardEffect } from '../types/game';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor, allCardsOnField, destroyByEffect, enteredFromHand, ownItems } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
@@ -30,6 +30,19 @@ const cardEffects: CardEffect[] = [{
       callbackKey: 'EFFECT_RESOLVE',
       context: { sourceCardId: instance.gamecardId, effectId: '105000491_destroy_items' }
     };
+  },
+  targetSpec: {
+    preselect: false,
+    title: '选择破坏的卡',
+    description: '选择战场上的1张卡，将其破坏。',
+    minSelections: 0,
+    maxSelections: 1,
+    zones: ['UNIT', 'ITEM'],
+    controller: 'ANY',
+    getCandidates: (gameState, _playerState, instance) =>
+      allCardsOnField(gameState)
+        .filter(card => card.gamecardId !== instance.gamecardId)
+        .map(card => ({ card, source: card.cardlocation as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;

@@ -1,6 +1,6 @@
-import { Card, CardEffect, GameEvent, GameState } from '../types/game';
+import { Card, CardEffect, GameEvent, GameState, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { createSelectCardQuery } from './BaseUtil';
+import { createSelectCardQuery, paymentCost } from './BaseUtil';
 
 const getDestroyableItems = (gameState: GameState) =>
   Object.values(gameState.players).flatMap(player =>
@@ -13,6 +13,7 @@ const effect_105110109_enter: CardEffect = {
   triggerLocation: ['UNIT'],
   triggerEvent: 'CARD_ENTERED_ZONE',
   isMandatory: false,
+  cost: paymentCost(0, 'YELLOW'),
   description: '【诱】:[〖0:黄黄〗]这个单位进入战场时，你可以选择1张非神蚀道具卡，将其破坏。',
   condition: (gameState, playerState, instance, event?: GameEvent) => {
     if (
@@ -50,6 +51,17 @@ const effect_105110109_enter: CardEffect = {
       },
       () => 'ITEM'
     );
+  },
+  targetSpec: {
+    title: '选择道具',
+    description: '你可以选择1张非神蚀道具卡，将其破坏。',
+    minSelections: 0,
+    maxSelections: 1,
+    zones: ['ITEM'],
+    controller: 'ANY',
+    step: 'SELECT_ITEM',
+    getCandidates: gameState =>
+      getDestroyableItems(gameState).map(card => ({ card, source: 'ITEM' as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step !== 'SELECT_ITEM' || selections.length === 0) return;

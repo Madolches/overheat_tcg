@@ -1,4 +1,4 @@
-import { Card, CardEffect } from '../types/game';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor, createSelectCardQuery, getOpponentUid, ownUnits } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
@@ -30,6 +30,17 @@ const cardEffects: CardEffect[] = [{
       2,
       { sourceCardId: instance.gamecardId, effectId: '102000150_enter_exhaust' }
     );
+  },
+  targetSpec: {
+    title: '选择横置对象',
+    description: '选择对手的最多2个单位，将其横置。',
+    minSelections: 0,
+    maxSelections: 2,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    getCandidates: (gameState, playerState) =>
+      ownUnits(gameState.players[getOpponentUid(gameState, playerState.uid)])
+        .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
   },
   onQueryResolve: async (_instance, gameState, _playerState, selections) => {
     selections.forEach(id => {

@@ -1,93 +1,68 @@
 import { Card, GameState, PlayerState, CardEffect, TriggerLocation, GameEvent } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { canActivateDefaultTiming, standardizeChoiceOptions } from './BaseUtil';
+import { canActivateDefaultTiming, createSelectCardQuery } from './BaseUtil';
+
+const opponentUnits = (gameState: GameState, playerUid: string) => {
+  const opponentId = gameState.playerIds.find(id => id !== playerUid);
+  return opponentId
+    ? gameState.players[opponentId].unitZone.filter((unit: Card | null): unit is Card => !!unit)
+    : [];
+};
 
 const effect_104030454_trigger: CardEffect = {
   id: 'sodo_entry_bounce',
   type: 'TRIGGER',
   triggerEvent: 'CARD_EROSION_TO_FIELD',
   isMandatory: false,
-  description: '【诱】每回合一次。当此单位从侵蚀区域进入战场时：将此单位转为横置，并选择对手的一张单位卡牌返回持有者手牌。',
+  description: '【诱】每回合1次：这个单位从侵蚀区进入战场时，选择对手1个单位，将这个单位横置：将被选择单位返回持有者手牌。',
   limitCount: 1,
   limitNameType: true,
-  condition: (gameState: GameState, playerState: PlayerState, instance: Card, event?: GameEvent) => {
-    return event?.type === 'CARD_EROSION_TO_FIELD' && event.sourceCardId === instance.gamecardId;
-  },
+  condition: (gameState: GameState, playerState: PlayerState, instance: Card, event?: GameEvent) =>
+    event?.type === 'CARD_EROSION_TO_FIELD' &&
+    event.sourceCardId === instance.gamecardId &&
+    !instance.isExhausted &&
+    opponentUnits(gameState, playerState.uid).length > 0,
   execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
-    // 1. Ask if player wants to activate (Choice)
-    const choiceContext = {
-      effectId: 'sodo_entry_bounce',
-      sourceCardId: instance.gamecardId,
-      step: 'ACTIVATE_CHOICE'
-    };
-
-    gameState.pendingQuery = {
-      id: Math.random().toString(36).substring(7),
-      type: 'SELECT_CHOICE',
-      playerUid: playerState.uid,
-      options: standardizeChoiceOptions(gameState, [
-        { id: 'YES', label: '发动 (横置此单位并回场)' },
-        { id: 'NO', label: '不发动' }
-      ], choiceContext),
-      title: '效果发动确认',
-      description: `是否发动 [${instance.fullName}] 的效果？发动后此单位将转为横置，并使对手单位返回手牌。`,
-      minSelections: 1,
-      maxSelections: 1,
-      callbackKey: 'EFFECT_RESOLVE',
-      context: choiceContext
-    };
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      opponentUnits(gameState, playerState.uid),
+      '选择回手目标',
+      '选择对手的1个单位返回持有者手牌。',
+      1,
+      1,
+      { sourceCardId: instance.gamecardId, effectId: 'sodo_entry_bounce', step: 'BOUNCE_TARGET' },
+      () => 'UNIT'
+    );
+  },
+  targetSpec: {
+    title: '选择回手目标',
+    description: '选择对手的1个单位返回持有者手牌。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    step: 'BOUNCE_TARGET',
+    getCandidates: (gameState, playerState) =>
+      opponentUnits(gameState, playerState.uid).map(card => ({ card, source: 'UNIT' as any }))
   },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
-    if (context.step === 'ACTIVATE_CHOICE') {
-      if (selections[0] === 'YES') {
-        // 1. Exhaust self
-        await AtomicEffectExecutor.execute(gameState, playerState.uid, {
-          type: 'ROTATE_HORIZONTAL',
-          targetFilter: { gamecardId: instance.gamecardId }
-        }, instance);
-        gameState.logs.push(`[${instance.fullName}] 进入战场并发动效果，转为横置状态。`);
+    if (context?.step !== 'BOUNCE_TARGET' || selections.length === 0) return;
+    const targetId = selections[0];
+    const target = AtomicEffectExecutor.findCardById(gameState, targetId);
+    const owner = AtomicEffectExecutor.findCardOwnerKey(gameState, targetId);
+    if (!target || !owner || target.cardlocation !== 'UNIT' || owner === playerState.uid) return;
 
-        // 2. Select opponent unit to bounce
-        const opponentId = gameState.playerIds.find(id => id !== playerState.uid)!;
-        const opponent = gameState.players[opponentId];
-        const unitTargets = opponent.unitZone.filter(u => u !== null) as Card[];
+    await AtomicEffectExecutor.execute(gameState, playerState.uid, {
+      type: 'ROTATE_HORIZONTAL',
+      targetFilter: { gamecardId: instance.gamecardId }
+    }, instance);
 
-        if (unitTargets.length > 0) {
-          gameState.pendingQuery = {
-            id: Math.random().toString(36).substring(7),
-            type: 'SELECT_CARD',
-            playerUid: playerState.uid,
-            options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, unitTargets.map(c => ({ card: c, source: 'UNIT' }))),
-            title: '选择回场目标',
-            description: '选择一张对手的单位卡牌返回持有者手牌。',
-            minSelections: 1,
-            maxSelections: 1,
-            callbackKey: 'EFFECT_RESOLVE',
-            context: {
-              effectId: 'sodo_entry_bounce',
-              sourceCardId: instance.gamecardId,
-              step: 'BOUNCE_TARGET'
-            }
-          };
-        } else {
-          gameState.logs.push(`[${instance.fullName}] 未发现对手单位，仅转为横置。`);
-        }
-      } else {
-        gameState.logs.push(`[${instance.fullName}] 选择了不发动效果。`);
-      }
-    } else if (context.step === 'BOUNCE_TARGET' && selections.length > 0) {
-      const targetId = selections[0];
-      const target = AtomicEffectExecutor.findCardById(gameState, targetId)!;
-      const owner = AtomicEffectExecutor.findCardOwnerKey(gameState, targetId)!;
-
-      await AtomicEffectExecutor.execute(gameState, owner, {
-        type: 'MOVE_FROM_FIELD',
-        targetFilter: { gamecardId: targetId },
-        destinationZone: 'HAND'
-      }, instance);
-
-      gameState.logs.push(`[${instance.fullName}] 诱发效果：使对手的 [${target.fullName}] 返回了手牌。`);
-    }
+    await AtomicEffectExecutor.execute(gameState, owner, {
+      type: 'MOVE_FROM_FIELD',
+      targetFilter: { gamecardId: targetId },
+      destinationZone: 'HAND'
+    }, instance);
   }
 };
 
@@ -95,41 +70,33 @@ const effect_104030454_activate: CardEffect = {
   id: 'sodo_to_erosion',
   type: 'ACTIVATE',
   triggerLocation: ['HAND'],
-  description: '【启】若场上存在蓝色单位且侵蚀区域正面没有“索德”卡牌，支付0费用：将此卡从手牌放置在侵蚀区域正面，并抽一张牌。',
+  description: '【启】若场上存在蓝色单位且你的侵蚀前区没有「索德」，支付0费用：将这张卡从手牌放置到侵蚀前区，并抽1张牌。',
   condition: (gameState: GameState, playerState: PlayerState) => {
     if (!canActivateDefaultTiming(gameState, playerState)) return false;
 
-    // 1. Blue unit on field
-    const hasBlueUnit = playerState.unitZone.some(u => u && AtomicEffectExecutor.matchesColor(u, 'BLUE'));
+    const hasBlueUnit = playerState.unitZone.some(unit => unit && AtomicEffectExecutor.matchesColor(unit, 'BLUE'));
     if (!hasBlueUnit) return false;
 
-    // 2. No "索德" on erosion front
-    const hasSodoOnErosion = playerState.erosionFront.some(c => c && c.fullName.includes('索德'));
+    const hasSodoOnErosion = playerState.erosionFront.some(card => card && card.fullName.includes('索德'));
     if (hasSodoOnErosion) return false;
 
-    // 3. Erosion Front space check
-    const emptyIdx = playerState.erosionFront.findIndex(s => s === null);
-    return emptyIdx !== -1;
+    return playerState.erosionFront.some(slot => slot === null);
   },
   execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
-    const pUid = playerState.uid;
-    // 1. Move to Erosion Front
-    await AtomicEffectExecutor.execute(gameState, pUid, {
+    await AtomicEffectExecutor.execute(gameState, playerState.uid, {
       type: 'MOVE_FROM_HAND',
       targetFilter: { gamecardId: instance.gamecardId },
       destinationZone: 'EROSION_FRONT'
     }, instance);
 
-    // 2. Draw 1
-    await AtomicEffectExecutor.execute(gameState, pUid, { type: 'DRAW', value: 1 }, instance);
-    gameState.logs.push(`[${instance.fullName}] 进入侵蚀区域，并抽了一张牌。`);
+    await AtomicEffectExecutor.execute(gameState, playerState.uid, { type: 'DRAW', value: 1 }, instance);
   }
 };
 
 const card: Card = {
   id: '104030454',
   gamecardId: null as any,
-  fullName: '一级冒险家【索德】',
+  fullName: '一级冒险家「索德」',
   specialName: '索德',
   type: 'UNIT',
   color: 'BLUE',

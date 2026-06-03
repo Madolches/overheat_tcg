@@ -1,4 +1,4 @@
-import { Card, CardEffect } from '../types/game';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import { canPutUnitOntoBattlefield, createSelectCardQuery, discardHandCost, getOpponentUid, moveCard, revealDeckCards } from './BaseUtil';
 
@@ -68,6 +68,21 @@ const effect_101000501_turn_end: CardEffect = {
       },
       () => 'UNIT'
     );
+  },
+  targetSpec: {
+    preselect: false,
+    title: '选择放逐单位',
+    description: '若公开的卡是白色卡，对手选择他的1个单位，将其放逐。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    getCandidates: (gameState, playerState) => {
+      const opponentUid = getOpponentUid(gameState, playerState.uid);
+      return gameState.players[opponentUid].unitZone
+        .filter((card): card is Card => !!card)
+        .map(card => ({ card, source: 'UNIT' as TriggerLocation }));
+    }
   },
   onQueryResolve: async (instance, gameState, _playerState, selections, context) => {
     if (context?.effectId !== '101000501_turn_end' || selections.length === 0) return;

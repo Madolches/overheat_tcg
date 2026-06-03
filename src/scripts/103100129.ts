@@ -13,6 +13,19 @@ const cardEffects: CardEffect[] = [{
     event.data?.zone === 'GRAVE' &&
     event.data?.sourceZone === 'UNIT' &&
     playerState.grave.some(card => card.id !== '103100129' && card.type === 'UNIT' && card.fullName.includes('魔女')),
+  targetSpec: {
+    title: '选择加入手牌的魔女',
+    description: '选择你的墓地中的1张《魔女的仆从》以外的卡名含有《魔女》的单位卡，将其加入手牌。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      playerState.grave
+        .filter(card => card.id !== '103100129' && card.type === 'UNIT' && card.fullName.includes('魔女'))
+        .map(card => ({ card, source: 'GRAVE' as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     const candidates = playerState.grave.filter(card =>
       card.id !== '103100129' &&

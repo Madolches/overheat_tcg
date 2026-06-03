@@ -1,5 +1,8 @@
-import { Card, CardEffect, TriggerLocation } from '../types/game';
-import { addInfluence, ensureData, ownUnits, ownerOf } from './BaseUtil';
+import { Card, CardEffect, GameEvent } from '../types/game';
+import { addInfluence, canPayAccessCost, canPutUnitOntoBattlefield, ensureData, moveCard, ownUnits, ownerOf, paymentCost } from './BaseUtil';
+
+const redUnitCount = (cards: (Card | null)[]) =>
+  cards.filter((unit): unit is Card => !!unit && unit.color === 'RED').length;
 
 const cardEffects: CardEffect[] = [{
     id: '102050091_red_rush',
@@ -19,11 +22,38 @@ const cardEffects: CardEffect[] = [{
   }, {
     id: '102050091_battle_save',
     type: 'TRIGGER',
-  isMandatory: false,
+    isMandatory: false,
     triggerLocation: ['HAND'],
     isGlobal: true,
+    battleDestroySave: true,
+    cost: paymentCost(3, 'RED'),
     description: '你的1个单位将要被战斗破坏时，支付三费且我方场上有2个以上红色单位：可以将这张卡从手牌放置到战场上。之后，防止那次破坏。',
-    condition: () => false
+    condition: (gameState, playerState, instance, event?: GameEvent) =>
+      event?.data?.beforeDestroy === true &&
+      event.playerUid === playerState.uid &&
+      !!event.targetCardId &&
+      instance.cardlocation === 'HAND' &&
+      redUnitCount(playerState.unitZone) >= 2 &&
+      canPutUnitOntoBattlefield(playerState, instance) &&
+      canPayAccessCost(gameState, playerState, 3, 'RED', instance),
+    onCostResolve: async (instance, gameState, playerState, _selections, context) => {
+      const targetUnitId = context?.targetUnitId;
+      if (
+        !targetUnitId ||
+        instance.cardlocation !== 'HAND' ||
+        !canPutUnitOntoBattlefield(playerState, instance)
+      ) {
+        return;
+      }
+
+      const targetName = ownerOf(gameState, instance)?.unitZone
+        .find(unit => unit?.gamecardId === targetUnitId)?.fullName || '目标单位';
+      const moved = moveCard(gameState, playerState.uid, instance, 'UNIT', instance);
+      if (!moved) return;
+
+      context.battleDestroySaveResolved = true;
+      gameState.logs.push(`[${instance.fullName}] 从手牌放置到战场，防止了 [${targetName}] 的战斗破坏。`);
+    }
   }];
 
 /**

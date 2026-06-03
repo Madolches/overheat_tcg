@@ -25,12 +25,53 @@ const cardEffects: CardEffect[] = [{
       '选择对手场上1个神蚀单位。',
       0,
       1,
-      { sourceCardId: instance.gamecardId, effectId: '105110225_enter_exile_god', step: 'TARGET' },
+      { sourceCardId: instance.gamecardId, effectId: '105110225_enter_exile_god', step: 'LEGACY_TARGET' },
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    title: '选择神蚀单位',
+    description: '选择对手场上1个神蚀单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    step: 'TARGET',
+    getCandidates: (gameState, playerState) => {
+      const opponent = gameState.players[getOpponentUid(gameState, playerState.uid)];
+      return ownUnits(opponent)
+        .filter(unit => unit.godMark)
+        .map(card => ({ card, source: 'UNIT' as any }));
+    }
+  },
+  cost: async (gameState, playerState, instance) => {
+    const feijingHands = playerState.hand.filter(isFeijingCard);
+    if (feijingHands.length < 2) return false;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      feijingHands,
+      '支付舍弃费用',
+      '选择手牌中的2张具有【菲晶】的卡舍弃作为费用。',
+      2,
+      2,
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '105110225_enter_exile_god',
+        step: 'DISCARD_COST',
+        costType: 'DISCARD_HAND_COST',
+        discardCostAmount: 2,
+        skipEffectResolveAfterCost: true
+      },
+      () => 'HAND'
+    );
+    return true;
+  },
+  onCostResolve: async (_instance, _gameState, _playerState, _selections, context) => {
+    if (context?.step !== 'DISCARD_COST') return;
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
-    if (context?.step === 'TARGET') {
+    if (context?.step === 'LEGACY_TARGET') {
       const targetId = selections[0];
       if (!targetId) return;
       const feijingHands = playerState.hand.filter(isFeijingCard);
@@ -48,12 +89,18 @@ const cardEffects: CardEffect[] = [{
       );
       return;
     }
-    if (context?.step !== 'DISCARD') return;
-    selections.forEach(id => {
-      const hand = playerState.hand.find(card => card.gamecardId === id);
-      if (hand) moveCardAsCost(gameState, playerState.uid, hand, 'GRAVE', instance);
-    });
-    const target = AtomicEffectExecutor.findCardById(gameState, context.targetId);
+    if (context?.step === 'DISCARD') {
+      selections.forEach(id => {
+        const hand = playerState.hand.find(card => card.gamecardId === id);
+        if (hand) moveCardAsCost(gameState, playerState.uid, hand, 'GRAVE', instance);
+      });
+      const target = AtomicEffectExecutor.findCardById(gameState, context.targetId);
+      if (target?.cardlocation === 'UNIT') exileByEffect(gameState, target, instance);
+      return;
+    }
+
+    if (context?.step !== 'TARGET') return;
+    const target = AtomicEffectExecutor.findCardById(gameState, selections[0]);
     if (target?.cardlocation === 'UNIT') exileByEffect(gameState, target, instance);
   }
 }];

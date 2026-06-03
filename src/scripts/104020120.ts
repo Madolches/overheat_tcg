@@ -44,8 +44,23 @@ const trigger_104020120: CardEffect = {
       };
     }
   },
+  targetSpec: {
+    title: '选择横置的单位',
+    description: '选择对手的1个竖置单位，将其横置，并使其下一次不能重置。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    step: '1',
+    getCandidates: (gameState, playerState) => {
+      const opponentId = Object.keys(gameState.players).find(id => id !== playerState.uid)!;
+      return gameState.players[opponentId].unitZone
+        .filter((u): u is Card => !!u && !u.isExhausted)
+        .map(card => ({ card, source: 'UNIT' as any }));
+    }
+  },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
-    if (context.step === 1) {
+    if (context.step === 1 || context.step === '1') {
       const targetId = selections[0];
       const targetCard = AtomicEffectExecutor.findTargets(gameState, { gamecardId: targetId })[0];
       

@@ -1,6 +1,6 @@
 import { Card, CardEffect, GameEvent, GameState, PlayerState } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { createSelectCardQuery, getTopDeckCards, moveCard } from './BaseUtil';
+import { createSelectCardQuery, getTopDeckCards, moveCard, paymentCost } from './BaseUtil';
 
 const getViewedTopCards = (playerState: PlayerState) => getTopDeckCards(playerState, 3);
 
@@ -32,6 +32,7 @@ const effect_105110110_enter: CardEffect = {
   triggerLocation: ['UNIT'],
   triggerEvent: 'CARD_ENTERED_ZONE',
   isMandatory: false,
+  cost: paymentCost(0, 'YELLOW'),
   description: '【诱】:[〖0:黄黄〗]这个单位进入战场时，检视你的卡组顶的3张卡，你可以从中选择1张道具卡公开，将其加入手牌，将其余的卡以任意顺序放置到卡组顶。',
   condition: (gameState, playerState, instance, event?: GameEvent) => {
     if (

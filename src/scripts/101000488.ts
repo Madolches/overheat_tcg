@@ -8,10 +8,21 @@ const cardEffects: CardEffect[] = [{
   triggerEvent: ['CARD_DESTROYED_BATTLE', 'CARD_DESTROYED_EFFECT'],
   isMandatory: false,
   limitCount: 1,
-  description: '1回合1次：你的单位被破坏时，可以选择墓地1张卡放置到卡组底。',
-  condition: (_gameState, playerState, _instance, event) =>
-    event?.playerUid === playerState.uid &&
-    playerState.grave.length > 0,
+    description: '1回合1次：你的单位被破坏时，可以选择墓地1张卡放置到卡组底。',
+    condition: (_gameState, playerState, _instance, event) =>
+      event?.playerUid === playerState.uid &&
+      playerState.grave.length > 0,
+  targetSpec: {
+    title: '选择放回卡组底的卡',
+    description: '选择你的墓地中的1张卡，将其放置到卡组底。',
+    minSelections: 0,
+    maxSelections: 1,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    step: 'BOTTOM_GRAVE',
+    getCandidates: (_gameState, playerState) =>
+      playerState.grave.map(card => ({ card, source: 'GRAVE' as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,

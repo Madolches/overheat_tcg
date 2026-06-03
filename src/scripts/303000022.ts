@@ -1,4 +1,4 @@
-import { Card, CardEffect } from '../types/game';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor, addInfluence, createSelectCardQuery, ensureData, forbidAttackAndDefenseUntil, getBattlefieldUnits, moveCard, ownerUidOf } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
@@ -24,6 +24,16 @@ const cardEffects: CardEffect[] = [{
       { sourceCardId: instance.gamecardId, effectId: '303000022_bind_enter' },
       () => 'UNIT'
     );
+  },
+  targetSpec: {
+    title: '选择束缚单位',
+    description: '选择战场上的1个单位，使其不能横置，不能宣言攻击和防御。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    getCandidates: gameState =>
+      getBattlefieldUnits(gameState).map(card => ({ card, source: 'UNIT' as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;

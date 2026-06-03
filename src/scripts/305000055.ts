@@ -59,8 +59,12 @@ const effect_305000055_end_blueprint: CardEffect = {
     instance.cardlocation === 'ITEM' &&
     faceDownExile(playerState).length >= 2 &&
     deckCandidates(playerState).length > 0,
-  execute: async (instance, gameState, playerState) => {
+  cost: async (gameState, playerState, instance) => {
+    if (instance.cardlocation !== 'ITEM') return false;
     moveCardAsCost(gameState, playerState.uid, instance, 'GRAVE', instance);
+    return true;
+  },
+  execute: async (instance, gameState, playerState) => {
     const candidates = deckCandidates(playerState);
     createSelectCardQuery(
       gameState,

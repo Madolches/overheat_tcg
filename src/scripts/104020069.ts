@@ -1,6 +1,15 @@
 import { Card, GameState, PlayerState, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 
+const getMinotaurGuardTargets = (gameState: GameState, playerState: PlayerState) => {
+  const opponentUid = Object.keys(gameState.players).find(uid => uid !== playerState.uid);
+  if (!opponentUid) return [] as Card[];
+  const opponent = gameState.players[opponentUid];
+  return opponent.unitZone.filter((unit): unit is Card =>
+    !!unit && unit.isExhausted && (unit.power || 0) <= 1500
+  );
+};
+
 const card: Card = {
   id: '104020069',
   fullName: '牛头人护卫',
@@ -36,16 +45,21 @@ const card: Card = {
           u !== null && u.faction === '九尾商会联盟'
         ).length;
 
-        return guildCount >= 3;
+        return guildCount >= 3 && getMinotaurGuardTargets(gameState, playerState).length > 0;
+      },
+      targetSpec: {
+        title: '选择破坏对象',
+        description: '选择对手的1个力量1500以下的横置单位。',
+        minSelections: 1,
+        maxSelections: 1,
+        zones: ['UNIT'],
+        controller: 'OPPONENT',
+        step: 'DESTROY_TARGET',
+        getCandidates: (gameState, playerState) =>
+          getMinotaurGuardTargets(gameState, playerState).map(card => ({ card, source: 'UNIT' as any }))
       },
       execute: async (card, gameState, playerState) => {
-        const opponentUid = Object.keys(gameState.players).find(uid => uid !== playerState.uid);
-        if (!opponentUid) return;
-        const opponent = gameState.players[opponentUid];
-
-        const eligibleTargets = opponent.unitZone.filter(u =>
-          u !== null && u.isExhausted && (u.power || 0) < 1500
-        ) as Card[];
+        const eligibleTargets = getMinotaurGuardTargets(gameState, playerState);
 
         if (eligibleTargets.length > 0) {
           gameState.pendingQuery = {
@@ -55,7 +69,7 @@ const card: Card = {
             options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, eligibleTargets.map(u => ({ card: u, source: 'UNIT' as any }))),
             title: '效果发动选择',
             description: '【诱发】：你可以选择破坏一个对手横置且力量<1500的单位。',
-            minSelections: 0, // Effectively "choose to activate"
+            minSelections: 1,
             maxSelections: 1,
             callbackKey: 'EFFECT_RESOLVE',
             context: { sourceCardId: card.gamecardId, effectIndex: 0, step: 1 }
@@ -63,7 +77,7 @@ const card: Card = {
         }
       },
       onQueryResolve: async (card, gameState, playerState, selections, context) => {
-        if (selections.length > 0) {
+        if ((context?.step === 'DESTROY_TARGET' || context?.step === 1) && selections.length > 0) {
           const targetId = selections[0];
 
           await AtomicEffectExecutor.execute(gameState, playerState.uid, {

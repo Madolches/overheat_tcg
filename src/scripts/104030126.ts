@@ -61,6 +61,20 @@ const effect_104030126_kill_trigger: CardEffect = {
       };
     }
   },
+  targetSpec: {
+    title: '选择破坏目标',
+    description: '选择对手的1个横置的非神蚀单位，将其破坏。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    getCandidates: (gameState, playerState) => {
+      const opponentId = gameState.playerIds.find(id => id !== playerState.uid)!;
+      return gameState.players[opponentId].unitZone
+        .filter((u): u is Card => !!u && u.isExhausted && !u.godMark)
+        .map(card => ({ card, source: 'UNIT' as TriggerLocation }));
+    }
+  },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[]) => {
     if (selections.length > 0) {
       const targetId = selections[0];

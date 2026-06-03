@@ -41,6 +41,19 @@ const trigger_104010218_1: CardEffect = {
       }
     };
   },
+  targetSpec: {
+    title: '选择加入手牌的卡',
+    description: '选择你的侵蚀区中的最多2张具有【菲晶】的正面卡加入手牌。',
+    minSelections: 1,
+    maxSelections: 2,
+    zones: ['EROSION_FRONT'],
+    controller: 'SELF',
+    step: 1 as any,
+    getCandidates: (_gameState, playerState) =>
+      playerState.erosionFront
+        .filter((card: Card | null): card is Card => !!card && card.feijingMark && card.displayState === 'FRONT_UPRIGHT')
+        .map(card => ({ card, source: 'EROSION_FRONT' as any }))
+  },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
     if (context.step === 1) {
       for (const targetId of selections) {

@@ -1,5 +1,5 @@
 import { Card, CardEffect } from '../types/game';
-import { executePromotionAfterOptionalDiscard, hasPromotionTarget, isSameFactionCard, sameFactionHandCards } from './BaseUtil';
+import { createSelectCardQuery, executePromotionAfterOptionalDiscard, hasPromotionTarget, isSameFactionCard, sameFactionHandCards } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
   id: '102050387_turn_start_promotion',
@@ -15,9 +15,32 @@ const cardEffects: CardEffect[] = [{
     instance.cardlocation === 'UNIT' &&
     sameFactionHandCards(playerState, instance).length > 0 &&
     hasPromotionTarget(playerState, instance),
+  cost: async (gameState, playerState, instance) => {
+    const costs = sameFactionHandCards(playerState, instance);
+    if (costs.length === 0) return false;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      costs,
+      '选择晋升费用',
+      '舍弃1张同势力手牌以进行晋升。',
+      1,
+      1,
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '102050387_turn_start_promotion',
+        costType: 'DISCARD_HAND_COST',
+        discardCostAmount: 1,
+        skipEffectResolveAfterCost: true
+      },
+      () => 'HAND'
+    );
+    return true;
+  },
   execute: async (instance, gameState, playerState) => {
     await executePromotionAfterOptionalDiscard(gameState, playerState, instance, '102050387_turn_start_promotion', {
-      discardPredicate: card => isSameFactionCard(card, instance)
+      discardPredicate: card => isSameFactionCard(card, instance),
+      skipDiscard: true
     });
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {

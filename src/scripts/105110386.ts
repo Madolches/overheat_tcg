@@ -49,6 +49,34 @@ const cardEffects: CardEffect[] = [{
     event.data?.zone === 'UNIT' &&
     enteredByBlueprint(gameState, instance) &&
     defenseModeOptions(gameState, playerState.uid).length > 0,
+  targetSpec: {
+    modeTitle: '选择效果',
+    modeDescription: '选择1项效果执行。',
+    modeOptions: [{
+      id: 'DESTROY_OPPONENT_NON_GOD',
+      label: '破坏对手非神蚀卡',
+      title: '破坏对手非神蚀卡',
+      description: '破坏对手战场上的所有非神蚀卡。',
+      minSelections: 0,
+      maxSelections: 0,
+      zones: [],
+      step: 'DESTROY_OPPONENT_NON_GOD',
+      condition: (gameState, playerState) => opponentNonGodFieldCards(gameState, playerState.uid).length > 0
+    }, {
+      id: 'DESTROY_GODMARK',
+      label: '破坏神蚀卡',
+      title: '选择神蚀卡',
+      description: '选择战场上的1张神蚀卡并破坏。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT', 'ITEM'],
+      controller: 'ANY',
+      step: 'DESTROY_GODMARK',
+      getCandidates: (gameState) =>
+        godmarkFieldCards(gameState).map(card => ({ card, source: card.cardlocation as any })),
+      condition: (gameState) => godmarkFieldCards(gameState).length > 0
+    }]
+  },
   execute: async (instance, gameState, playerState) => {
     const options = defenseModeOptions(gameState, playerState.uid);
     if (options.length === 1 && options[0].id === 'DESTROY_OPPONENT_NON_GOD') {
@@ -79,6 +107,12 @@ const cardEffects: CardEffect[] = [{
     );
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    const selectedMode = context?.selectedModeId || context?.modeId || context?.step;
+    if (selectedMode === 'DESTROY_OPPONENT_NON_GOD') {
+      opponentNonGodFieldCards(gameState, playerState.uid).forEach(target => destroyByEffect(gameState, target, instance));
+      return;
+    }
+
     if (context?.step === 'MODE') {
       if (selections[0] === 'DESTROY_OPPONENT_NON_GOD') {
         opponentNonGodFieldCards(gameState, playerState.uid).forEach(target => destroyByEffect(gameState, target, instance));
@@ -98,7 +132,7 @@ const cardEffects: CardEffect[] = [{
       return;
     }
 
-    if (context?.step === 'DESTROY_GODMARK') {
+    if (selectedMode === 'DESTROY_GODMARK') {
       const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;
       if (target && target.godMark && ['UNIT', 'ITEM'].includes(target.cardlocation || '')) {
         destroyByEffect(gameState, target, instance);

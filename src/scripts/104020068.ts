@@ -45,6 +45,19 @@ const effect_104020068_trigger: CardEffect = {
       };
     }
   },
+  targetSpec: {
+    title: '选择目标卡牌',
+    description: '选择1张非神蚀单位或道具，将其横置或重置。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT', 'ITEM'],
+    controller: 'ANY',
+    step: 'SELECT_TARGET',
+    getCandidates: (gameState) =>
+      allCardsOnField(gameState)
+        .filter(card => !card.godMark)
+        .map(card => ({ card, source: card.cardlocation as TriggerLocation }))
+  },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
     if (context.step === 'SELECT_TARGET' && selections.length > 0) {
       const targetId = selections[0];

@@ -45,6 +45,17 @@ const cardEffects: CardEffect[] = [{
       context: { sourceCardId: instance.gamecardId, effectId: '104030305_recover_after_own_unit_exiled', step: 'TARGET' }
     };
   },
+  targetSpec: {
+    title: '选择侵蚀区卡',
+    description: '选择你正面侵蚀区的1张卡。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['EROSION_FRONT'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      playableOrRecoverableErosion(playerState).map(card => ({ card, source: 'EROSION_FRONT' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'TARGET') {
       const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;

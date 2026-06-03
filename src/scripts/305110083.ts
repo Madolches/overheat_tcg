@@ -47,8 +47,12 @@ const cardEffects: CardEffect[] = [{
     instance.cardlocation === 'ITEM' &&
     playerState.isTurn &&
     faceDownExile(playerState).length >= 2,
-  execute: async (instance, gameState, playerState) => {
+  cost: async (gameState, playerState, instance) => {
+    if (instance.cardlocation !== 'ITEM') return false;
     moveCardAsCost(gameState, playerState.uid, instance, 'GRAVE', instance);
+    return true;
+  },
+  execute: async (instance, gameState, playerState) => {
     [...faceDownExile(playerState)].forEach(card =>
       moveCard(gameState, playerState.uid, card, 'DECK', instance, { insertAtBottom: true })
     );

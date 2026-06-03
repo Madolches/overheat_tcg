@@ -29,9 +29,32 @@ const cardEffects: CardEffect[] = [{
     instance.cardlocation === 'UNIT' &&
     sameFactionHandCards(playerState, instance).length > 0 &&
     hasPromotionTarget(playerState, instance),
+  cost: async (gameState, playerState, instance) => {
+    const costs = sameFactionHandCards(playerState, instance);
+    if (costs.length === 0) return false;
+    createSelectCardQuery(
+      gameState,
+      playerState.uid,
+      costs,
+      '选择晋升费用',
+      '舍弃1张同势力手牌以进行晋升。',
+      1,
+      1,
+      {
+        sourceCardId: instance.gamecardId,
+        effectId: '102050389_turn_start_promotion',
+        costType: 'DISCARD_HAND_COST',
+        discardCostAmount: 1,
+        skipEffectResolveAfterCost: true
+      },
+      () => 'HAND'
+    );
+    return true;
+  },
   execute: async (instance, gameState, playerState) => {
     await executePromotionAfterOptionalDiscard(gameState, playerState, instance, '102050389_turn_start_promotion', {
-      discardPredicate: card => isSameFactionCard(card, instance)
+      discardPredicate: card => isSameFactionCard(card, instance),
+      skipDiscard: true
     });
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
@@ -74,6 +97,7 @@ const cardEffects: CardEffect[] = [{
     maxSelections: 1,
     zones: ['UNIT', 'ITEM'],
     controller: 'ANY',
+    costTarget: true,
     step: 'TARGET',
     getCandidates: gameState =>
       nonGodTargets(gameState).map(card => ({ card, source: card.cardlocation as any }))

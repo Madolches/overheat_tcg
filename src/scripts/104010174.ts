@@ -1,4 +1,4 @@
-import { Card, GameState, PlayerState, CardEffect, GameEvent } from '../types/game';
+import { Card, GameState, PlayerState, CardEffect, GameEvent, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 
 const trigger_104010174_battle: CardEffect = {
@@ -42,6 +42,21 @@ const trigger_104010174_battle: CardEffect = {
         effectId: '104010174_battle_trigger'
       }
     };
+  },
+  targetSpec: {
+    title: '选择横置目标',
+    description: '选择对手的1个非神蚀单位，将其横置。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    getCandidates: (gameState, playerState) => {
+      const opponentUid = Object.keys(gameState.players).find(uid => uid !== playerState.uid);
+      if (!opponentUid) return [];
+      return gameState.players[opponentUid].unitZone
+        .filter((u): u is Card => !!u && !u.godMark)
+        .map(card => ({ card, source: 'UNIT' as TriggerLocation }));
+    }
   },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[]) => {
     const targetId = selections[0];
@@ -101,8 +116,58 @@ const trigger_104010174_damage: CardEffect = {
       }
     };
   },
+  targetSpec: {
+    targetGroups: [{
+      title: '选择我方返回单位',
+      description: '选择你的场上的1个单位返回手牌。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'SELF',
+      step: '1',
+      getCandidates: (_gameState, playerState) =>
+        playerState.unitZone
+          .filter((u): u is Card => !!u)
+          .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
+    }, {
+      title: '选择对手返回单位',
+      description: '选择对手场上的1个横置单位返回其持有者手牌。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'OPPONENT',
+      step: '2',
+      getCandidates: (gameState, playerState) => {
+        const opponentUid = Object.keys(gameState.players).find(uid => uid !== playerState.uid);
+        if (!opponentUid) return [];
+        return gameState.players[opponentUid].unitZone
+          .filter((u): u is Card => !!u && u.isExhausted)
+          .map(card => ({ card, source: 'UNIT' as TriggerLocation }));
+      }
+    }]
+  },
   onQueryResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, selections: string[], context: any) => {
-    if (context.step === 1) {
+    if (context?.declaredTargets?.length >= 2) {
+      const myTargetId = selections[0];
+      const oppTargetId = selections[1];
+
+      await AtomicEffectExecutor.execute(gameState, playerState.uid, {
+        type: 'MOVE_FROM_FIELD',
+        targetFilter: { gamecardId: myTargetId },
+        destinationZone: 'HAND'
+      }, instance);
+
+      await AtomicEffectExecutor.execute(gameState, playerState.uid, {
+        type: 'MOVE_FROM_FIELD',
+        targetFilter: { gamecardId: oppTargetId },
+        destinationZone: 'HAND'
+      }, instance);
+
+      gameState.logs.push(`[${instance.fullName}] 效果：将双方选定的单位返回了手牌。`);
+      return;
+    }
+
+    if (context.step === 1 || context.step === '1') {
       const myTargetId = selections[0];
       const opponentUid = Object.keys(gameState.players).find(uid => uid !== playerState.uid);
       if (!opponentUid) return;
@@ -136,7 +201,7 @@ const trigger_104010174_damage: CardEffect = {
       return;
     }
 
-    if (context.step === 2) {
+    if (context.step === 2 || context.step === '2') {
       const myTargetId = context.myTargetId;
       const oppTargetId = selections[0];
 

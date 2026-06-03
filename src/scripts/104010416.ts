@@ -18,6 +18,11 @@ const swordDiscardCards = (playerState: any, instance: Card) =>
     isSwordImmortal(card)
   );
 
+const blueUnitCount = (playerState: any) =>
+  playerState.unitZone.filter((unit: Card | null) =>
+    !!unit && unit.type === 'UNIT' && AtomicEffectExecutor.matchesColor(unit, 'BLUE')
+  ).length;
+
 const cardEffects: CardEffect[] = [{
   id: '104010416_equipped_stats',
   type: 'CONTINUOUS',
@@ -36,9 +41,10 @@ const cardEffects: CardEffect[] = [{
   triggerLocation: ['HAND'],
   erosionTotalLimit: [1, 4],
   limitCount: 1,
-  description: '1~4，手牌中：舍弃手牌中的1张卡名含有《剑仙》的卡，将手牌中的这张卡放置到战场上。',
+  description: '1~4，手牌中，蓝色单位2个以上：舍弃手牌中的1张卡名含有《剑仙》的卡，将手牌中的这张卡放置到战场上。',
   condition: (_gameState, playerState, instance) =>
     instance.cardlocation === 'HAND' &&
+    blueUnitCount(playerState) >= 2 &&
     swordDiscardCards(playerState, instance).length > 0 &&
     canPutUnitOntoBattlefield(playerState, instance),
   cost: async (gameState, playerState, instance) => {

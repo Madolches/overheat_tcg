@@ -28,6 +28,17 @@ const cardEffects: CardEffect[] = [{
       playerState.isTurn &&
       event?.data?.phase === 'START' &&
       playerState.grave.length > 0,
+    targetSpec: {
+      title: '选择放回卡组底的卡',
+      description: '选择你的墓地中的1张卡，放置到卡组底。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['GRAVE'],
+      controller: 'SELF',
+      step: 'BOTTOM_GRAVE',
+      getCandidates: (_gameState, playerState) =>
+        playerState.grave.map(card => ({ card, source: 'GRAVE' as TriggerLocation }))
+    },
     execute: async (instance, gameState, playerState) => {
       createSelectCardQuery(
         gameState,

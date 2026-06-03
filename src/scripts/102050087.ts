@@ -26,6 +26,18 @@ const cardEffects: CardEffect[] = [{
         { sourceCardId: instance.gamecardId, effectId: '102050087_destroy' }
       );
     },
+    targetSpec: {
+      title: '选择破坏对象',
+      description: '选择对手的1个非神蚀单位，将其破坏。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'OPPONENT',
+      getCandidates: (gameState, playerState) =>
+        ownUnits(gameState.players[getOpponentUid(gameState, playerState.uid)])
+          .filter(unit => !unit.godMark)
+          .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
+    },
     onQueryResolve: async (instance, gameState, _playerState, selections) => {
       const target = Object.values(gameState.players)
         .flatMap(player => ownUnits(player))

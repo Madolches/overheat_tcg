@@ -1,6 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { createSelectCardQuery, moveCardsToBottom } from './BaseUtil';
+import { createSelectCardQuery, moveCardsToBottom, paymentCost } from './BaseUtil';
 
 const whiteSourceCount = (cards: (Card | null)[]) =>
   cards.filter(card => !!card && AtomicEffectExecutor.matchesColor(card, 'WHITE')).length;
@@ -13,6 +13,7 @@ const effect_101000283_enter_recover: CardEffect = {
   triggerLocation: ['UNIT'],
   limitCount: 1,
   limitNameType: true,
+  cost: paymentCost(0, 'WHITE'),
   description: '【诱】〖同名1回合1次〗这个单位进入战场时，选择你的墓地中最多三张红色或黄色卡：将被选择的卡放置到卡组底。',
   condition: (_gameState, playerState, instance, event) =>
     event?.sourceCardId === instance.gamecardId &&
@@ -32,6 +33,18 @@ const effect_101000283_enter_recover: CardEffect = {
       { sourceCardId: instance.gamecardId, effectId: '101000283_enter_recover' },
       () => 'GRAVE'
     );
+  },
+  targetSpec: {
+    title: '选择墓地卡',
+    description: '选择你墓地中的最多3张红色或黄色卡放置到卡组底。',
+    minSelections: 1,
+    maxSelections: 3,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) =>
+      playerState.grave
+        .filter(card => card.color === 'RED' || card.color === 'YELLOW')
+        .map(card => ({ card, source: 'GRAVE' as any }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const selectedCards = selections

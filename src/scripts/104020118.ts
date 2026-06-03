@@ -58,9 +58,24 @@ const card: Card = {
           };
         }
       },
+      targetSpec: {
+        title: '选择目标单位',
+        description: '选择1个ACCESS 2以下的非神蚀单位。该单位在下一次对手回合开始时不能重置。',
+        minSelections: 1,
+        maxSelections: 1,
+        zones: ['UNIT'],
+        controller: 'ANY',
+        step: '1',
+        getCandidates: (gameState) =>
+          Object.values(gameState.players).flatMap(p =>
+            p.unitZone
+              .filter((u): u is Card => !!u && !u.godMark && u.acValue <= 2)
+              .map(card => ({ card, source: 'UNIT' as any }))
+          )
+      },
       onQueryResolve: (card, gameState, playerState, selections, context) => {
         const step = context?.step || 1;
-        if (step === 1) {
+        if (step === 1 || step === '1') {
           const targetId = selections[0];
           let targetUnit: Card | undefined;
 

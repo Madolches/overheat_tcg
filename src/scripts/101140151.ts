@@ -1,4 +1,4 @@
-import { Card, CardEffect, GameEvent } from '../types/game';
+import { Card, CardEffect, GameEvent, TriggerLocation } from '../types/game';
 import { addInfluence, allCardsOnField, createSelectCardQuery, ensureData, hasBattlefieldSpecialNameConflict, moveCard, ownerUidOf } from './BaseUtil';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 
@@ -30,6 +30,18 @@ const cardEffects: CardEffect[] = [{
     allCardsOnField(gameState).some(card => card.gamecardId !== instance.gamecardId && card.id !== instance.id),
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(gameState, playerState.uid, allCardsOnField(gameState).filter(card => card.gamecardId !== instance.gamecardId && card.id !== instance.id), '选择放逐目标', '选择战场上的1张《教会的押送人》以外的卡。', 1, 1, { sourceCardId: instance.gamecardId, effectId: '101140151_enter_exile' }, card => card.cardlocation as any);
+  },
+  targetSpec: {
+    title: '选择放逐目标',
+    description: '选择战场上的1张《教会的押送人》以外的卡，将其放逐。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT', 'ITEM'],
+    controller: 'ANY',
+    getCandidates: (gameState, _playerState, instance) =>
+      allCardsOnField(gameState)
+        .filter(card => card.gamecardId !== instance.gamecardId && card.id !== instance.id)
+        .map(card => ({ card, source: card.cardlocation as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;

@@ -1,4 +1,4 @@
-import { Card, CardEffect } from '../types/game';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { addTempDamage, addTempPower, allUnitsOnField, createSelectCardQuery, getResonanceExiledCard, isResonanceExileEvent, isSilverInstrumentCard, resonanceEffect } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [
@@ -27,6 +27,18 @@ const cardEffects: CardEffect[] = [
         { sourceCardId: instance.gamecardId, effectId: '103090328_boost' },
         card => card.cardlocation as any
       );
+    },
+    targetSpec: {
+      title: '选择强化单位',
+      description: '选择战场上的1个非神蚀单位，本回合中伤害+1、力量+1500。',
+      minSelections: 1,
+      maxSelections: 1,
+      zones: ['UNIT'],
+      controller: 'ANY',
+      getCandidates: gameState =>
+        allUnitsOnField(gameState)
+          .filter(unit => !unit.godMark)
+          .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
     },
     onQueryResolve: async (instance, gameState, _playerState, selections) => {
       const target = allUnitsOnField(gameState).find(unit => unit.gamecardId === selections[0] && !unit.godMark);

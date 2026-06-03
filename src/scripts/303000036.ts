@@ -13,6 +13,18 @@ const cardEffects: CardEffect[] = [{
     event?.playerUid === getOpponentUid(gameState, playerState.uid) &&
     playerState.grave.some(isFeijingCard) &&
     canPayAccessCost(gameState, playerState, 1, 'GREEN'),
+  targetSpec: {
+    title: '选择菲晶卡',
+    description: '选择你墓地中的1张具有【菲晶】的卡加入手牌。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['GRAVE'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) =>
+      playerState.grave
+        .filter(isFeijingCard)
+        .map(card => ({ card, source: 'GRAVE' as any }))
+  },
   cost: paymentCost(1, 'GREEN'),
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
@@ -21,7 +33,7 @@ const cardEffects: CardEffect[] = [{
       playerState.grave.filter(isFeijingCard),
       '选择菲晶卡',
       '选择你墓地中的1张具有【菲晶】的卡加入手牌。',
-      0,
+      1,
       1,
       { sourceCardId: instance.gamecardId, effectId: '303000036_opponent_end_recover' },
       () => 'GRAVE'

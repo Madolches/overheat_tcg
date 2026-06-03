@@ -1,4 +1,4 @@
-import { Card, CardEffect, GameEvent } from '../types/game';
+import { Card, CardEffect, GameEvent, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import { createSelectCardQuery, getBattlefieldUnits } from './BaseUtil';
 
@@ -38,6 +38,16 @@ const effect_105000473_reveal: CardEffect = {
       Math.min(2, targets.length),
       { sourceCardId: instance.gamecardId, effectId: '105000473_reveal' }
     );
+  },
+  targetSpec: {
+    title: '选择最多2个单位',
+    description: '选择战场上的最多2个单位，本回合中伤害+1、力量+500并获得【速攻】。',
+    minSelections: 0,
+    maxSelections: 2,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    getCandidates: gameState =>
+      getBattlefieldUnits(gameState).map(card => ({ card, source: 'UNIT' as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     for (const targetId of selections) {

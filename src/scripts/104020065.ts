@@ -9,6 +9,8 @@ const trigger_104020065_1: CardEffect = {
   triggerEvent: 'CARD_ENTERED_ZONE',
   isMandatory: false,
   playCost: 0,
+  cost: async (_gameState: GameState, playerState: PlayerState) =>
+    playerState.unitZone.filter(u => u && AtomicEffectExecutor.matchesColor(u, 'BLUE') && u.type === 'UNIT').length >= 2,
   condition: (gameState: GameState, playerState: PlayerState, instance: Card, event?: GameEvent) => {
     // 1. Check if this card entered the battlefield (UNIT or ITEM zone)
     const isOnBattlefield = instance.cardlocation === 'UNIT' || instance.cardlocation === 'ITEM';

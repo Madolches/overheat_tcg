@@ -1,4 +1,4 @@
-import { Card, CardEffect } from '../types/game';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor, canPutCardOntoBattlefieldByEffect, createSelectCardQuery, moveCard } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
@@ -32,6 +32,22 @@ const cardEffects: CardEffect[] = [{
       { sourceCardId: instance.gamecardId, effectId: '104040464_entry_partner' },
       () => 'EROSION_FRONT'
     );
+  },
+  targetSpec: {
+    title: '选择放置到战场的卡',
+    description: '选择你的侵蚀区中的1张「Brave Immortal」或「Eternal」卡，将其放置到战场上。',
+    minSelections: 0,
+    maxSelections: 1,
+    zones: ['EROSION_FRONT'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) =>
+      playerState.erosionFront
+        .filter((card): card is Card =>
+          !!card &&
+          (card.specialName === 'Brave Immortal' || card.specialName === 'Eternal') &&
+          canPutCardOntoBattlefieldByEffect(playerState, card)
+        )
+        .map(card => ({ card, source: 'EROSION_FRONT' as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;

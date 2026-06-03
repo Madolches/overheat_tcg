@@ -100,16 +100,35 @@ const effect_105000323_enter_copy_activate: CardEffect = {
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    title: '选择复制对象',
+    description: '选择你的1个具有启动效果的非神蚀单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'SELF',
+    step: 'COPY_TARGET',
+    getCandidates: (_gameState, playerState, instance) =>
+      playerState.unitZone
+        .filter((unit): unit is Card =>
+          !!unit &&
+          unit.gamecardId !== instance.gamecardId &&
+          isCopyTarget(unit)
+        )
+        .map(card => ({ card, source: 'UNIT' as any }))
+  },
+  cost: async (gameState, playerState, instance) => {
+    const topCard = getTopDeckCards(playerState, 1)[0];
+    if (!topCard) return false;
+    moveCardAsCost(gameState, playerState.uid, topCard, 'EXILE', instance, { faceDown: true });
+    return true;
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step !== 'COPY_TARGET') return;
     const target = selections[0]
       ? playerState.unitZone.find(unit => unit?.gamecardId === selections[0] && isCopyTarget(unit))
       : undefined;
     if (!target) return;
-
-    const topCard = getTopDeckCards(playerState, 1)[0];
-    if (!topCard) return;
-    moveCardAsCost(gameState, playerState.uid, topCard, 'EXILE', instance, { faceDown: true });
 
     const copied = (target.effects || []).find(effect => effect.type === 'ACTIVATE' || effect.type === 'ACTIVATED');
     if (!copied) return;

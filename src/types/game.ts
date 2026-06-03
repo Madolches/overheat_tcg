@@ -286,11 +286,13 @@ export interface CardEffect {
   playerEffectScope?: 'SELF' | 'OPPONENT' | 'BOTH' | 'NONE';
   playerEffectDescription?: string;
   hideFromCardInfluence?: boolean;
+  grantedByEquipSourceId?: string;
   wealthValue?: number;
   substitutionFilter?: CardFilter; // Filter for units this card can substitute/protect
   substitutionAction?: 'DESTROY_SELF' | 'SEND_SELF_TO_GRAVE' | 'EXHAUST_SELF';
   substitutionOnlyEffect?: boolean;
   substitutionOnlyOpponent?: boolean;
+  battleDestroySave?: boolean; // If true, this hand trigger can be offered before one of your units is battle-destroyed.
   movementReplacementDestination?: TriggerLocation; // Destination if this card's movement is replaced
   preventEffectReturnToDeck?: boolean; // If true, this card cannot be moved from battlefield to deck by card effects
   replaceDeckToHandWithDiscard?: boolean; // If true, effect moves from deck to hand are replaced with grave

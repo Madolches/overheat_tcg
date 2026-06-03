@@ -1,4 +1,4 @@
-import { Card, CardEffect, GameEvent } from '../types/game';
+import { Card, CardEffect, GameEvent, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import { createSelectCardQuery, destroyByEffect, getOpponentUid } from './BaseUtil';
 
@@ -42,6 +42,19 @@ const effect_105000475_enter: CardEffect = {
     }
 
     return;
+  },
+  targetSpec: {
+    title: '选择道具',
+    description: '选择你的战场上的1张道具卡，将其破坏。',
+    minSelections: 0,
+    maxSelections: 1,
+    zones: ['ITEM'],
+    controller: 'SELF',
+    step: 'DESTROY_ITEM',
+    getCandidates: (_gameState, playerState) =>
+      playerState.itemZone
+        .filter((card): card is Card => !!card)
+        .map(card => ({ card, source: 'ITEM' as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context.step === 'DESTROY_ITEM') {

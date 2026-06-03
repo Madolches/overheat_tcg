@@ -1,4 +1,4 @@
-import { Card, CardEffect } from '../types/game';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor, createSelectCardQuery, faceUpErosion, getOpponentUid, markDeclarationTax, moveCard, ownUnits } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
@@ -28,6 +28,16 @@ const cardEffects: CardEffect[] = [{
       { sourceCardId: instance.gamecardId, effectId: '101150157_combat_exile_draw' },
       () => 'EROSION_FRONT'
     );
+  },
+  targetSpec: {
+    title: '选择放逐的侵蚀卡',
+    description: '选择你的侵蚀区中的2张正面卡，将其放逐。之后抽1张卡。',
+    minSelections: 2,
+    maxSelections: 2,
+    zones: ['EROSION_FRONT'],
+    controller: 'SELF',
+    getCandidates: (_gameState, playerState) =>
+      faceUpErosion(playerState).map(card => ({ card, source: 'EROSION_FRONT' as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, playerState, selections) => {
     selections.forEach(id => {

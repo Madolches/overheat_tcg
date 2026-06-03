@@ -46,6 +46,19 @@ const effect_105110351_blueprint_destroy: CardEffect = {
       card => card.cardlocation as any
     );
   },
+  targetSpec: {
+    title: '选择破坏对象',
+    description: '选择战场上的1张非神蚀卡破坏。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT', 'ITEM'],
+    controller: 'ANY',
+    step: 'DESTROY',
+    getCandidates: gameState =>
+      allCardsOnField(gameState)
+        .filter(card => !card.godMark)
+        .map(card => ({ card, source: card.cardlocation as any }))
+  },
   onQueryResolve: async (instance, gameState, _playerState, selections, context) => {
     if (context?.step !== 'DESTROY') return;
     const target = AtomicEffectExecutor.findCardById(gameState, selections[0]);

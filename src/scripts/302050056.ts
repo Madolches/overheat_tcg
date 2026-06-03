@@ -30,6 +30,16 @@ const cardEffects: CardEffect[] = [{
       () => 'UNIT'
     );
   },
+  targetSpec: {
+    title: '选择非神蚀单位',
+    description: '选择对手场上1个非神蚀单位。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'OPPONENT',
+    getCandidates: (gameState, playerState) =>
+      opponentNonGodUnits(gameState, playerState.uid).map(card => ({ card, source: 'UNIT' as any }))
+  },
   onQueryResolve: async (instance, _gameState, _playerState, selections) => {
     (instance as any).data = {
       ...((instance as any).data || {}),

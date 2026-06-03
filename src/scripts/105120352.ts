@@ -29,6 +29,17 @@ const effect_105120352_end_alchemy: CardEffect = {
     playerState.isTurn &&
     ownFieldCards(playerState).length >= 2 &&
     deckCandidates(playerState).length > 0,
+  targetSpec: {
+    title: '选择炼金素材',
+    description: '选择你战场上的2张以上卡。',
+    minSelections: 2,
+    maxSelections: 99,
+    zones: ['UNIT', 'ITEM'],
+    controller: 'SELF',
+    step: 'SEND_FIELD_CHOICE',
+    getCandidates: (_gameState, playerState) =>
+      ownFieldCards(playerState).map(card => ({ card, source: card.cardlocation as any }))
+  },
   execute: async (instance, gameState, playerState) => {
     createSelectCardQuery(
       gameState,
@@ -42,8 +53,33 @@ const effect_105120352_end_alchemy: CardEffect = {
     );
   },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
+    if (context?.step === 'SEND_FIELD_CHOICE') {
+      gameState.pendingQuery = {
+        id: Math.random().toString(36).substring(7),
+        type: 'SELECT_CHOICE',
+        playerUid: playerState.uid,
+        options: [
+          { id: 'yes', value: 'yes', label: '是' },
+          { id: 'no', value: 'no', label: '否' }
+        ],
+        title: '是否送入墓地',
+        description: '是否将被选择的卡送入墓地？',
+        minSelections: 1,
+        maxSelections: 1,
+        callbackKey: 'EFFECT_RESOLVE',
+        context: {
+          sourceCardId: instance.gamecardId,
+          effectId: '105120352_end_alchemy',
+          step: 'SEND_FIELD',
+          declaredSelectionIds: selections
+        }
+      };
+      return;
+    }
     if (context?.step === 'SEND_FIELD') {
-      selections.forEach(cardId => {
+      if (selections[0] === 'no') return;
+      const selectedIds = context?.declaredSelectionIds || selections;
+      selectedIds.forEach(cardId => {
         const target = AtomicEffectExecutor.findCardById(gameState, cardId);
         const ownerUid = target ? AtomicEffectExecutor.findCardOwnerKey(gameState, target.gamecardId) : undefined;
         if (target && ownerUid === playerState.uid && (target.cardlocation === 'UNIT' || target.cardlocation === 'ITEM')) {

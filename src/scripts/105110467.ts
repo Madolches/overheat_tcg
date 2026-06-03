@@ -1,4 +1,4 @@
-import { Card, CardEffect, GameEvent } from '../types/game';
+import { Card, CardEffect, GameEvent, TriggerLocation } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import { createChoiceQuery, createSelectCardQuery, getBattlefieldUnits, isVirtualGodMarkReveal, readyByEffect, revealDeckCards, withVirtualGodMarkReveal } from './BaseUtil';
 
@@ -57,6 +57,20 @@ const effect_105110467_attack: CardEffect = {
         }
       );
     });
+  },
+  targetSpec: {
+    preselect: false,
+    title: '选择单位',
+    description: '公开的卡为单位时，选择战场上的这个单位以外的1个单位，将其横置或重置。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['UNIT'],
+    controller: 'ANY',
+    step: 'SELECT_TARGET',
+    getCandidates: (gameState, _playerState, instance) =>
+      getBattlefieldUnits(gameState)
+        .filter(unit => unit.gamecardId !== instance.gamecardId)
+        .map(card => ({ card, source: 'UNIT' as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, _playerState, selections, context) => {
     if (context.step === 'SELECT_TARGET') {

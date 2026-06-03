@@ -1,5 +1,5 @@
-import { Card, CardEffect } from '../types/game';
-import { AtomicEffectExecutor, createSelectCardQuery, destroyByEffect, getBattlefieldCards, ownUnits } from './BaseUtil';
+import { Card, CardEffect, TriggerLocation } from '../types/game';
+import { AtomicEffectExecutor, createSelectCardQuery, destroyByEffect, getBattlefieldCards, ownUnits, paymentCost } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
   id: '102000148_enter_destroy_item',
@@ -8,6 +8,7 @@ const cardEffects: CardEffect[] = [{
   isMandatory: true,
   triggerLocation: ['UNIT'],
   erosionBackLimit: [5, 7],
+  cost: paymentCost(0, 'RED'),
   description: '5~7：入场时，若我方有2个以上红色单位，选择战场上1张道具卡破坏。',
   condition: (gameState, playerState, instance, event) =>
     event?.sourceCardId === instance.gamecardId &&
@@ -26,6 +27,18 @@ const cardEffects: CardEffect[] = [{
       { sourceCardId: instance.gamecardId, effectId: '102000148_enter_destroy_item' },
       card => card.cardlocation as any
     );
+  },
+  targetSpec: {
+    title: '选择破坏的道具',
+    description: '选择战场上的1张道具卡，将其破坏。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['ITEM'],
+    controller: 'ANY',
+    getCandidates: gameState =>
+      getBattlefieldCards(gameState)
+        .filter(card => card.type === 'ITEM')
+        .map(card => ({ card, source: card.cardlocation as TriggerLocation }))
   },
   onQueryResolve: async (instance, gameState, _playerState, selections) => {
     const target = selections[0] ? AtomicEffectExecutor.findCardById(gameState, selections[0]) : undefined;

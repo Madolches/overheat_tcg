@@ -31,6 +31,17 @@ const cardEffects: CardEffect[] = [{
       () => 'EROSION_FRONT'
     );
   },
+  targetSpec: {
+    title: '选择侵蚀区非神蚀卡',
+    description: '选择你的侵蚀区中的1张非神蚀卡。',
+    minSelections: 1,
+    maxSelections: 1,
+    zones: ['EROSION_FRONT'],
+    controller: 'SELF',
+    step: 'TARGET',
+    getCandidates: (_gameState, playerState) =>
+      nonGodErosionCards(playerState).map(card => ({ card, source: 'EROSION_FRONT' as any }))
+  },
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step === 'TARGET') {
       if (!selections[0]) return;
