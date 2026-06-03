@@ -10,10 +10,7 @@ import { PageFallback } from './PageFallback';
 import { useCardCatalog } from '../hooks/useCardCatalog';
 
 const AI_OPPONENT_DECKS = [
-  { id: 'white-temple', name: '纯白殿堂', detail: '稳健防守与场面控制' },
-  { id: 'blue-adventurer', name: '纯蓝冒险家', detail: '节奏展开与灵活交换' },
-  { id: 'red-dikai', name: '纯红迪凯', detail: '高速进攻与连续压制' },
-  { id: 'big-salala', name: '大萨拉拉', detail: '绿白中速压制与高质量战斗' },
+  { id: 'adventurer-guild', name: '冒险家公会', detail: '新困难人机测试卡组' },
 ] as const;
 
 export const PracticeSetup: React.FC = () => {
@@ -25,7 +22,6 @@ export const PracticeSetup: React.FC = () => {
   const [deckDropdownOpen, setDeckDropdownOpen] = useState(false);
   const [turnTime, setTurnTime] = useState(300);
   const [botDifficulty, setBotDifficulty] = useState<'simple' | 'hard'>('simple');
-  const [botDeckProfileId, setBotDeckProfileId] = useState<(typeof AI_OPPONENT_DECKS)[number]['id']>('white-temple');
 
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
   const token = localStorage.getItem('token');
@@ -35,7 +31,7 @@ export const PracticeSetup: React.FC = () => {
   } = useCardCatalog({ includeEffects: false });
   const selectedDeck = myDecks.find(deck => deck.id === selectedDeckId) || null;
   const selectedDeckValidation = validateDeckForBattle(selectedDeck, cardsLoading ? undefined : getCardByReference);
-  const selectedOpponentDeck = AI_OPPONENT_DECKS.find(deck => deck.id === botDeckProfileId) || AI_OPPONENT_DECKS[0];
+  const selectedOpponentDeck = AI_OPPONENT_DECKS[0];
 
   useEffect(() => {
     const loadDecks = async () => {
@@ -68,7 +64,7 @@ export const PracticeSetup: React.FC = () => {
           deckId: selectedDeckId,
           turnTimerLimit: turnTime,
           botDifficulty,
-          botDeckProfileId: botDifficulty === 'hard' ? botDeckProfileId : undefined
+          botDeckProfileId: botDifficulty === 'hard' ? selectedOpponentDeck.id : undefined
         })
       });
       const data = await res.json();
@@ -247,24 +243,9 @@ export const PracticeSetup: React.FC = () => {
               <h2 className="text-sm font-bold uppercase tracking-widest text-zinc-500">人机卡组</h2>
               <span className="text-xs font-bold text-red-300">{selectedOpponentDeck.name}</span>
             </div>
-            <div className="grid gap-3 md:grid-cols-2">
-              {AI_OPPONENT_DECKS.map(option => {
-                const active = botDeckProfileId === option.id;
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => setBotDeckProfileId(option.id)}
-                    className={cn(
-                      'rounded-xl border px-4 py-3 text-left transition-colors',
-                      active ? 'border-red-500/60 bg-red-600/20 text-white' : 'border-zinc-800 bg-black/20 text-zinc-400 hover:bg-white/5'
-                    )}
-                  >
-                    <div className="text-sm font-black">{option.name}</div>
-                    <div className="mt-1 text-[10px] font-bold uppercase tracking-widest text-zinc-500">{option.detail}</div>
-                  </button>
-                );
-              })}
+            <div className="rounded-xl border border-red-500/60 bg-red-600/20 px-4 py-3 text-left text-white">
+              <div className="text-sm font-black">{selectedOpponentDeck.name}</div>
+              <div className="mt-1 text-[10px] font-bold uppercase tracking-widest text-zinc-300">{selectedOpponentDeck.detail}</div>
             </div>
           </div>
         )}

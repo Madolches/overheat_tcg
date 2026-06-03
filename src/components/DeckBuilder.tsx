@@ -16,19 +16,28 @@ import { readJsonResponse } from '../lib/http';
 import { SEARCHABLE_CARD_PACKAGES, matchesCardPackageFilter, matchesCardTypeFilter } from '../lib/cardCatalogFilters';
 import { validateDeckForBattle } from '../lib/deckValidation';
 import { decodeDeckShareCode, encodeDeckShareCode } from '../lib/deckShareCode';
+import { getCardSkinUrl } from '../data/cardSkins';
+import { useCardSkinSettings } from '../hooks/useCardSkinSettings';
+import { CardSkinToggle } from './CardSkinToggle';
+import { applyDeckEntrySkin, normalizeDeckCardEntries } from '../lib/deckEntries';
 
 const INITIAL_VISIBLE_CARD_COUNT = 48;
+
+interface DeckSlot {
+  card: CardType;
+  skinEnabled?: boolean;
+}
 
 export const DeckBuilder: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [deck, setDeck] = useState<CardType[]>([]);
+  const [deck, setDeck] = useState<DeckSlot[]>([]);
   const [deckName, setDeckName] = useState('我的新卡组');
   const [selectedDeckId, setSelectedDeckId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [saving, setSaving] = useState(false);
   const [myDecks, setMyDecks] = useState<Deck[]>([]);
-  const [zoomedCard, setZoomedCard] = useState<CardType | null>(null);
+  const [zoomedCard, setZoomedCard] = useState<{ card: CardType; deckIndex?: number } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [collection, setCollection] = useState<Record<string, number>>({});
@@ -70,6 +79,13 @@ export const DeckBuilder: React.FC = () => {
     getCardByReference,
     loading: cardsLoading
   } = useCardCatalog({ includeEffects: false });
+  const { isCardSkinEnabled } = useCardSkinSettings();
+
+  const getDisplayCardImageUrl = (card: CardType) => {
+    const baseUrl = card.fullImageUrl || getCardImageUrl(card.id, card.rarity, false, card.availableRarities);
+    const shouldUseSkin = card.skinEnabled === true || (card.skinEnabled === undefined && isCardSkinEnabled(card));
+    return (shouldUseSkin && getCardSkinUrl(card)) || card.imageUrl || baseUrl;
+  };
 
   const CRYSTAL_VALUES: Record<string, { decompose: number, produce: number }> = {
     C: { decompose: 1, produce: 5 },
@@ -224,14 +240,19 @@ export const DeckBuilder: React.FC = () => {
   };
 
   const loadDeckToEditor = (savedDeck: Deck) => {
-    const cards = savedDeck.cards.map(uid => getCardByReference(uid)).filter((c): c is CardType => !!c);
+    const slots = normalizeDeckCardEntries(savedDeck.cards)
+      .map(entry => {
+        const card = getCardByReference(entry.id);
+        return card ? ({ card, skinEnabled: entry.skinEnabled } as DeckSlot) : null;
+      })
+      .filter((slot): slot is DeckSlot => !!slot);
 
     if (isNewDeckDraftRef.current) {
       return;
     }
 
     setIsNewDeckDraft(false);
-    setDeck(cards);
+    setDeck(slots);
     setDeckName(savedDeck.name);
     setSelectedDeckId(savedDeck.id);
   };
@@ -243,7 +264,7 @@ export const DeckBuilder: React.FC = () => {
       const deckData = {
         userId: getAuthUser().uid,
         name: deckName,
-        cards: deck.map(c => c.uniqueId),
+        cards: deckEntries,
         isFavorite: false,
         updatedAt: Date.now()
       };
@@ -345,7 +366,7 @@ export const DeckBuilder: React.FC = () => {
   const buildCurrentDeckForValidation = (): Deck => ({
     id: selectedDeckId || 'current-deck',
     name: deckName,
-    cards: deck.map(c => c.uniqueId),
+    cards: deckEntries,
     isFavorite: false,
     createdAt: Date.now()
   });
@@ -372,7 +393,7 @@ export const DeckBuilder: React.FC = () => {
     }
 
     try {
-      const code = encodeDeckShareCode(deck.map(card => card.uniqueId), catalogRefs);
+      const code = encodeDeckShareCode(deckCards.map(card => card.uniqueId), catalogRefs);
       setShareCode(code);
       setShareCopied(false);
       setShowShareModal(true);
@@ -405,7 +426,7 @@ export const DeckBuilder: React.FC = () => {
 
       isNewDeckDraftRef.current = true;
       setIsNewDeckDraft(true);
-      setDeck(importedCards as CardType[]);
+      setDeck((importedCards as CardType[]).map(card => ({ card })));
       setDeckName('导入的卡组');
       setSelectedDeckId(null);
       setSearchParams({}, { replace: true });
@@ -450,7 +471,7 @@ export const DeckBuilder: React.FC = () => {
         return;
       }
 
-      setDeck([...deck, card]);
+      setDeck([...deck, { card, skinEnabled: isCardSkinEnabled(card) }]);
       setAddSuccessToast({
         cardName: card.fullName,
         count: count + 1
@@ -468,27 +489,44 @@ export const DeckBuilder: React.FC = () => {
     setDeck(newDeck);
   };
 
+  const setDeckSlotSkinEnabled = (index: number, enabled: boolean) => {
+    setDeck(current => current.map((slot, slotIndex) => (
+      slotIndex === index ? { ...slot, skinEnabled: enabled } : slot
+    )));
+    setZoomedCard(current => current?.deckIndex === index
+      ? { ...current, card: { ...current.card, skinEnabled: enabled } }
+      : current
+    );
+  };
+
   const sortDeck = () => {
-    const rarityOrder: Record<string, number> = { 'SER': 0, 'UR': 1, 'PR': 2, 'SR': 3, 'R': 4, 'U': 5, 'C': 6 };
-    const colorOrder: Record<string, number> = { 'RED': 0, 'WHITE': 1, 'YELLOW': 2, 'BLUE': 3, 'GREEN': 4, 'NONE': 5 };
+    const typeOrder: Record<string, number> = { UNIT: 0, STORY: 1, ITEM: 2 };
 
-    const sorted = [...deck].sort((a, b) => {
-      // Rarity
-      const rA = rarityOrder[a.rarity] ?? 10;
-      const rB = rarityOrder[b.rarity] ?? 10;
-      if (rA !== rB) return rA - rB;
+    const sorted = deck
+      .map((slot, index) => ({ slot, index }))
+      .sort((a, b) => {
+        const cardA = a.slot.card;
+        const cardB = b.slot.card;
 
-      // Color
-      const cA = colorOrder[a.color] ?? 10;
-      const cB = colorOrder[b.color] ?? 10;
-      if (cA !== cB) return cA - cB;
+        const godA = cardA.godMark ? 0 : 1;
+        const godB = cardB.godMark ? 0 : 1;
+        if (godA !== godB) return godA - godB;
 
-      // AC
-      if (a.acValue !== b.acValue) return a.acValue - b.acValue;
+        const typeA = typeOrder[cardA.type] ?? 99;
+        const typeB = typeOrder[cardB.type] ?? 99;
+        if (typeA !== typeB) return typeA - typeB;
 
-      // Name
-      return a.fullName.localeCompare(b.fullName);
-    });
+        if (cardA.acValue !== cardB.acValue) return cardA.acValue - cardB.acValue;
+
+        const nameCompare = cardA.fullName.localeCompare(cardB.fullName, 'zh-Hans-CN');
+        if (nameCompare !== 0) return nameCompare;
+
+        const idCompare = cardA.uniqueId.localeCompare(cardB.uniqueId);
+        if (idCompare !== 0) return idCompare;
+
+        return a.index - b.index;
+      })
+      .map(item => item.slot);
     setDeck(sorted);
   };
 
@@ -530,25 +568,34 @@ export const DeckBuilder: React.FC = () => {
     [cardLibrary]
   );
 
+  const deckCards = useMemo(() => deck.map(slot => slot.card), [deck]);
+  const deckEntries = useMemo(
+    () => deck.map(slot => ({
+      id: slot.card.uniqueId,
+      ...(slot.skinEnabled ? { skinEnabled: true } : {})
+    })),
+    [deck]
+  );
+
   const deckBaseCounts = useMemo(() => {
     const counts: Record<string, number> = {};
 
-    for (const card of deck) {
+    for (const card of deckCards) {
       counts[card.id] = (counts[card.id] || 0) + 1;
     }
 
     return counts;
-  }, [deck]);
+  }, [deckCards]);
 
   const godMarkCount = useMemo(
-    () => deck.reduce((total, card) => total + (card.godMark ? 1 : 0), 0),
-    [deck]
+    () => deckCards.reduce((total, card) => total + (card.godMark ? 1 : 0), 0),
+    [deckCards]
   );
 
   const deckOwnership = useMemo(() => {
     const seenByCollectionKey: Record<string, number> = {};
 
-    return deck.map(card => {
+    return deckCards.map(card => {
       const ownedQty = collection[card.uniqueId] || 0;
       const collectionKey = card.uniqueId;
       const copyNumber = (seenByCollectionKey[collectionKey] || 0) + 1;
@@ -560,7 +607,7 @@ export const DeckBuilder: React.FC = () => {
         copyNumber
       };
     });
-  }, [collection, deck]);
+  }, [collection, deckCards]);
 
   const shuffleDeck = () => {
     const shuffled = [...deck];
@@ -599,6 +646,7 @@ export const DeckBuilder: React.FC = () => {
     () => filteredCards.slice(0, visibleCardCount),
     [filteredCards, visibleCardCount]
   );
+  const zoomedDisplayCard = zoomedCard?.card || null;
 
   const loadingOverlayTitle = saving ? '保存卡组中' : '处理中';
   const loadingOverlayDescription = saving
@@ -1122,7 +1170,8 @@ export const DeckBuilder: React.FC = () => {
 
         <div className="flex-1 overflow-y-auto p-2 md:p-4">
           <div className="grid grid-cols-5 gap-1.5 sm:grid-cols-10 md:gap-3">
-            {deck.map((card, index) => {
+            {deck.map((slot, index) => {
+              const card = applyDeckEntrySkin(slot.card, slot);
               const ownership = deckOwnership[index];
               return (
                 <div key={`${card.uniqueId}-${index}`} className="relative group">
@@ -1131,7 +1180,7 @@ export const DeckBuilder: React.FC = () => {
                       "transition-transform hover:scale-105 cursor-zoom-in [&_.rounded-xl]:rounded-md [&_.shadow-xl]:shadow-md",
                       ownership?.missing && "opacity-45 grayscale"
                     )}
-                    onClick={() => setZoomedCard(card)}
+                    onClick={() => setZoomedCard({ card, deckIndex: index })}
                   >
                     <CardComponent
                       card={card}
@@ -1319,9 +1368,18 @@ export const DeckBuilder: React.FC = () => {
                 <div className="flex gap-3">
                   <div
                     className="w-16 h-24 rounded-lg overflow-hidden flex-shrink-0 shadow-lg cursor-zoom-in"
-                    onClick={() => setZoomedCard(card)}
+                    onClick={() => setZoomedCard({ card })}
                   >
-                    <img src={getCardImageUrl(card.id, card.rarity, false, card.availableRarities)} className={cn("w-full h-full object-cover", !isOwned && "brightness-[0.4]")} loading="lazy" decoding="async" />
+                    <img
+                      src={getDisplayCardImageUrl(card)}
+                      className={cn("w-full h-full object-cover", !isOwned && "brightness-[0.4]")}
+                      loading="lazy"
+                      decoding="async"
+                      onError={(event) => {
+                        const fallback = getCardImageUrl(card.id, card.rarity, false, card.availableRarities);
+                        if (event.currentTarget.src !== fallback) event.currentTarget.src = fallback;
+                      }}
+                    />
                   </div>
                   <div className="flex-1 min-w-0">
                     <h4 className="font-black italic text-sm truncate">{card.fullName}</h4>
@@ -1354,7 +1412,7 @@ export const DeckBuilder: React.FC = () => {
 
       {/* Zoom Modal (Synthesis Console) */}
       <AnimatePresence>
-        {zoomedCard && (
+        {zoomedDisplayCard && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -1385,19 +1443,23 @@ export const DeckBuilder: React.FC = () => {
                 <div className="relative group w-full max-w-[240px] md:max-w-[320px]">
                   <div className={cn(
                     "absolute -inset-4 rounded-[2rem] blur-2xl opacity-20",
-                    zoomedCard.rarity === 'UR' || zoomedCard.rarity === 'SER' ? 'bg-amber-500' : 'bg-red-600'
+                    zoomedDisplayCard.rarity === 'UR' || zoomedDisplayCard.rarity === 'SER' ? 'bg-amber-500' : 'bg-red-600'
                   )} />
                   <img
-                    src={getCardImageUrl(zoomedCard.id, zoomedCard.rarity, false, zoomedCard.availableRarities)}
-                    alt={zoomedCard.fullName}
+                    src={getDisplayCardImageUrl(zoomedDisplayCard)}
+                    alt={zoomedDisplayCard.fullName}
                     className="relative w-full object-contain rounded-[1.5rem] shadow-2xl border-4 border-white/10 max-h-[45vh] md:max-h-none"
                     decoding="async"
+                    onError={(event) => {
+                      const fallback = getCardImageUrl(zoomedDisplayCard.id, zoomedDisplayCard.rarity, false, zoomedDisplayCard.availableRarities);
+                      if (event.currentTarget.src !== fallback) event.currentTarget.src = fallback;
+                    }}
                   />
                   <div className="absolute bottom-4 -right-2 bg-red-600 px-3 py-1.5 rounded-xl border border-red-400 font-black italic shadow-2xl rotate-12 z-20">
-                    <span className="text-sm">x{collection[zoomedCard.uniqueId] || 0}</span>
+                    <span className="text-sm">x{collection[zoomedDisplayCard.uniqueId] || 0}</span>
                   </div>
                   <div className="absolute -bottom-4 -left-4 bg-zinc-800 px-4 py-2 rounded-xl border border-white/10 font-black italic shadow-2xl -rotate-6 z-20 flex flex-col items-center">
-                    <span>{deckBaseCounts[zoomedCard.id] || 0} / 4</span>
+                    <span>{deckBaseCounts[zoomedDisplayCard.id] || 0} / 4</span>
                   </div>
                 </div>
               </div>
@@ -1406,18 +1468,28 @@ export const DeckBuilder: React.FC = () => {
               <div className="flex-1 flex flex-col p-6 md:p-6 overflow-hidden md:overflow-visible">
                 <div className="mb-6">
                   <div className="flex items-center gap-3 mb-2">
-                    <span className="text-[10px] font-black text-red-500 uppercase tracking-[0.2em]">{zoomedCard.id}</span>
+                    <span className="text-[10px] font-black text-red-500 uppercase tracking-[0.2em]">{zoomedDisplayCard.id}</span>
                     <div className="h-px w-12 bg-red-500/30" />
                   </div>
                   <h2 className="text-3xl md:text-5xl font-black italic text-white uppercase tracking-tighter leading-none mb-1">
-                    {zoomedCard.fullName}
+                    {zoomedDisplayCard.fullName}
                   </h2>
                 </div>
 
                 <div className="space-y-3">
                   <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.3em]">关键词</p>
-                  <KeywordBadges card={zoomedCard} variant="detail" />
+                  <KeywordBadges card={zoomedDisplayCard} variant="detail" />
                 </div>
+
+                <CardSkinToggle
+                  card={zoomedDisplayCard}
+                  checked={zoomedCard?.deckIndex !== undefined ? zoomedDisplayCard.skinEnabled === true : undefined}
+                  onChange={zoomedCard?.deckIndex !== undefined
+                    ? enabled => setDeckSlotSkinEnabled(zoomedCard.deckIndex!, enabled)
+                    : undefined}
+                  label={zoomedCard?.deckIndex !== undefined ? '本张卡组皮肤' : '默认卡牌皮肤'}
+                  className="mt-4"
+                />
 
                 <div className="flex-1 md:overflow-y-auto pr-0 md:pr-2 custom-scrollbar space-y-6">
 
@@ -1433,16 +1505,16 @@ export const DeckBuilder: React.FC = () => {
                         <p className="text-[10px] font-black text-zinc-500 uppercase italic mb-1">分解</p>
                         <div className="flex items-center gap-2">
                           <Trash2 className="w-5 h-5 text-red-500" />
-                          <span className="text-xl md:text-2xl font-black italic text-cyan-400">+{CRYSTAL_VALUES[zoomedCard.rarity]?.decompose || 0}</span>
+                          <span className="text-xl md:text-2xl font-black italic text-cyan-400">+{CRYSTAL_VALUES[zoomedDisplayCard.rarity]?.decompose || 0}</span>
                           <X className="w-4 h-4 text-cyan-400" />
                         </div>
                       </div>
                       <button
-                        onClick={() => handleDecompose(zoomedCard.uniqueId)}
-                        disabled={actionLoading || (collection[zoomedCard.uniqueId] || 0) <= 0}
+                        onClick={() => handleDecompose(zoomedDisplayCard.uniqueId)}
+                        disabled={actionLoading || (collection[zoomedDisplayCard.uniqueId] || 0) <= 0}
                         className={cn(
                           "px-6 md:px-8 py-2 md:py-3 rounded-2xl font-black italic text-xs md:text-sm transition-all uppercase",
-                          (collection[zoomedCard.uniqueId] || 0) > 0
+                          (collection[zoomedDisplayCard.uniqueId] || 0) > 0
                             ? "bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/20"
                             : "bg-zinc-700 text-zinc-500 cursor-not-allowed"
                         )}
@@ -1457,16 +1529,16 @@ export const DeckBuilder: React.FC = () => {
                         <p className="text-[10px] font-black text-zinc-500 uppercase italic mb-1">制作</p>
                         <div className="flex items-center gap-2">
                           <Plus className="w-5 h-5 text-green-500" />
-                          <span className="text-xl md:text-2xl font-black italic text-red-500">-{CRYSTAL_VALUES[zoomedCard.rarity]?.produce || 0}</span>
+                          <span className="text-xl md:text-2xl font-black italic text-red-500">-{CRYSTAL_VALUES[zoomedDisplayCard.rarity]?.produce || 0}</span>
                           <X className="w-4 h-4 text-cyan-400" />
                         </div>
                       </div>
                       <button
-                        onClick={() => handleCraft(zoomedCard.uniqueId)}
-                        disabled={actionLoading || cardCrystals < (CRYSTAL_VALUES[zoomedCard.rarity]?.produce || 0)}
+                        onClick={() => handleCraft(zoomedDisplayCard.uniqueId)}
+                        disabled={actionLoading || cardCrystals < (CRYSTAL_VALUES[zoomedDisplayCard.rarity]?.produce || 0)}
                         className={cn(
                           "px-6 md:px-8 py-2 md:py-3 rounded-2xl font-black italic text-xs md:text-sm transition-all uppercase",
-                          cardCrystals >= (CRYSTAL_VALUES[zoomedCard.rarity]?.produce || 0)
+                          cardCrystals >= (CRYSTAL_VALUES[zoomedDisplayCard.rarity]?.produce || 0)
                             ? "bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg shadow-cyan-600/20"
                             : "bg-zinc-700 text-zinc-500 cursor-not-allowed"
                         )}

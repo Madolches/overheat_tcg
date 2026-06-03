@@ -75,17 +75,13 @@ const ISSUE_META: Record<string, { severity: Severity; recommendation: string }>
     severity: 'warning',
     recommendation: 'Convert the match turn into a hard scenario and make lethal/erosion-lethal attack plans override development.',
   },
-  MISSED_COMBO: {
-    severity: 'warning',
-    recommendation: 'Add a combo opportunity rule or lower the battle/combo threshold only when the payoff is live.',
-  },
   UNDER_PRESSURE_NO_STABILIZE: {
     severity: 'warning',
     recommendation: 'Increase defender reserve or defensive effect priority for this matchup and deck profile.',
   },
   BAD_PAYMENT: {
     severity: 'warning',
-    recommendation: 'Raise payment preservation value for ready defenders, current attackers, godmark units, or combo pieces.',
+    recommendation: 'Raise payment preservation value for ready defenders, current attackers, and godmark units.',
   },
   OVER_DEVELOP: {
     severity: 'info',
@@ -93,7 +89,7 @@ const ISSUE_META: Record<string, { severity: Severity; recommendation: string }>
   },
   BAD_EFFECT_TIMING: {
     severity: 'warning',
-    recommendation: 'Add an effect timing override or deck hook so the effect waits for its tactical window.',
+    recommendation: 'Add an effect timing override or explicit deck strategy so the effect waits for its tactical window.',
   },
   QUERY_FAILED: {
     severity: 'error',
@@ -109,7 +105,7 @@ const ISSUE_META: Record<string, { severity: Severity; recommendation: string }>
   },
   BAD_ATTACK_INTO_STRONG_DEFENDER: {
     severity: 'warning',
-    recommendation: 'Tighten attack scoring when the opponent has ready defenders and the attack is not lethal, combo-enabling, or erosion-critical.',
+    recommendation: 'Tighten attack scoring when the opponent has ready defenders and the attack is not lethal or erosion-critical.',
   },
   BAD_ATTACK_LOST_UNIT: {
     severity: 'warning',
@@ -119,17 +115,13 @@ const ISSUE_META: Record<string, { severity: Severity; recommendation: string }>
     severity: 'warning',
     recommendation: 'Add an effect timing override or require a concrete payoff tag before activating this effect in battle/counter windows.',
   },
-  MISSED_COMBO_WINDOW: {
-    severity: 'warning',
-    recommendation: 'Convert the turn into a scenario and make the combo attack/effect line override generic development or single attacks.',
-  },
   BAD_EQUIP_TARGET: {
     severity: 'warning',
     recommendation: 'Inspect the equip query choice and add a preferred host rule for the deck/card profile.',
   },
   BAD_ALLIANCE_CHOICE: {
     severity: 'warning',
-    recommendation: 'Prefer the known alliance attack plan when its payoff is ready; penalize ordinary attacks that spend a combo attacker.',
+    recommendation: 'Prefer higher-value alliance attack plans when their payoff is ready; penalize ordinary attacks that spend key attackers.',
   },
   OVERCOMMIT_BOARD: {
     severity: 'warning',
@@ -162,8 +154,7 @@ const ISSUE_META: Record<string, { severity: Severity; recommendation: string }>
 };
 
 const HIGH_VALUE_NAME_PATTERNS = [
-  /迪凯|白虎|柯莉尔|魔枪|英剑|圣王子|卢恩|阿克蒂|可可亚|可可拉|伊丽瑟薇|艾尔蒙特|温多娜|达·哈尔|古·拉夫|ZERO/i,
-  /Dikai|Tiger|Koriel|Magic Spear|Hero Sword|Aketi|Commander|Overlord/i,
+  /God|Goddess|神|神蚀|高价值|核心|主轴|ace|boss|core|key/i,
 ];
 
 function argValue(name: string) {
@@ -252,7 +243,7 @@ function decisionText(log: any, extraDetailKeys: string[] = []) {
 }
 
 function hasClearTacticalPayoff(text: string) {
-  return /lethal|closing|close|threat|save|saves|protect|prevent|counter|combat|battle|attack|defend|defender|damage|destroy|remove|removal|bounce|stun|silence|cannot defend|combo|alliance|reset|boost|tempo|pressure|race|magic spear|Dikai/i.test(text);
+  return /lethal|closing|close|threat|save|saves|protect|prevent|counter|combat|battle|attack|defend|defender|damage|destroy|remove|removal|bounce|stun|silence|cannot defend|combo|alliance|reset|boost|tempo|pressure|race/i.test(text);
 }
 
 function looksLikeSetupOnly(text: string) {
@@ -264,11 +255,11 @@ function looksLikeProtection(text: string) {
 }
 
 function looksLikeEquip(text: string) {
-  return /equip|equip_universal|Scadi|War Song|host/i.test(text);
+  return /equip|equip_universal|host/i.test(text);
 }
 
 function isAttackAction(action: string) {
-  return action === 'ATTACK' || action === 'COMBO_ALLIANCE_ATTACK';
+  return action === 'ATTACK';
 }
 
 function isSubstantiveTurnAction(action: string) {
@@ -279,7 +270,6 @@ function isSubstantiveTurnAction(action: string) {
     'PLAY_CONFRONTATION_STORY',
     'ENTER_BATTLE',
     'ATTACK',
-    'COMBO_ALLIANCE_ATTACK',
     'HOLD_ATTACKERS',
     'RETURN_MAIN',
     'END_TURN',
@@ -380,7 +370,7 @@ function analyzeTurnWindows(findings: BehaviorFinding[], result: any) {
     const actionsAfterPlan = afterPlan.map(log => String(log.action || ''));
     const ended = actionsAfterPlan.includes('END_TURN');
     const attackLogs = afterPlan.filter(log => isAttackAction(String(log.action || '')));
-    const planText = decisionText(plan, ['notes', 'comboNotes', 'tacticalNotes', 'tacticalLine']);
+    const planText = decisionText(plan, ['notes', 'tacticalNotes', 'tacticalLine']);
     const totalDamage = numericDetail(plan, 'totalDamage');
     const damageToCritical = numericDetail(plan, 'damageToCritical');
     const hasLikelyDefenders = plan.details?.likelyDefenders !== undefined && plan.details?.likelyDefenders !== null;
@@ -391,15 +381,6 @@ function analyzeTurnWindows(findings: BehaviorFinding[], result: any) {
       (likelyDefenders === 0 && damageToCritical > 0 && totalDamage >= damageToCritical && totalDamage > 0) ||
       (damageThroughLikelyDefenders > 0 && damageToCritical > 0 && damageThroughLikelyDefenders >= damageToCritical);
     const attackBeforeDeveloping = booleanDetail(plan, 'attackBeforeDeveloping');
-    const comboId = detail(plan, 'comboId');
-    const comboReady =
-      booleanDetail(plan, 'comboReady') ||
-      booleanDetail(plan, 'comboPayoffPlayable');
-    const usedCombo = afterPlan.some(log => {
-      const action = String(log.action || '');
-      const text = decisionText(log, ['comboId', 'reasons', 'notes']);
-      return action === 'COMBO_ALLIANCE_ATTACK' || (!!comboId && comboId !== 'none' && text.includes(comboId));
-    });
     const firstSubstantive = afterPlan.find(log => isSubstantiveTurnAction(String(log.action || '')));
 
     if (lethalWindow && ended && attackLogs.length === 0) {
@@ -410,29 +391,6 @@ function analyzeTurnWindows(findings: BehaviorFinding[], result: any) {
         action: plan.action,
         subject: plan.subject,
         detail: `${deck} planned a closing window but ended without attacking: totalDamage=${totalDamage}, damageToCritical=${damageToCritical}, tactical=${detail(plan, 'tacticalLine') || plan.subject || ''}.`,
-      });
-    }
-
-    if (comboReady && ended && !usedCombo) {
-      addFinding(findings, result, 'MISSED_COMBO_WINDOW', {
-        deck,
-        turn: plan.turn,
-        phase: plan.phase,
-        action: plan.action,
-        subject: comboId || plan.subject,
-        detail: `${deck} had comboReady=${booleanDetail(plan, 'comboReady')} payoff=${booleanDetail(plan, 'comboPayoffPlayable')} combo=${comboId || 'none'} but did not take the combo line before ending the turn.`,
-      });
-    }
-
-    const regularAttackBeforeCombo = comboReady && !usedCombo && afterPlan.find(log => String(log.action || '') === 'ATTACK');
-    if (regularAttackBeforeCombo) {
-      addFinding(findings, result, 'BAD_ALLIANCE_CHOICE', {
-        deck,
-        turn: regularAttackBeforeCombo.turn,
-        phase: regularAttackBeforeCombo.phase,
-        action: regularAttackBeforeCombo.action,
-        subject: regularAttackBeforeCombo.subject,
-        detail: `${deck} made a regular attack while a known combo/alliance plan was ready: combo=${comboId || 'none'}, score=${scoreOf(regularAttackBeforeCombo) ?? 'n/a'}.`,
       });
     }
 
@@ -459,7 +417,7 @@ function analyzeTurnWindows(findings: BehaviorFinding[], result: any) {
         phase: plan.phase,
         action: plan.action,
         subject: plan.subject,
-        detail: `${deck} marked attackBeforeDeveloping but ended without an ATTACK or COMBO_ALLIANCE_ATTACK.`,
+        detail: `${deck} marked attackBeforeDeveloping but ended without an ATTACK.`,
       });
     }
   }
@@ -596,7 +554,7 @@ function analyzeDecisionLogs(findings: BehaviorFinding[], result: any) {
 
     if (action === 'ACTIVATE_EFFECT') {
       const notes = `${detail(log, 'notes')} ${log.reason || ''}`;
-      const hasClearPayoff = /lethal|close|closing|saves|beats|threat|combo|斩杀|保|威胁|magic spear reset/i.test(notes);
+      const hasClearPayoff = /lethal|close|closing|saves|beats|threat|alliance|reset|斩杀|保|威胁/i.test(notes);
       if (hasTimingWarningText(notes) && !(hasClearPayoff && score !== undefined && score >= 18)) {
         addFinding(findings, result, 'BAD_EFFECT_TIMING', {
           deck,
@@ -728,7 +686,7 @@ function buildMarkdown(report: ReturnType<typeof buildBehaviorReport>) {
   lines.push('');
   lines.push('- Convert repeated warnings into focused scenarios in `script/test-hard-ai-scenarios.ts`.');
   lines.push('- Treat `STEP_LIMIT_*`, `QUERY_FAILED`, repeated `ACTIVATE_EFFECT_FAILED`, and low-score COUNTERING actions as first-priority fixes.');
-  lines.push('- Treat `BAD_ATTACK_*`, `EFFECT_WITH_NO_PAYOFF`, `MISSED_COMBO_WINDOW`, and `OVERCOMMIT_BOARD` as card-understanding gaps to feed back into deck hooks or effect timing knowledge.');
+  lines.push('- Treat `BAD_ATTACK_*`, `EFFECT_WITH_NO_PAYOFF`, and `OVERCOMMIT_BOARD` as card-understanding gaps to feed back into explicit deck strategy or effect timing knowledge.');
   lines.push('- Use `npm run ai:behavior-audit -- --no-run` to re-read the latest evaluation without running new games.');
 
   return lines.join('\n');

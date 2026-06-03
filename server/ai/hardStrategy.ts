@@ -1,12 +1,8 @@
 import { Card, CardEffect, EffectQuery, GameState, PlayerState } from '../../src/types/game';
 import {
   BotDifficulty,
-  DeckAiCardScoreContext,
-  DeckAiEffectScoreContext,
-  DeckAiQueryScoreContext,
   DeckAiProfile,
   DeckAiStrategyContext,
-  DeckAiTurnPlanSnapshot,
   EffectPreferenceTag,
   PlayerDeckProfile,
   ScoredCard
@@ -15,10 +11,12 @@ import { getCardKnowledge, getCardKnowledgeValue } from './cardKnowledge';
 import { buildDynamicMatchupPlan, inferPlayerDeckProfile, mergeMatchupPlans } from './playerDeckProfile';
 import { scoreEffectTimingWindow } from './effectTimingKnowledge';
 import {
-  getBestComboOpportunity,
-  scoreComboCard,
-  scoreComboEffect,
-} from './comboKnowledge';
+  chooseAdventurerGuildQuerySelections,
+  scoreAdventurerGuildAttack,
+  scoreAdventurerGuildEffect,
+  scoreAdventurerGuildMulliganKeep,
+  scoreAdventurerGuildPlayableCard,
+} from './decks/adventurerGuildStrategy';
 
 const getCardCost = (card: Card) => Math.max(0, card.baseAcValue ?? card.acValue ?? 0);
 const HARD_AI_HIGH_VALUE_BOARD_THRESHOLD = 58;
@@ -177,10 +175,6 @@ export interface HardAiTurnPlan {
   minBattleEffectScore: number;
   avoidSelfDraw: boolean;
   avoidSearch: boolean;
-  comboId?: string;
-  comboReady?: boolean;
-  comboPayoffPlayable?: boolean;
-  comboNotes?: string[];
   tacticalLine?: string;
   tacticalScore?: number;
   tacticalNotes?: string[];
@@ -331,47 +325,6 @@ function buildStrategyContext(
   };
 }
 
-function safeHookNumber(value: number | undefined) {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-}
-
-function applyCardScoreHook(
-  profile: DeckAiProfile,
-  hookName: keyof Pick<
-    NonNullable<DeckAiProfile['strategyHooks']>,
-    | 'adjustCardValue'
-    | 'adjustPlayableScore'
-    | 'adjustAttackScore'
-    | 'adjustDefenseScore'
-    | 'adjustMulliganScore'
-    | 'adjustDiscardScore'
-    | 'adjustPaymentScore'
-  >,
-  context: DeckAiCardScoreContext
-) {
-  try {
-    return safeHookNumber(profile.strategyHooks?.[hookName]?.(context));
-  } catch {
-    return 0;
-  }
-}
-
-function applyEffectScoreHook(profile: DeckAiProfile, context: DeckAiEffectScoreContext) {
-  try {
-    return safeHookNumber(profile.strategyHooks?.adjustEffectScore?.(context));
-  } catch {
-    return 0;
-  }
-}
-
-function applyQueryScoreHook(profile: DeckAiProfile, context: DeckAiQueryScoreContext) {
-  try {
-    return safeHookNumber(profile.strategyHooks?.adjustQueryScore?.(context));
-  } catch {
-    return 0;
-  }
-}
-
 function selectScoredEntries<T extends { score: number }>(scored: T[], requiredCount: number, maxCount: number) {
   const selected: T[] = [];
   for (const entry of scored) {
@@ -401,7 +354,7 @@ function matchupRiskValue(
 }
 
 export interface TacticalTurnSearchResult {
-  line: 'lethal' | 'erosion-lethal' | 'combo' | 'stabilize' | 'pressure' | 'develop';
+  line: 'lethal' | 'erosion-lethal' | 'stabilize' | 'pressure' | 'develop';
   score: number;
   forceAttackBeforeDeveloping?: boolean;
   reserveDefenders?: number;
@@ -429,7 +382,6 @@ export function analyzeOneTurnTactics(
     totalDamage - attackerDamage.slice(0, likelyDefenders).reduce((sum, damage) => sum + damage, 0)
   );
   const incomingThreat = estimateIncomingThreat(gameState, player, profile);
-  const combo = getBestComboOpportunity(gameState, player, profile);
   const notes: string[] = [];
 
   const forcesDeckLethal = opponent && battleDamageWouldDeckOut(damageThroughLikelyDefenders, opponent);
@@ -478,19 +430,6 @@ export function analyzeOneTurnTactics(
       forceAttackBeforeDeveloping: false,
       reserveDefenders: Math.min(3, Math.max(incomingThreat.defendersNeeded, 1)),
       minMainEffectScoreDelta: -1,
-      notes,
-    };
-  }
-
-  if (combo?.wantsAllianceAttack || combo?.payoffPlayableNow) {
-    notes.push(`combo ${combo.name}`);
-    if (combo.reasons.length) notes.push(combo.reasons.join('|'));
-    return {
-      line: 'combo',
-      score: combo.score,
-      forceAttackBeforeDeveloping: true,
-      reserveDefenders: Math.max(0, Math.min(1, attackers.length - 2)),
-      minBattleEffectScoreDelta: -4,
       notes,
     };
   }
@@ -653,13 +592,12 @@ export function analyzeMainPhaseSequencing(gameState: GameState, player: PlayerS
       if (!(effect.type === 'ACTIVATE' || effect.type === 'ACTIVATED')) return undefined;
       if (effect.id === '102050432_reset_attack_unit' && !card.isExhausted) return undefined;
       const text = effectSearchText(card, effect).toUpperCase();
-      const templeResetOpportunity = getTempleHighValueResetOpportunity(gameState, player, card, effect, profile);
       const isPreCombatEffect = textHasAny(text, [
         /DESTROY|EXILE|BANISH|SILENCE|CANNOT.*DEFEND|CANNOT_DEFEND|EXHAUST|TAP|BOUNCE|RETURN.*HAND|SUMMON|REVIVE|PLAY_FROM|EROSION/i,
         /鐮村潖|闄ゅ|妯疆|涓嶈兘闃插尽|渚佃殌|澧撳湴|降灵/,
       ]);
-      if (!isPreCombatEffect && !templeResetOpportunity) return undefined;
-      let score = templeResetOpportunity ? templeResetOpportunity.score : 18;
+      if (!isPreCombatEffect) return undefined;
+      let score = 18;
       if (likelyDefenders > 0) score += 24 + likelyDefenders * 8;
       if (!opponent.isGoddessMode && totalAvailableDamage >= Math.max(1, 10 - opponentErosion - 1)) score += 18;
       const slotPenalty = scorePendingUnitReturnSlotPenalty(gameState, player, estimateUnitSlotsConsumedByEffect(card, effect));
@@ -821,8 +759,6 @@ export function buildTurnPlan(gameState: GameState, player: PlayerState, profile
   }
   if (tactical.line === 'lethal' || tactical.line === 'erosion-lethal') {
     mode = 'lethal';
-  } else if (tactical.line === 'combo' && mode !== 'defense') {
-    mode = 'pressure';
   } else if (tactical.line === 'stabilize') {
     mode = incomingThreat.lethalWithoutBlocks ? 'defense' : 'stabilize';
   }
@@ -846,49 +782,6 @@ export function buildTurnPlan(gameState: GameState, player: PlayerState, profile
     notes.push(...sequencing.notes.map(note => `sequence ${note}`));
   }
 
-  const turnPlanSnapshot: DeckAiTurnPlanSnapshot = {
-    mode,
-    ownDeck: player.deck.length,
-    opponentDeck: opponent?.deck.length || 0,
-    ownErosion,
-    opponentErosion,
-    attackers: attackers.length,
-    totalAvailableDamage,
-    damageThroughLikelyDefenders: Math.max(0, totalAvailableDamage -
-      attackerDamage.slice(0, likelyDefenders).reduce((sum, damage) => sum + damage, 0)),
-    likelyDefenders,
-    opponentPotentialDamage,
-    defendersNeededNextTurn: incomingThreat.defendersNeeded,
-    lethalWindow,
-  };
-  const strategyContext = buildStrategyContext(gameState, player, profile, matchup, opponentDeckProfile);
-  let turnAdjustment;
-  try {
-    turnAdjustment = profile.strategyHooks?.adjustTurnPlan?.({
-      ...strategyContext,
-      plan: turnPlanSnapshot,
-    });
-  } catch {
-    turnAdjustment = undefined;
-  }
-  if (turnAdjustment) {
-    if (turnAdjustment.mode) mode = turnAdjustment.mode;
-    if (typeof turnAdjustment.attackBeforeDeveloping === 'boolean') {
-      attackBeforeDeveloping = turnAdjustment.attackBeforeDeveloping;
-    }
-    if (typeof turnAdjustment.reserveDefendersDelta === 'number') {
-      reserveDefenders = Math.max(0, Math.min(3, attackers.length, reserveDefenders + Math.round(turnAdjustment.reserveDefendersDelta)));
-    }
-    if (typeof turnAdjustment.minMainEffectScoreDelta === 'number') {
-      minMainEffectScore = Math.max(4, minMainEffectScore + turnAdjustment.minMainEffectScoreDelta);
-    }
-    if (typeof turnAdjustment.minBattleEffectScoreDelta === 'number') {
-      minBattleEffectScore = Math.max(5, minBattleEffectScore + turnAdjustment.minBattleEffectScoreDelta);
-    }
-    if (typeof turnAdjustment.avoidSelfDraw === 'boolean') avoidSelfDraw = turnAdjustment.avoidSelfDraw;
-    if (typeof turnAdjustment.avoidSearch === 'boolean') avoidSearch = turnAdjustment.avoidSearch;
-    if (turnAdjustment.notes?.length) notes.push(...turnAdjustment.notes);
-  }
   const finalDamageThroughLikelyDefenders = Math.max(0, totalAvailableDamage -
     attackerDamage.slice(0, likelyDefenders).reduce((sum, damage) => sum + damage, 0));
   if (sequencing.shouldDevelopBeforeAttack && attackBeforeDeveloping) {
@@ -897,22 +790,6 @@ export function buildTurnPlan(gameState: GameState, player: PlayerState, profile
     const sequencingNotes = sequencing.notes.map(note => `sequence ${note}`);
     for (const note of sequencingNotes) {
       if (!notes.includes(note)) notes.push(note);
-    }
-  }
-
-  const combo = getBestComboOpportunity(gameState, player, profile);
-  if (combo?.partial) {
-    notes.push(`combo=${combo.name}`);
-    if (combo.reasons.length) notes.push(`combo reasons=${combo.reasons.join('|')}`);
-    if (combo.wantsAllianceAttack) {
-      mode = mode === 'defense' && incomingThreat.lethalWithoutBlocks ? 'stabilize' : 'pressure';
-      attackBeforeDeveloping = true;
-      reserveDefenders = Math.max(0, Math.min(reserveDefenders, Math.max(0, attackers.length - 2)));
-      minBattleEffectScore = Math.min(minBattleEffectScore, 5.5);
-      notes.push('combo wants alliance attack');
-    } else if (combo.payoffPlayableNow) {
-      minBattleEffectScore = Math.min(minBattleEffectScore, 4.5);
-      notes.push('combo payoff playable');
     }
   }
 
@@ -955,10 +832,6 @@ export function buildTurnPlan(gameState: GameState, player: PlayerState, profile
     minBattleEffectScore,
     avoidSelfDraw,
     avoidSearch,
-    comboId: combo?.id,
-    comboReady: combo?.ready,
-    comboPayoffPlayable: combo?.payoffPlayableNow,
-    comboNotes: combo?.reasons,
     tacticalLine: tactical.line,
     tacticalScore: tactical.score,
     tacticalNotes: tactical.notes,
@@ -997,16 +870,6 @@ export function scoreCardValue(card: Card | null | undefined, profile: DeckAiPro
     score = knowledgeBase + weights.itemValue + costBonus + effectBonus + factionBonus + preferredIdBonus + preserveBonus;
   } else {
     score = knowledgeBase + weights.storyValue + costBonus + effectBonus + factionBonus + preferredIdBonus + preserveBonus;
-  }
-
-  if (context.gameState && context.player) {
-    score += scoreComboCard(context.gameState, context.player, card, profile, 'value');
-    score += applyCardScoreHook(profile, 'adjustCardValue', {
-      ...context,
-      card,
-      score,
-      reason: 'value',
-    });
   }
 
   return score;
@@ -1351,7 +1214,6 @@ function scoreStoryPlayDiscipline(gameState: GameState, player: PlayerState, car
     battleDamageCreatesErosionPressure(totalAvailableDamage, opponent, 1) ||
     opponent.deck.length <= Math.max(4, battleDamageDeckImpact(totalAvailableDamage + 1, opponent))
   );
-  const comboScore = scoreComboCard(gameState, player, card, profile, 'playable');
   const timingScore = bestStoryEffectTimingScore(gameState, player, card);
   const phase = gameState.phase;
   const hasBattleContext =
@@ -1375,14 +1237,6 @@ function scoreStoryPlayDiscipline(gameState: GameState, player: PlayerState, car
   let score = -48;
   let clearReasonScore = 0;
 
-  if (comboScore >= 80) {
-    clearReasonScore += 58 + comboScore * 0.15;
-  } else if (comboScore > 0) {
-    clearReasonScore += comboScore * 0.35;
-  } else if (comboScore < 0) {
-    clearReasonScore += comboScore * 0.55;
-  }
-
   if (phase === 'MAIN') {
     if (isRemoval) {
       clearReasonScore += opponentFieldTargets > 0 ? 28 + Math.min(10, opponentFieldTargets * 2.5) : -30;
@@ -1400,10 +1254,10 @@ function scoreStoryPlayDiscipline(gameState: GameState, player: PlayerState, car
     if ((isCombat || isProtection || isCounter) && !closeToLethal) {
       clearReasonScore -= 18;
     }
-    if (isCounter && comboScore < 80) {
+    if (isCounter) {
       clearReasonScore -= 30;
     }
-    if (isProtection && !closeToLethal && comboScore < 80) {
+    if (isProtection && !closeToLethal) {
       clearReasonScore -= 18;
     }
     if (closeToLethal && (isCombat || roles.has('finisher'))) {
@@ -1415,12 +1269,12 @@ function scoreStoryPlayDiscipline(gameState: GameState, player: PlayerState, car
       if (closeToLethal) clearReasonScore += 16;
     }
     if (isDrawSearch || isResourceSetup || isBoardSetup) {
-      clearReasonScore -= comboScore >= 80 ? 0 : 34;
+      clearReasonScore -= 34;
     }
-    if (battleAttackers === 0 && comboScore < 80) {
+    if (battleAttackers === 0) {
       clearReasonScore -= 22;
     }
-    if (battleAttackers === 0 && (isCounter || isProtection || isCombat) && comboScore < 80) {
+    if (battleAttackers === 0 && (isCounter || isProtection || isCombat)) {
       clearReasonScore -= 24;
     }
     if (isRemoval && opponentFieldTargets === 0) {
@@ -1437,7 +1291,7 @@ function scoreStoryPlayDiscipline(gameState: GameState, player: PlayerState, car
     clearReasonScore -= 18;
   }
 
-  if (isCounter && phase !== 'COUNTERING' && !(phase === 'BATTLE_FREE' && battleAttackers > 0) && comboScore < 80) {
+  if (isCounter && phase !== 'COUNTERING' && !(phase === 'BATTLE_FREE' && battleAttackers > 0)) {
     clearReasonScore -= 18;
   }
 
@@ -1449,11 +1303,11 @@ function scoreStoryPlayDiscipline(gameState: GameState, player: PlayerState, car
     }
   }
 
-  if (isProtection && !hasBattleContext && phase !== 'COUNTERING' && !closeToLethal && comboScore < 80) {
+  if (isProtection && !hasBattleContext && phase !== 'COUNTERING' && !closeToLethal) {
     clearReasonScore -= 14;
   }
 
-  if ((isCombat || roles.has('finisher')) && !hasBattleContext && !closeToLethal && comboScore < 80) {
+  if ((isCombat || roles.has('finisher')) && !hasBattleContext && !closeToLethal) {
     clearReasonScore -= 10;
   }
 
@@ -1466,7 +1320,6 @@ function scoreStoryPlayDiscipline(gameState: GameState, player: PlayerState, car
   }
 
   const hasClearPurpose =
-    comboScore >= 80 ||
     !!preventDestroyThreat?.best ||
     clearReasonScore >= 22 ||
     (phase === 'MAIN' && (isRemoval || isDrawSearch || isBoardSetup) && clearReasonScore >= 12) ||
@@ -1537,13 +1390,7 @@ export function scorePlayableCard(gameState: GameState, player: PlayerState, car
   }
 
   if (erosion >= 8 && getCardCost(card) > 2) score -= 3;
-  score += scoreComboCard(gameState, player, card, profile, 'playable');
-  score += applyCardScoreHook(profile, 'adjustPlayableScore', {
-    ...strategyContext,
-    card,
-    score,
-    reason: 'playable',
-  });
+  score += scoreAdventurerGuildPlayableCard(gameState, player, card, profile);
   const slotPenalty = scorePendingUnitReturnSlotPenalty(gameState, player, estimateUnitSlotsConsumedByPlaying(card));
   if (slotPenalty.penalty > 0) score -= slotPenalty.penalty;
   return score;
@@ -1596,15 +1443,7 @@ function scoreMulliganKeep(card: Card, profile: DeckAiProfile, earlyUnitsInHand:
   if (card.type === 'ITEM' && earlyUnitsInHand === 0) score -= 8;
   if (cost >= 5) score -= mode === 'aggro' ? 18 : 10;
   if (cost >= 5 && (profile.preserveCardIds?.[card.id] || profile.preferredCardIds?.[card.id])) score += 8;
-  if (gameState && player) score += scoreComboCard(gameState, player, card, profile, 'mulligan');
-
-  score += applyCardScoreHook(profile, 'adjustMulliganScore', {
-    ...strategyContext,
-    card,
-    score,
-    reason: 'mulligan',
-    earlyUnitsInHand,
-  });
+  score += scoreAdventurerGuildMulliganKeep(card, profile);
 
   return score;
 }
@@ -1646,305 +1485,6 @@ export function chooseMulliganCards(player: PlayerState, profile: DeckAiProfile,
   }
 
   return [...returning];
-}
-
-export interface OpeningHandAssessment {
-  quality: number;
-  earlyUnits: number;
-  units: number;
-  engines: number;
-  interaction: number;
-  avgCost: number;
-  highCostCards: number;
-  severeBrick: boolean;
-  mildBrick: boolean;
-  notes: string[];
-}
-
-export interface OpeningHandSoftCompensationResult {
-  applied: boolean;
-  reason: string;
-  returned: Card[];
-  gained: Card[];
-  before: OpeningHandAssessment;
-  after: OpeningHandAssessment;
-  inspectedDeckCards: number;
-  extremeRescue: boolean;
-  fixedOpening?: boolean;
-  missingFixedCardIds?: string[];
-}
-
-function scoreOpeningCard(card: Card, profile: DeckAiProfile) {
-  const knowledge = getCardKnowledge(card);
-  const cost = getCardCost(card);
-  const mode = profile.gamePlan?.mode;
-  const goal = profile.gamePlan?.primaryGoal;
-  let score = scoreCardValue(card, profile) * 0.45 + getCardKnowledgeValue(card, 'playPriority') * 0.55;
-
-  if (isEarlyUnit(card, profile)) score += mode === 'aggro' ? 18 : 12;
-  if (card.type === 'UNIT' && cost <= 4) score += 5;
-  if (card.type === 'UNIT' && goal === 'damage') score += (card.damage || 0) * 3;
-  if (card.isrush) score += 5;
-  if (knowledge?.roles.includes('engine')) score += mode === 'engine' || mode === 'combo' ? 10 : 4;
-  if (knowledge?.roles.includes('resource')) score += mode === 'engine' || mode === 'combo' ? 6 : 2;
-  if (knowledge?.roles.includes('search') || knowledge?.roles.includes('draw')) score += 3;
-  if (knowledge?.roles.includes('removal') || knowledge?.roles.includes('tempo')) score += 3;
-  if (cost >= 5) score -= mode === 'aggro' ? 16 : 8;
-  if (cost >= 6) score -= 4;
-
-  return score;
-}
-
-export function assessOpeningHand(hand: Card[], profile: DeckAiProfile): OpeningHandAssessment {
-  const costs = hand.map(getCardCost);
-  const avgCost = costs.length > 0 ? costs.reduce((sum, cost) => sum + cost, 0) / costs.length : 0;
-  const units = hand.filter(card => card.type === 'UNIT').length;
-  const earlyUnits = hand.filter(card => isEarlyUnit(card, profile)).length;
-  const engines = hand.filter(card => {
-    const roles = getCardKnowledge(card)?.roles || [];
-    return roles.includes('engine') || roles.includes('resource') || roles.includes('combo_piece');
-  }).length;
-  const interaction = hand.filter(card => {
-    const roles = getCardKnowledge(card)?.roles || [];
-    return roles.includes('removal') || roles.includes('tempo') || roles.includes('protection');
-  }).length;
-  const highCostCards = costs.filter(cost => cost >= 5).length;
-  const mode = profile.gamePlan?.mode;
-  const needsEngine = mode === 'engine' || mode === 'combo' || profile.gamePlan?.primaryGoal === 'resourceLoop' || profile.gamePlan?.primaryGoal === 'comboSetup';
-  const avgScore = hand.length > 0
-    ? hand.reduce((sum, card) => sum + scoreOpeningCard(card, profile), 0) / hand.length
-    : 0;
-  const notes: string[] = [];
-  let quality =
-    avgScore +
-    earlyUnits * 8 +
-    units * 3 +
-    engines * (needsEngine ? 5 : 2) +
-    interaction * 2 -
-    Math.max(0, avgCost - 3.8) * 8 -
-    highCostCards * (mode === 'aggro' ? 4 : 2);
-
-  if (units === 0) {
-    quality -= 18;
-    notes.push('no units');
-  }
-  if (earlyUnits === 0) {
-    quality -= mode === 'aggro' ? 22 : 14;
-    notes.push('no early unit');
-  }
-  if (needsEngine && engines === 0) {
-    quality -= 10;
-    notes.push('missing engine');
-  }
-  if (avgCost >= 4.8) {
-    quality -= 12;
-    notes.push('high average cost');
-  }
-  if (highCostCards >= 3) {
-    quality -= 10;
-    notes.push('too many high-cost cards');
-  }
-
-  const severeBrick =
-    units === 0 ||
-    (earlyUnits === 0 && highCostCards >= 3) ||
-    avgCost >= 5 ||
-    quality < 22 ||
-    (needsEngine && engines === 0 && earlyUnits === 0);
-  const mildBrick =
-    severeBrick ||
-    earlyUnits === 0 ||
-    quality < 34 ||
-    avgCost >= 4.4 ||
-    (needsEngine && engines === 0);
-
-  return {
-    quality: Number(quality.toFixed(2)),
-    earlyUnits,
-    units,
-    engines,
-    interaction,
-    avgCost: Number(avgCost.toFixed(2)),
-    highCostCards,
-    severeBrick,
-    mildBrick,
-    notes,
-  };
-}
-
-function applyFixedOpeningHand(
-  player: PlayerState,
-  profile: DeckAiProfile,
-  before: OpeningHandAssessment
-): OpeningHandSoftCompensationResult | undefined {
-  const fixedIds = profile.softCompensation?.fixedOpeningHandIds?.filter(Boolean) || [];
-  if (fixedIds.length === 0 || player.hand.length === 0) return undefined;
-
-  const openingSize = player.hand.length;
-  const targetIds = fixedIds.slice(0, openingSize);
-  const originalHand = [...player.hand];
-  const selected: Card[] = [];
-  const selectedIds = new Set<string>();
-  const gained: Card[] = [];
-  const missingFixedCardIds: string[] = [];
-
-  for (const cardId of targetIds) {
-    const handCard = originalHand.find(card =>
-      card.id === cardId &&
-      !selectedIds.has(card.gamecardId)
-    );
-    if (handCard) {
-      selected.push(handCard);
-      selectedIds.add(handCard.gamecardId);
-      continue;
-    }
-
-    const deckIndex = player.deck.findIndex(card =>
-      card.id === cardId &&
-      !selectedIds.has(card.gamecardId)
-    );
-    if (deckIndex >= 0) {
-      const [deckCard] = player.deck.splice(deckIndex, 1);
-      selected.push(deckCard);
-      selectedIds.add(deckCard.gamecardId);
-      gained.push(deckCard);
-      continue;
-    }
-
-    missingFixedCardIds.push(cardId);
-  }
-
-  if (selected.length < openingSize) {
-    for (const card of originalHand) {
-      if (selected.length >= openingSize) break;
-      if (selectedIds.has(card.gamecardId)) continue;
-      selected.push(card);
-      selectedIds.add(card.gamecardId);
-    }
-  }
-
-  const returned = originalHand.filter(card => !selectedIds.has(card.gamecardId));
-  for (const card of returned) {
-    card.cardlocation = 'DECK';
-    card.displayState = 'FRONT_FACEDOWN';
-    player.deck.unshift(card);
-  }
-
-  player.hand = selected.slice(0, openingSize);
-  for (const card of player.hand) {
-    card.cardlocation = 'HAND';
-    card.displayState = 'FRONT_FACEDOWN';
-  }
-
-  const after = assessOpeningHand(player.hand, profile);
-  return {
-    applied: true,
-    reason: missingFixedCardIds.length > 0
-      ? 'Fixed opening hand was partially applied; some configured cards were not found in hand or deck.'
-      : 'Fixed opening hand applied for this deck profile.',
-    returned,
-    gained,
-    before,
-    after,
-    inspectedDeckCards: player.deck.length + gained.length,
-    extremeRescue: false,
-    fixedOpening: true,
-    missingFixedCardIds,
-  };
-}
-
-export function applyOpeningHandSoftCompensation(
-  player: PlayerState,
-  profile: DeckAiProfile
-): OpeningHandSoftCompensationResult {
-  const before = assessOpeningHand(player.hand, profile);
-  const config = profile.softCompensation;
-  const disabledResult = (reason: string): OpeningHandSoftCompensationResult => ({
-    applied: false,
-    reason,
-    returned: [],
-    gained: [],
-    before,
-    after: before,
-    inspectedDeckCards: 0,
-    extremeRescue: false,
-  });
-
-  const fixedOpening = applyFixedOpeningHand(player, profile, before);
-  if (fixedOpening) return fixedOpening;
-
-  if (!config?.openingSmoothing || !profile.shareCode) return disabledResult('soft compensation disabled');
-  if (!before.mildBrick) return disabledResult('opening hand quality acceptable');
-  if (player.deck.length === 0 || player.hand.length === 0) return disabledResult('not enough cards to smooth');
-
-  const lookahead = Math.max(4, Math.min(config.openingLookahead || 8, player.deck.length));
-  const visibleTopDeck = player.deck.slice(Math.max(0, player.deck.length - lookahead));
-  const currentScored = player.hand
-    .map(card => ({ card, score: scoreOpeningCard(card, profile) }))
-    .sort((a, b) => a.score - b.score);
-  const candidateScored = visibleTopDeck
-    .map(card => ({ card, score: scoreOpeningCard(card, profile) }))
-    .sort((a, b) => b.score - a.score);
-
-  const returned: Card[] = [];
-  const gained: Card[] = [];
-  const maxConfigured = Math.max(1, config.maxOpeningReplacements || 1);
-  const extremeRescue = before.severeBrick && Math.random() < (config.extremeBrickRescueChance ?? 0.3);
-  const targetReplacements = Math.min(player.hand.length - 1, maxConfigured + (extremeRescue ? 1 : 0));
-  const usedCandidateIds = new Set<string>();
-  const usedReturnIds = new Set<string>();
-
-  for (let i = 0; i < targetReplacements; i++) {
-    const worst = currentScored.find(entry => !usedReturnIds.has(entry.card.gamecardId));
-    const best = candidateScored.find(entry => !usedCandidateIds.has(entry.card.gamecardId));
-    if (!worst || !best) break;
-
-    const requiredGain = i === 0
-      ? before.severeBrick ? 5 : 8
-      : 14;
-    if (best.score <= worst.score + requiredGain) break;
-
-    returned.push(worst.card);
-    gained.push(best.card);
-    usedReturnIds.add(worst.card.gamecardId);
-    usedCandidateIds.add(best.card.gamecardId);
-  }
-
-  if (returned.length === 0) return disabledResult('no soft replacement improved the hand enough');
-
-  for (const card of returned) {
-    const handIndex = player.hand.findIndex(candidate => candidate.gamecardId === card.gamecardId);
-    if (handIndex >= 0) {
-      player.hand.splice(handIndex, 1);
-      card.cardlocation = 'DECK';
-      card.displayState = 'FRONT_FACEDOWN';
-      player.deck.unshift(card);
-    }
-  }
-
-  for (const card of gained) {
-    const deckIndex = player.deck.findIndex(candidate => candidate.gamecardId === card.gamecardId);
-    if (deckIndex >= 0) {
-      player.deck.splice(deckIndex, 1);
-      card.cardlocation = 'HAND';
-      card.displayState = 'FRONT_FACEDOWN';
-      player.hand.push(card);
-    }
-  }
-
-  const after = assessOpeningHand(player.hand, profile);
-  return {
-    applied: true,
-    reason: before.severeBrick
-      ? 'Soft compensation replaced an extreme brick opening with a limited top-deck lookahead.'
-      : 'Soft compensation lightly smoothed a weak opening hand with a limited top-deck lookahead.',
-    returned,
-    gained,
-    before,
-    after,
-    inspectedDeckCards: lookahead,
-    extremeRescue,
-  };
 }
 
 export function canUnitAttack(gameState: GameState, unit: Card | null | undefined) {
@@ -2108,116 +1648,6 @@ function countLikelyDefenders(gameState: GameState, defender: PlayerState | unde
   return Array.isArray(defenders) ? defenders.length : 0;
 }
 
-const TEMPLE_MAGIC_SPEAR_ID = '101130440';
-const TEMPLE_HERO_SWORD_ID = '101130458';
-const HOLY_PRINCE_RESET_EFFECT_ID = '101130441_reset_boost';
-const TEMPLE_HIGH_VALUE_RESET_TARGET_IDS = new Set([TEMPLE_MAGIC_SPEAR_ID, TEMPLE_HERO_SWORD_ID]);
-const TEMPLE_MAGIC_SPEAR_RESET_ENABLER_EFFECT_IDS = new Set([
-  '101130439_reset_hall',
-  HOLY_PRINCE_RESET_EFFECT_ID,
-  '101130155_enter_reset',
-  '101000063_ten_reset_units',
-  '202000053_reset_after_destroy',
-]);
-
-function isTempleMagicSpear(card: Card | null | undefined) {
-  return card?.id === TEMPLE_MAGIC_SPEAR_ID;
-}
-
-function isTempleMagicSpearResetEnabler(effect: CardEffect | null | undefined) {
-  return !!effect?.id && TEMPLE_MAGIC_SPEAR_RESET_ENABLER_EFFECT_IDS.has(effect.id);
-}
-
-function templeMagicSpearResetBoost(effect?: CardEffect) {
-  return effect?.id === HOLY_PRINCE_RESET_EFFECT_ID ? 1500 : 1000;
-}
-
-function getTempleMagicSpearPostAttackResetSupport(player: PlayerState, spear: Card | null | undefined) {
-  if (!isTempleMagicSpear(spear)) return undefined;
-  let bestBoost = 0;
-  const effectIds: string[] = [];
-
-  const fieldCards = [...player.unitZone, ...player.itemZone].filter((card): card is Card => !!card);
-  for (const source of fieldCards) {
-    for (const effect of source.effects || []) {
-      if (!isTempleMagicSpearResetEnabler(effect)) continue;
-      if (effect.id === '101130439_reset_hall') {
-        if (source.gamecardId === spear.gamecardId || source.isExhausted) continue;
-      }
-      if (effect.id === HOLY_PRINCE_RESET_EFFECT_ID && player.grave.length < 3) continue;
-      const boost = templeMagicSpearResetBoost(effect);
-      if (boost > bestBoost) bestBoost = boost;
-      effectIds.push(effect.id);
-    }
-  }
-
-  return bestBoost > 0 ? { bestBoost, effectIds } : undefined;
-}
-
-function getTempleHighValueResetOpportunity(
-  gameState: GameState,
-  player: PlayerState,
-  sourceCard: Card,
-  effect: CardEffect,
-  profile: DeckAiProfile
-) {
-  if (!isTempleMagicSpearResetEnabler(effect)) return undefined;
-  if (effect.id === '101130439_reset_hall' && sourceCard.isExhausted) return undefined;
-  if (effect.id === HOLY_PRINCE_RESET_EFFECT_ID && player.grave.length < 3) return undefined;
-
-  const opponent = getOpponent(gameState, player);
-  const readyDamageWithoutSource = player.unitZone
-    .filter((unit): unit is Card => !!unit && unit.gamecardId !== sourceCard.gamecardId && canUnitAttack(gameState, unit))
-    .reduce((sum, unit) => sum + Math.max(0, unit.damage || 0), 0);
-  const defenderPower = getLikelyDefenderCards(gameState, opponent)
-    .reduce((best, defender) => Math.max(best, Math.max(0, defender.power || 0)), 0);
-  const boost = templeMagicSpearResetBoost(effect);
-  const sourceAttackCost = canUnitAttack(gameState, sourceCard)
-    ? Math.max(0, sourceCard.damage || 0) * 7 + Math.max(0, sourceCard.power || 0) / 1200
-    : 0;
-
-  const candidates = player.unitZone
-    .filter((unit): unit is Card => {
-      if (!unit || !unit.isExhausted) return false;
-      if (unit.gamecardId === sourceCard.gamecardId) return false;
-      if (effect.id === HOLY_PRINCE_RESET_EFFECT_ID && unit.godMark) return false;
-      if (effect.id === '101130439_reset_hall') {
-        return TEMPLE_HIGH_VALUE_RESET_TARGET_IDS.has(unit.id) ||
-          (unit.id.startsWith('101130') && Math.max(0, unit.damage || 0) >= 2);
-      }
-      return TEMPLE_HIGH_VALUE_RESET_TARGET_IDS.has(unit.id) ||
-        Math.max(0, unit.damage || 0) >= 2 ||
-        scoreCardValue(unit, profile) >= 45;
-    })
-    .map(unit => {
-      const damage = Math.max(0, unit.damage || 0);
-      const power = Math.max(0, unit.power || 0);
-      const cardValue = scoreCardValue(unit, profile);
-      let score = 20 + damage * 13 + power / 900 + Math.min(22, cardValue * 0.28);
-
-      if (TEMPLE_HIGH_VALUE_RESET_TARGET_IDS.has(unit.id)) score += 22;
-      if (unit.id === TEMPLE_MAGIC_SPEAR_ID) {
-        if (defenderPower > 0 && defenderPower >= power && power + boost > defenderPower) score += 34;
-        else if (defenderPower > 0 && defenderPower >= power + boost) score -= 10;
-      }
-      if (opponent) {
-        if (battleDamageWouldBeFatal(readyDamageWithoutSource + damage, opponent)) score += 30;
-        if (battleDamageCreatesErosionPressure(readyDamageWithoutSource + damage, opponent)) score += 18;
-      }
-
-      score -= sourceAttackCost;
-      return { target: unit, score };
-    })
-    .sort((a, b) => b.score - a.score);
-
-  const best = candidates[0];
-  if (!best || best.score < 34) return undefined;
-  return {
-    ...best,
-    notes: [`temple reset unlocks ${best.target.fullName || best.target.id}`],
-  };
-}
-
 function estimateRemainingDamageAfterCurrentBlock(gameState: GameState, defender: PlayerState, currentBattleDamage: number) {
   if (!gameState.battleState?.attackers?.length) return 0;
   const attackerUid = gameState.playerIds.find(uid => uid !== defender.uid);
@@ -2237,66 +1667,6 @@ function battleBlockStopsCurrentHitButStillDies(
   if (!battleDamageWouldBeFatal(currentBattleDamage, defender)) return false;
   const remainingDamage = estimateRemainingDamageAfterCurrentBlock(gameState, defender, currentBattleDamage);
   return remainingDamage > 0 && battleDamageWouldBeFatal(remainingDamage, defender);
-}
-
-function getTempleMagicSpearBattleResetOpportunity(
-  gameState: GameState,
-  player: PlayerState,
-  effect: CardEffect,
-  profile: DeckAiProfile
-) {
-  if (!isTempleMagicSpearResetEnabler(effect)) return undefined;
-  if (gameState.phase !== 'COUNTERING' && gameState.phase !== 'BATTLE_FREE') return undefined;
-  const battle = gameState.battleState;
-  if (!battle?.attackers?.length) return undefined;
-  if (gameState.playerIds[gameState.currentTurnPlayer] !== player.uid) return undefined;
-
-  const spear = battle.attackers
-    .map(id => findCardInState(gameState, id))
-    .find(card => isTempleMagicSpear(card) && findCardOwnerUid(gameState, card) === player.uid);
-  if (!spear) return undefined;
-
-  const opponent = getOpponent(gameState, player);
-  if (!opponent) return undefined;
-  const boost = templeMagicSpearResetBoost(effect);
-  const power = Math.max(0, spear.power || 0);
-  const powerAfterReset = power + boost;
-  const currentDamage = Math.max(0, spear.damage || 0);
-  const defenderCards = battle.defender
-    ? [findCardInState(gameState, battle.defender)].filter((card): card is Card => !!card)
-    : getLikelyDefenderCards(gameState, opponent);
-  const bestDefender = defenderCards
-    .sort((a, b) =>
-      ((b.power || 0) + scoreCardValue(b, profile) * 0.25) -
-      ((a.power || 0) + scoreCardValue(a, profile) * 0.25)
-    )[0];
-  const defenderPower = Math.max(0, bestDefender?.power || 0);
-  const savesSpearFromLikelyBlock = !!bestDefender && defenderPower >= power && powerAfterReset > defenderPower;
-  const improvesHopelessFight = !!bestDefender && defenderPower > powerAfterReset;
-  const resetDamageCloses =
-    !battle.defender &&
-    battleDamageWouldBeFatal(currentDamage + 1, opponent);
-
-  let score = 0;
-  const notes: string[] = [];
-  if (savesSpearFromLikelyBlock) {
-    const defenderValue = bestDefender
-      ? scoreCardValue(bestDefender, profile) + Math.max(0, bestDefender.damage || 0) * 7
-      : 0;
-    score += 64 + Math.min(22, defenderValue * 0.22);
-    if (battle.defender) score += 16;
-    notes.push(`magic spear reset beats ${bestDefender?.fullName || 'likely blocker'} ${power}->${powerAfterReset}`);
-  } else if (resetDamageCloses) {
-    score += 46;
-    notes.push('magic spear reset damage creates lethal pressure');
-  } else if (improvesHopelessFight) {
-    score += 10;
-    notes.push(`magic spear reset still trails blocker ${powerAfterReset}<${defenderPower}`);
-  }
-
-  return score > 0
-    ? { score, spear, bestDefender, powerAfterReset, notes }
-    : undefined;
 }
 
 export function scoreAttackCandidate(gameState: GameState, player: PlayerState, card: Card, profile: DeckAiProfile) {
@@ -2329,18 +1699,6 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
   const strongestDefenderValue = Math.max(0, ...defenderCards.map(defender =>
     scoreCardValue(defender, profile) + (defender.damage || 0) * 6 + (defender.power || 0) / 900
   ));
-  const templeSpearResetSupport = getTempleMagicSpearPostAttackResetSupport(player, card);
-  const templeSpearPowerAfterReset = power + (templeSpearResetSupport?.bestBoost || 0);
-  const templeSpearResetFixesBlock =
-    isTempleMagicSpear(card) &&
-    !!templeSpearResetSupport &&
-    defenderCount > 0 &&
-    strongestDefenderPower >= power &&
-    templeSpearPowerAfterReset > strongestDefenderPower;
-  const templeSpearWouldStillDieToBestBlock =
-    isTempleMagicSpear(card) &&
-    defenderCount > 0 &&
-    strongestDefenderPower >= Math.max(power, templeSpearPowerAfterReset);
   const otherAttackDamage = Math.max(0, totalAvailableDamage - damage);
   const attackWouldBeFatal = !!opponent && battleDamageWouldBeFatal(damage, opponent);
   const otherAttackersCanClose = !!opponent && battleDamageWouldBeFatal(otherAttackDamage, opponent);
@@ -2364,11 +1722,6 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
     battleDamageWouldBeFatal(otherAttackDamage, opponent) ||
     battleDamageCreatesErosionPressure(otherAttackDamage, opponent)
   );
-  const templeResetInstead = (card.effects || [])
-    .map(effect => getTempleHighValueResetOpportunity(gameState, player, card, effect, profile))
-    .filter(Boolean)
-    .sort((a, b) => (b?.score || 0) - (a?.score || 0))[0];
-
   let score = ((damage * 10 + power / 1000 + cardValue * 0.25) * profile.weights.attackBias);
   score += damage * attackPriority * 1.6;
   if (gamePlan?.primaryGoal === 'damage') score += damage * 2.2;
@@ -2417,15 +1770,6 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
     if (damage <= 1) badAttackPenalty += losingIntoDefender ? 12 : 6;
     if (card.godMark) badAttackPenalty += 18;
     if (!clearClosingPurpose) badAttackPenalty += 10;
-    if (templeSpearResetFixesBlock) {
-      badAttackPenalty *= 0.45;
-      score += 18 + Math.min(18, (templeSpearResetSupport?.bestBoost || 0) / 70);
-    } else if (isTempleMagicSpear(card) && !templeSpearResetSupport && !clearClosingPurpose) {
-      badAttackPenalty += 24;
-    }
-    if (templeSpearWouldStillDieToBestBlock && !attackWouldBeFatal && !singleAttackThreat) {
-      badAttackPenalty += 34 + Math.min(18, preserveValue * 0.3);
-    }
     if (opponent?.isGoddessMode && !attackWouldBeFatal && !singleAttackThreat) {
       badAttackPenalty += 12 + damage * 3;
     }
@@ -2438,7 +1782,6 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
     defenderCount > 0 &&
     highValueAttacker &&
     !expendableBait &&
-    !templeSpearResetFixesBlock &&
     !attackWouldBeFatal &&
     !singleAttackThreat &&
     strongestDefenderPower >= power
@@ -2454,15 +1797,7 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
     score -= highValueRiskPenalty * keepsSamePressure;
   }
 
-  score += scoreComboCard(gameState, player, card, profile, 'attack');
-  score += applyCardScoreHook(profile, 'adjustAttackScore', {
-    ...strategyContext,
-    card,
-    score,
-    reason: 'attack',
-  });
-
-  if (defenderCount > 0 && !clearClosingPurpose && !expendableBait && !templeSpearResetFixesBlock) {
+  if (defenderCount > 0 && !clearClosingPurpose && !expendableBait) {
     const narrowOrLosingIntoBlock = strongestDefenderPower + 800 >= power;
     if (narrowOrLosingIntoBlock) {
       score -= 12 + Math.min(22, strongestDefenderValue * 0.12);
@@ -2473,9 +1808,7 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
     }
   }
 
-  if (templeResetInstead && !singleAttackThreat) {
-    score -= 18 + Math.min(34, templeResetInstead.score * 0.36);
-  }
+  score += scoreAdventurerGuildAttack(gameState, player, card, profile);
 
   return score;
 }
@@ -2687,52 +2020,6 @@ export function scoreActivatableEffect(
     notes.push('资源转换');
   }
 
-  const templeSpearBattleReset = getTempleMagicSpearBattleResetOpportunity(gameState, player, effect, profile);
-  if (templeSpearBattleReset) {
-    score += templeSpearBattleReset.score;
-    tags.add('reset');
-    tags.add('combat');
-    tags.add('buff');
-    notes.push(...templeSpearBattleReset.notes);
-  }
-
-  const templeMainReset = gameState.phase === 'MAIN'
-    ? getTempleHighValueResetOpportunity(gameState, player, card, effect, profile)
-    : undefined;
-  if (templeMainReset) {
-    score += templeMainReset.score;
-    tags.add('reset');
-    tags.add('combat');
-    tags.add('buff');
-    notes.push(...templeMainReset.notes);
-  }
-
-  if (
-    effect.id === HOLY_PRINCE_RESET_EFFECT_ID &&
-    (gameState.phase === 'BATTLE_FREE' || gameState.phase === 'COUNTERING')
-  ) {
-    const exhaustedResetTargets = player.unitZone.filter((unit): unit is Card => !!unit && unit.isExhausted);
-    const preferredResetTarget = exhaustedResetTargets.find(unit => TEMPLE_HIGH_VALUE_RESET_TARGET_IDS.has(unit.id));
-    const ownBattleResetWindow =
-      !!gameState.battleState?.attackers?.length &&
-      gameState.playerIds[gameState.currentTurnPlayer] === player.uid;
-    const closingDamageReset =
-      ownBattleResetWindow &&
-      inLethalWindow &&
-      exhaustedResetTargets.some(unit => (unit.damage || 0) >= 2);
-    const clearBattlePurpose = !!templeSpearBattleReset || (ownBattleResetWindow && (!!preferredResetTarget || closingDamageReset));
-
-    if (clearBattlePurpose) {
-      if (preferredResetTarget) {
-        score += 10;
-        notes.push('holy prince reset targets magic spear/hero sword');
-      }
-    } else {
-      score -= gameState.phase === 'COUNTERING' ? 34 : 18;
-      notes.push('holy prince reset held for post-attack high-value reset');
-    }
-  }
-
   if (textHasAny(searchableText, [/召唤|放置到战场|登场|play.*unit|summon|play_from/i])) {
     const openSlots = player.unitZone.filter(slot => slot === null).length;
     score += openSlots > 0 ? 6 + openSlots : -5;
@@ -2878,7 +2165,6 @@ export function scoreActivatableEffect(
   }
 
   if (
-    !templeSpearBattleReset &&
     (timingTags.has('engine') || timingTags.has('draw') || timingTags.has('search') || timingTags.has('resource') || timingTags.has('summon') || timingTags.has('revive')) &&
     (gameState.phase === 'BATTLE_FREE' || gameState.phase === 'COUNTERING') &&
     !timingTags.has('combo') &&
@@ -2934,24 +2220,10 @@ export function scoreActivatableEffect(
     }
   }
 
-  const comboEffect = scoreComboEffect(gameState, player, card, effect, profile);
-  if (comboEffect.score !== 0) {
-    score += comboEffect.score;
-    notes.push(`combo${comboEffect.score > 0 ? '+' : ''}${comboEffect.score.toFixed(1)}${comboEffect.note ? ` ${comboEffect.note}` : ''}`);
-  }
-
-  const hookAdjustment = applyEffectScoreHook(profile, {
-    ...strategyContext,
-    card,
-    effect,
-    score,
-    tags: [...tags],
-    targetCount,
-    notes,
-  });
-  if (hookAdjustment !== 0) {
-    score += hookAdjustment;
-    notes.push(`专属策略${hookAdjustment > 0 ? '+' : ''}${hookAdjustment.toFixed(1)}`);
+  const adventurerGuildEffect = scoreAdventurerGuildEffect(gameState, player, card, effect, profile);
+  if (adventurerGuildEffect.score !== 0) {
+    score += adventurerGuildEffect.score;
+    notes.push(...adventurerGuildEffect.notes);
   }
 
   if (card.isExhausted) score -= 1.5;
@@ -3196,27 +2468,8 @@ export function chooseDefender(
     ) {
       score -= 420 + Math.min(90, boardPresenceValue * 0.6);
     }
-    if (
-      profile.id === 'white-temple' &&
-      isTempleMagicSpear(card) &&
-      (trades || sacrifice) &&
-      !(currentHitFatal || critical || deckCritical)
-    ) {
-      score -= 90;
-      if (nonFatalHit) score -= 20;
-      if (totalAttackerDamage <= 2) score -= 18;
-    }
-
     const preserveMultiplier = (critical || deckCritical) ? 0.18 : (danger || deckPressure) ? 0.25 : 0.45;
     score -= cardValue * preserveMultiplier * profile.weights.defenseBias;
-    score += applyCardScoreHook(profile, 'adjustDefenseScore', {
-      ...strategyContext,
-      card,
-      score,
-      reason: 'defense',
-      attackingUnits,
-      availableDefenders,
-    });
     return { card, score };
   }).sort((a, b) => b.score - a.score);
 
@@ -3860,6 +3113,9 @@ export function chooseQuerySelections(
       .filter(Boolean) as string[];
   }
 
+  const adventurerGuildSelections = chooseAdventurerGuildQuerySelections(gameState, playerUid, query, profile);
+  if (adventurerGuildSelections) return adventurerGuildSelections;
+
   if (query.type === 'SELECT_CHOICE') {
     const yes = selectableOptions.find(option => option.id === 'YES');
     const no = selectableOptions.find(option => option.id === 'NO');
@@ -3867,19 +3123,12 @@ export function chooseQuerySelections(
       return shouldChooseOptionalUnitAttackTarget(gameState, playerUid, query, profile) ? ['YES'] : ['NO'];
     }
     if (yes && no && /TARGET_CHOICE|TRIGGER|SHENYI/i.test(query.callbackKey || '')) return ['YES'];
-    const player = gameState.players[playerUid];
-    const strategyContext = player ? buildStrategyContext(gameState, player, profile) : { gameState };
     const scoredChoices = selectableOptions
       .map(option => {
         const baseScore = scoreChoiceOption(gameState, playerUid, query, option, profile);
         return {
           option,
-          score: baseScore + applyQueryScoreHook(profile, {
-            ...strategyContext,
-            query,
-            option,
-            score: baseScore,
-          }),
+          score: baseScore,
         };
       })
       .sort((a, b) => b.score - a.score);
@@ -3902,9 +3151,6 @@ export function chooseQuerySelections(
   const intent = inferQueryIntent(query);
   const hasOwnCardOptions = selectableOptions.some(option => option.card && optionIsMine(gameState, playerUid, option));
   const hasOpponentCardOptions = selectableOptions.some(option => option.card && !optionIsMine(gameState, playerUid, option));
-  const player = gameState.players[playerUid];
-  const strategyContext = player ? buildStrategyContext(gameState, player, profile) : { gameState };
-
   if (query.callbackKey === 'DIKAI_ATTACK_TARGET_SELECT') {
     const scoredTargets = selectableOptions
       .filter(option => option.card)
@@ -3932,13 +3178,7 @@ export function chooseQuerySelections(
         : 0;
       return {
         option,
-        score: baseScore + applyQueryScoreHook(profile, {
-          ...strategyContext,
-          query,
-          option,
-          score: baseScore,
-          intent,
-        }),
+        score: baseScore,
       };
     })
     .sort((a, b) => b.score - a.score);
@@ -3976,17 +3216,8 @@ export function chooseQuerySelections(
 export function chooseDiscardCard(player: PlayerState, profile: DeckAiProfile, difficulty: BotDifficulty, gameState?: GameState) {
   if (difficulty !== 'hard') return player.hand[0];
   const scoreDiscardValue = (card: Card) => {
-    const strategyContext = gameState ? buildStrategyContext(gameState, player, profile) : {};
-    const baseScore =
-      getCardKnowledgeValue(card, 'discardValue') +
-      scoreCardValue(card, profile, gameState ? { gameState, player } : {}) * 0.2 +
-      scoreComboCard(gameState, player, card, profile, 'discard');
-    return baseScore + applyCardScoreHook(profile, 'adjustDiscardScore', {
-      ...strategyContext,
-      card,
-      score: baseScore,
-      reason: 'discard',
-    });
+    return getCardKnowledgeValue(card, 'discardValue') +
+      scoreCardValue(card, profile, gameState ? { gameState, player } : {}) * 0.2;
   };
   return [...player.hand].sort((a, b) => scoreDiscardValue(a) - scoreDiscardValue(b))[0];
 }
@@ -4021,17 +3252,8 @@ export function scorePaymentSacrificeValue(
   const baseScore = getCardKnowledgeValue(card, 'preserveValue') +
     scoreCardValue(card, profile, gameState && owner ? { gameState, player: owner } : {}) * 0.25 +
     boardPresenceValue * 0.8 +
-    scoreComboCard(gameState, owner, card, profile, 'paymentSacrifice') +
     scoreCostPreservationValue(gameState, owner, card, profile);
-  if (!gameState || !owner) return baseScore;
-
-  const strategyContext = buildStrategyContext(gameState, owner, profile);
-  return baseScore + applyCardScoreHook(profile, 'adjustPaymentScore', {
-    ...strategyContext,
-    card,
-    score: baseScore,
-    reason: 'paymentSacrifice',
-  });
+  return baseScore;
 }
 
 export function scorePaymentExhaustValue(
@@ -4051,6 +3273,5 @@ export function scorePaymentExhaustValue(
   if (difficulty === 'hard' && gameState.phase === 'MAIN' && canUnitAttack(gameState, card)) {
     score += ((card?.damage || 0) * 9 + (card?.power || 0) / 1000) * profile.weights.attackBias;
   }
-  score += scoreComboCard(gameState, owner, card, profile, 'paymentExhaust');
   return score;
 }

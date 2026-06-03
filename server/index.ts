@@ -32,6 +32,7 @@ import { addBattleLog, battleLogText, normalizeBattleLogs } from '../src/lib/bat
 import fs from 'fs';
 import path from 'path';
 import { expressStaticCompressed } from '../src/lib/staticCompression';
+import { applyDeckEntrySkin, getDeckCardIds, normalizeDeckCardEntries } from '../src/lib/deckEntries';
 
 // Initialize Game Library
 // Initialize Game Library will be awaited below.
@@ -194,11 +195,12 @@ async function validateUserDeck(uId: string, dId: string): Promise<{ valid: bool
         const dRows = await pool.query('SELECT cards FROM decks WHERE id = ? AND user_id = ?', [dId, uId]);
         if (dRows.length === 0) return { valid: false, error: '未找到卡组' };
 
-        let cIds = typeof dRows[0].cards === 'string' ? JSON.parse(dRows[0].cards) : dRows[0].cards;
-        if (!Array.isArray(cIds)) cIds = [];
+        const entries = normalizeDeckCardEntries(typeof dRows[0].cards === 'string' ? JSON.parse(dRows[0].cards) : dRows[0].cards);
+        const cIds = getDeckCardIds(entries);
 
-        const cObjs = cIds.map((idVal: string) => {
-            return (SERVER_CARD_LIBRARY as any)[idVal];
+        const cObjs = entries.map(entry => {
+            const card = (SERVER_CARD_LIBRARY as any)[entry.id];
+            return card ? applyDeckEntrySkin(card, entry) : undefined;
         }).filter(Boolean);
 
         if (cObjs.length !== cIds.length) {
@@ -224,9 +226,13 @@ function getServerCatalogRefs() {
 }
 
 function resolveAiOpponentDeck(profileId?: string): { valid: boolean; profileId?: string; displayName?: string; cards?: Card[]; error?: string } {
+    if (AI_DECK_PROFILES.length === 0) {
+        return { valid: false, error: '暂无可用困难人机卡组' };
+    }
+
     const profile = AI_DECK_PROFILES.find(candidate => candidate.id === profileId) || AI_DECK_PROFILES[0];
     if (!profile?.shareCode) {
-        return { valid: false, error: '未找到可用的人机卡组' };
+        return { valid: false, error: '暂无可用困难人机卡组' };
     }
 
     try {
@@ -1611,8 +1617,6 @@ app.post('/api/games/practice', async (req, res): Promise<void> => {
             aiOpponentDeck?.cards
         );
         gameState.gameId = gameId;
-        ServerGameService.applyHardAiSoftOpeningCompensation(gameState, 'BOT_PLAYER');
-
         await insertGame(gameId, gameState);
         res.json({ gameId, botDeckProfileId: aiOpponentDeck?.profileId, botDeckName: aiOpponentDeck?.displayName });
     } catch (err) {
@@ -2274,15 +2278,11 @@ app.post('/api/user/decks', async (req, res): Promise<void> => {
         const deckData = req.body;
         const deckId = Math.random().toString(36).substring(2, 10);
 
-        // Ensure we only store IDs
-        let cardIds = deckData.cards || [];
-        if (cardIds.length > 0 && typeof cardIds[0] === 'object') {
-            cardIds = cardIds.map((c: any) => c.id);
-        }
+        const cardEntries = normalizeDeckCardEntries(deckData.cards || []);
 
         await pool.query(
             'INSERT INTO decks (id, user_id, name, cards, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-            [deckId, user.userId, deckData.name, JSON.stringify(cardIds), Date.now(), Date.now()]
+            [deckId, user.userId, deckData.name, JSON.stringify(cardEntries), Date.now(), Date.now()]
         );
         res.json({ id: deckId });
     } catch (err) {
@@ -2299,12 +2299,9 @@ app.put('/api/user/decks/:id', async (req, res): Promise<void> => {
         const deckData = req.body;
 
         if (deckData.cards) {
-            let cardIds = deckData.cards;
-            if (cardIds.length > 0 && typeof cardIds[0] === 'object') {
-                cardIds = cardIds.map((c: any) => c.id);
-            }
+            const cardEntries = normalizeDeckCardEntries(deckData.cards);
             await pool.query('UPDATE decks SET name = ?, cards = ?, updated_at = ? WHERE id = ? AND user_id = ?',
-                [deckData.name, JSON.stringify(cardIds), Date.now(), deckId, user.userId]);
+                [deckData.name, JSON.stringify(cardEntries), Date.now(), deckId, user.userId]);
         } else {
             await pool.query('UPDATE decks SET name = ?, updated_at = ? WHERE id = ? AND user_id = ?',
                 [deckData.name, Date.now(), deckId, user.userId]);
@@ -2355,7 +2352,7 @@ app.post('/api/user/decks/:id/copy', async (req, res): Promise<void> => {
 
 const parseStoredDeckCards = (cards: any): string[] => {
     const parsed = typeof cards === 'string' ? JSON.parse(cards) : cards;
-    return Array.isArray(parsed) ? parsed.map((card: any) => typeof card === 'string' ? card : card?.id).filter(Boolean) : [];
+    return getDeckCardIds(Array.isArray(parsed) ? parsed : []);
 };
 
 const buildDeckSquarePost = (row: any, likedPostIds: Set<string>) => ({
@@ -2364,6 +2361,7 @@ const buildDeckSquarePost = (row: any, likedPostIds: Set<string>) => ({
     authorUid: row.user_id,
     authorName: row.author_name,
     name: row.name,
+    description: row.description || '',
     cards: parseStoredDeckCards(row.cards),
     tags: parseStoredDeckCards(row.tags),
     likes: Number(row.like_count || 0),
@@ -3328,8 +3326,8 @@ app.post('/api/deck-square/publish', async (req, res): Promise<void> => {
         const now = Date.now();
         if (existingRows.length > 0) {
             await pool.query(
-                'UPDATE deck_square_posts SET author_name = ?, name = ?, cards = ?, tags = ?, updated_at = ? WHERE id = ?',
-                [getUserDisplayLabel(user), deck.name, JSON.stringify(cardIds), JSON.stringify(tags), now, existingRows[0].id]
+                'UPDATE deck_square_posts SET author_name = ?, cards = ?, tags = ?, updated_at = ? WHERE id = ?',
+                [getUserDisplayLabel(user), JSON.stringify(cardIds), JSON.stringify(tags), now, existingRows[0].id]
             );
             res.json({ id: existingRows[0].id, updated: true });
             return;
@@ -3343,6 +3341,48 @@ app.post('/api/deck-square/publish', async (req, res): Promise<void> => {
         res.json({ id: postId, published: true });
     } catch (err) {
         console.error('Deck square publish error:', err);
+        res.status(500).json({ error: 'DB Error' });
+    }
+});
+
+app.put('/api/deck-square/:id', async (req, res): Promise<void> => {
+    const user = await getAuthenticatedUserFromHeader(req, res);
+    if (!user) { return; }
+
+    try {
+        const postId = req.params.id;
+        const postRows = await pool.query('SELECT * FROM deck_square_posts WHERE id = ?', [postId]);
+        if (postRows.length === 0) { res.status(404).json({ error: '未找到发布的卡组' }); return; }
+        if (postRows[0].user_id !== user.userId) { res.status(403).json({ error: '只有发布者可以编辑该卡组' }); return; }
+
+        const name = String(req.body?.name || '').trim();
+        const description = String(req.body?.description || '').trim();
+        if (!name) { res.status(400).json({ error: '套牌名称不能为空' }); return; }
+        if (name.length > 80) { res.status(400).json({ error: '套牌名称不能超过 80 个字符' }); return; }
+        if (description.length > 1200) { res.status(400).json({ error: '套牌说明不能超过 1200 个字符' }); return; }
+
+        const now = Date.now();
+        await pool.query(
+            'UPDATE deck_square_posts SET name = ?, description = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+            [name, description, now, postId, user.userId]
+        );
+
+        const rows = await pool.query(`
+            SELECT p.*, COALESCE(l.like_count, 0) AS like_count
+            FROM deck_square_posts p
+            LEFT JOIN (
+                SELECT post_id, COUNT(*) AS like_count
+                FROM deck_square_likes
+                GROUP BY post_id
+            ) l ON l.post_id = p.id
+            WHERE p.id = ?
+            LIMIT 1
+        `, [postId]);
+        const likedRows = await pool.query('SELECT post_id FROM deck_square_likes WHERE user_id = ?', [user.userId]);
+        const likedPostIds = new Set<string>(likedRows.map((row: any) => row.post_id));
+        res.json({ post: buildDeckSquarePost(rows[0], likedPostIds) });
+    } catch (err) {
+        console.error('Deck square update error:', err);
         res.status(500).json({ error: 'DB Error' });
     }
 });
@@ -3951,12 +3991,18 @@ io.on('connection', (socket) => {
                         const deckRows = await pool.query('SELECT * FROM decks WHERE id = ?', [effectiveDeckId]);
                         if (deckRows.length > 0) {
                             const deckCardsRaw = typeof deckRows[0].cards === 'string' ? JSON.parse(deckRows[0].cards) : deckRows[0].cards;
+                            const deckEntries = normalizeDeckCardEntries(deckCardsRaw);
 
                             if (Object.keys(SERVER_CARD_LIBRARY).length === 0) {
                                 await initServerCardLibrary();
                             }
 
-                            const deckCards: Card[] = deckCardsRaw.map((id: string) => SERVER_CARD_LIBRARY[id]).filter(Boolean);
+                            const deckCards: Card[] = deckEntries
+                                .map(entry => {
+                                    const card = SERVER_CARD_LIBRARY[entry.id];
+                                    return card ? applyDeckEntrySkin(card, entry) : undefined;
+                                })
+                                .filter((card): card is Card => !!card);
 
                             // Validate Deck
                             const validation = ServerGameService.validateDeck(deckCards);

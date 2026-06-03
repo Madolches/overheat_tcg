@@ -189,7 +189,7 @@ function auditEffect(profile: DeckAiProfile, card: Card, effect: CardEffect, fin
       card,
       effect,
       'self-reset',
-      'Self-reset effect does not appear to require an exhausted/attacked/battle state; this can be fired too early like Dikai.'
+      'Self-reset effect does not appear to require an exhausted/attacked/battle state; this can be fired too early.'
     );
   }
 
@@ -268,6 +268,11 @@ function summarizeFindings(findings: AuditFinding[]) {
 }
 
 async function main() {
+  if (AI_DECK_PROFILES.length === 0) {
+    console.log('暂无困难 AI 卡组，跳过困难 AI 效果审计。');
+    return;
+  }
+
   const cards = await loadServerCards();
   await initServerCardLibrary();
   const catalogRefs = uniqueCatalogRefs(cards);

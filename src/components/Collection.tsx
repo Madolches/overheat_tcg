@@ -13,6 +13,10 @@ import { readJsonResponse } from '../lib/http';
 import { SEARCHABLE_CARD_PACKAGES, matchesCardPackageFilter, matchesCardTypeFilter } from '../lib/cardCatalogFilters';
 import { validateDeckForBattle } from '../lib/deckValidation';
 import { encodeDeckShareCode } from '../lib/deckShareCode';
+import { getCardSkinUrl } from '../data/cardSkins';
+import { useCardSkinSettings } from '../hooks/useCardSkinSettings';
+import { CardSkinToggle } from './CardSkinToggle';
+import { getDeckCardIds } from '../lib/deckEntries';
 
 const RARITY_BADGE: Record<string, string> = {
   C: 'bg-zinc-700 text-zinc-300', U: 'bg-emerald-900 text-emerald-300', R: 'bg-blue-900 text-blue-300',
@@ -56,9 +60,15 @@ export const Collection: React.FC = () => {
     getCardByReference,
     loading: cardsLoading
   } = useCardCatalog({ includeEffects: false });
+  const { isCardSkinEnabled } = useCardSkinSettings();
 
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
   const token = localStorage.getItem('token');
+
+  const getDisplayCardImageUrl = (card: Card) => {
+    const baseUrl = card.fullImageUrl || getCardImageUrl(card.id, card.rarity, false, card.availableRarities);
+    return (isCardSkinEnabled(card) && getCardSkinUrl(card)) || card.imageUrl || baseUrl;
+  };
 
   const CRYSTAL_VALUES: Record<string, { decompose: number, produce: number }> = {
     C: { decompose: 1, produce: 5 },
@@ -228,7 +238,7 @@ export const Collection: React.FC = () => {
     }
 
     try {
-      const code = encodeDeckShareCode(deck.cards, catalogRefs);
+      const code = encodeDeckShareCode(getDeckCardIds(deck.cards), catalogRefs);
       setShareCode(code);
       setShareCopied(false);
       setShowShareModal(true);
@@ -676,10 +686,14 @@ export const Collection: React.FC = () => {
                       selectedCard.rarity === 'UR' || selectedCard.rarity === 'SER' ? 'bg-amber-500' : 'bg-red-600'
                     )} />
                     <img
-                      src={getCardImageUrl(selectedCard.id, selectedCard.rarity, false, selectedCard.availableRarities)}
+                      src={getDisplayCardImageUrl(selectedCard)}
                       alt={selectedCard.fullName}
                       className="relative w-full object-contain rounded-[1.5rem] shadow-2xl border-4 border-white/10 max-h-[45vh] md:max-h-none"
                       decoding="async"
+                      onError={(event) => {
+                        const fallback = getCardImageUrl(selectedCard.id, selectedCard.rarity, false, selectedCard.availableRarities);
+                        if (event.currentTarget.src !== fallback) event.currentTarget.src = fallback;
+                      }}
                     />
                     <div className="absolute bottom-4 -right-2 bg-red-600 px-3 py-1.5 rounded-xl border border-red-400 font-black italic shadow-2xl rotate-12 z-20">
                       <span className="text-sm">x{collection[selectedCard.uniqueId] || 0}</span>
@@ -703,6 +717,8 @@ export const Collection: React.FC = () => {
                     <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.3em]">关键词</p>
                     <KeywordBadges card={selectedCard} variant="detail" />
                   </div>
+
+                  <CardSkinToggle card={selectedCard} className="mt-4" />
 
                   <div className="flex-1 md:overflow-y-auto pr-0 md:pr-2 custom-scrollbar space-y-6">
 

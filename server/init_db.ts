@@ -112,6 +112,8 @@ async function initDB() {
                 author_name VARCHAR(100) NOT NULL,
                 name VARCHAR(255) NOT NULL,
                 cards LONGTEXT NOT NULL,
+                tags LONGTEXT,
+                description LONGTEXT,
                 created_at BIGINT NOT NULL,
                 updated_at BIGINT NOT NULL,
                 INDEX (user_id),

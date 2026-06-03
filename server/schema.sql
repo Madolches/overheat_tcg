@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS deck_square_posts (
     name VARCHAR(255) NOT NULL,
     cards LONGTEXT NOT NULL,
     tags LONGTEXT,
+    description LONGTEXT,
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL,
     INDEX (user_id),

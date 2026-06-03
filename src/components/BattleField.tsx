@@ -19,6 +19,8 @@ import { cn, getCardColorHanzi, getCardColorLabel, getCardImageUrl, getCardIdent
 import { KeywordBadges } from './KeywordBadges';
 import { BattleLogPanel } from './BattleLogPanel';
 import { battleLogText } from '../lib/battleLog';
+import { getCardSkinUrl } from '../data/cardSkins';
+import { useCardSkinSettings } from '../hooks/useCardSkinSettings';
 
 const EFFECT_TYPE_LABELS: Record<string, string> = {
   ACTIVATE: '主动',
@@ -319,9 +321,15 @@ export const BattleField: React.FC = () => {
   const lastStrategyUpdateRef = useRef<number>(0);
   const lastJoinEmitRef = useRef<number>(0);
   const [pregameNow, setPregameNow] = useState(Date.now());
+  const { isCardSkinEnabled } = useCardSkinSettings();
 
-  const getPreviewFullImage = (card: Card) =>
-    card.fullImageUrl || getCardImageUrl(card.id, card.rarity, false, card.availableRarities);
+  const getPreviewFullImage = (card: Card) => {
+    const shouldUseSkin = card.skinEnabled === true || (card.skinEnabled === undefined && isCardSkinEnabled(card));
+    return (shouldUseSkin && getCardSkinUrl(card)) ||
+      card.fullImageUrl ||
+      card.imageUrl ||
+      getCardImageUrl(card.id, card.rarity, false, card.availableRarities);
+  };
   const isSpectator = seat === 'spectator' || (!!game && !!myUid && !game.players[myUid.toString()] && (game.spectatorIds || []).map(String).includes(myUid.toString()));
   const spectatorAnchorUid = useMemo(() => game?.playerIds?.[0]?.toString(), [game?.playerIds]);
   const effectiveMyUid = isSpectator ? spectatorAnchorUid : myUid;
@@ -3953,7 +3961,7 @@ export const BattleField: React.FC = () => {
                 </h2>
                 <div className="relative aspect-[3/4] w-full max-w-[240px] md:max-w-none rounded-2xl overflow-hidden shadow-2xl ring-2 ring-[#f27d26]/30 bg-black/40">
                   <img
-                    src={displayedPreviewCard.fullImageUrl || getCardImageUrl(displayedPreviewCard.id, displayedPreviewCard.rarity, false, displayedPreviewCard.availableRarities)}
+                    src={getPreviewFullImage(displayedPreviewCard)}
                     alt={displayedPreviewCard.fullName}
                     className="w-full h-full object-contain"
                     referrerPolicy="no-referrer"

@@ -164,6 +164,15 @@ const isPlayerOption = (option: PopupOption) => {
   return id === 'PLAYER_SELF' || id === 'PLAYER_OPPONENT';
 };
 
+const isGeneratedChoiceOptionId = (id?: string) =>
+  /^\d+_option_[A-Z]+$/i.test(String(id || ''));
+
+const getChoiceOptionEyebrow = (option: PopupOption) =>
+  option.optionCode ? `选项 ${option.optionCode}` : undefined;
+
+const getChoiceOptionLabel = (option: PopupOption, id: string) =>
+  option.label || option.card?.fullName || (isGeneratedChoiceOptionId(id) ? getChoiceOptionEyebrow(option) : id) || '选项';
+
 const getChoiceIcon = (option: PopupOption): LucideIcon => {
   const value = `${option.icon || ''} ${option.value || ''} ${option.id || ''} ${option.label || ''}`.toUpperCase();
   if (value.includes('DRAW') || value.includes('抽')) return PackagePlus;
@@ -182,11 +191,9 @@ const getChoiceIcon = (option: PopupOption): LucideIcon => {
 const getVisualOptionMeta = (option: PopupOption): VisualOptionMeta => {
   const id = option.card?.id || option.id || '';
   const semanticId = String(option.value || id).toUpperCase();
-  const label = option.label || option.card?.fullName || id || '选项';
+  const label = getChoiceOptionLabel(option, id);
   const detail = option.detail || option.disabledReason;
-  const standardEyebrow = option.sourceCardNo && option.optionCode
-    ? `${option.sourceCardNo} / OPTION ${option.optionCode}`
-    : undefined;
+  const standardEyebrow = getChoiceOptionEyebrow(option);
   const standardVisual = id ? STANDARD_CHOICE_VISUALS[id] : undefined;
 
   if (isPlayerOption(option)) {

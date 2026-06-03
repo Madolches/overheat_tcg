@@ -368,6 +368,7 @@ export interface Card {
   inAllianceGroup?: boolean;
   imageUrl?: string;
   fullImageUrl?: string;
+  skinEnabled?: boolean;
   rarity?: Rarity;
   availableRarities?: Rarity[];
   cardPackage?: string;
@@ -635,10 +636,17 @@ export interface GameState {
   };
 }
 
+export interface DeckCardEntry {
+  id: string;
+  skinEnabled?: boolean;
+}
+
+export type DeckCardReference = string | DeckCardEntry;
+
 export interface Deck {
   id: string;
   name: string;
-  cards: string[];
+  cards: DeckCardReference[];
   isFavorite: boolean;
   createdAt: number;
 }

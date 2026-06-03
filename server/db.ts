@@ -230,6 +230,7 @@ export const dbInit = async () => {
                 name VARCHAR(255) NOT NULL,
                 cards LONGTEXT NOT NULL,
                 tags LONGTEXT,
+                description LONGTEXT,
                 created_at BIGINT NOT NULL,
                 updated_at BIGINT NOT NULL,
                 INDEX (user_id),
@@ -238,6 +239,9 @@ export const dbInit = async () => {
         `);
         if (!(await columnExists(conn, 'deck_square_posts', 'tags'))) {
             await conn.query(`ALTER TABLE deck_square_posts ADD COLUMN tags LONGTEXT AFTER cards`);
+        }
+        if (!(await columnExists(conn, 'deck_square_posts', 'description'))) {
+            await conn.query(`ALTER TABLE deck_square_posts ADD COLUMN description LONGTEXT AFTER tags`);
         }
 
         await conn.query(`

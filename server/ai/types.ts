@@ -1,4 +1,4 @@
-import { Card, CardEffect, EffectQuery, GameState, PlayerState } from '../../src/types/game';
+import { Card, GameState, PlayerState } from '../../src/types/game';
 
 export type BotDifficulty = 'simple' | 'hard';
 
@@ -114,31 +114,6 @@ export interface DeckAiStrategyContext {
   matchupPlan?: DeckAiMatchupPlan;
 }
 
-export interface DeckAiCardScoreContext extends DeckAiStrategyContext {
-  card: Card;
-  score: number;
-  reason: 'value' | 'playable' | 'attack' | 'defense' | 'mulligan' | 'discard' | 'paymentSacrifice' | 'paymentExhaust';
-  earlyUnitsInHand?: number;
-  attackingUnits?: Card[];
-  availableDefenders?: Card[];
-}
-
-export interface DeckAiEffectScoreContext extends DeckAiStrategyContext {
-  card: Card;
-  effect: CardEffect;
-  score: number;
-  tags: EffectPreferenceTag[];
-  targetCount?: number;
-  notes: string[];
-}
-
-export interface DeckAiQueryScoreContext extends DeckAiStrategyContext {
-  query: EffectQuery;
-  option: any;
-  score: number;
-  intent?: string;
-}
-
 export interface DeckAiTurnPlanSnapshot {
   mode: 'lethal' | 'pressure' | 'defense' | 'stabilize' | 'setup' | 'develop';
   ownDeck: number;
@@ -154,40 +129,6 @@ export interface DeckAiTurnPlanSnapshot {
   lethalWindow: boolean;
 }
 
-export interface DeckAiTurnPlanAdjustment {
-  attackBeforeDeveloping?: boolean;
-  reserveDefendersDelta?: number;
-  minMainEffectScoreDelta?: number;
-  minBattleEffectScoreDelta?: number;
-  avoidSelfDraw?: boolean;
-  avoidSearch?: boolean;
-  mode?: DeckAiTurnPlanSnapshot['mode'];
-  notes?: string[];
-}
-
-export interface DeckAiStrategyHooks {
-  adjustTurnPlan?: (context: DeckAiStrategyContext & { plan: DeckAiTurnPlanSnapshot }) => DeckAiTurnPlanAdjustment | undefined;
-  adjustCardValue?: (context: DeckAiCardScoreContext) => number;
-  adjustPlayableScore?: (context: DeckAiCardScoreContext) => number;
-  adjustAttackScore?: (context: DeckAiCardScoreContext) => number;
-  adjustDefenseScore?: (context: DeckAiCardScoreContext) => number;
-  adjustMulliganScore?: (context: DeckAiCardScoreContext) => number;
-  adjustDiscardScore?: (context: DeckAiCardScoreContext) => number;
-  adjustPaymentScore?: (context: DeckAiCardScoreContext) => number;
-  adjustEffectScore?: (context: DeckAiEffectScoreContext) => number;
-  adjustQueryScore?: (context: DeckAiQueryScoreContext) => number;
-}
-
-export interface DeckAiSoftCompensation {
-  openingSmoothing?: boolean;
-  fixedOpeningHandIds?: string[];
-  openingLookahead?: number;
-  maxOpeningReplacements?: number;
-  extremeBrickRescueChance?: number;
-  fullOpponentDeckProfile?: boolean;
-  notes?: string[];
-}
-
 export interface DeckAiProfile {
   id: string;
   displayName: string;
@@ -201,8 +142,6 @@ export interface DeckAiProfile {
   gamePlan?: DeckAiGamePlan;
   matchupPlans?: Record<string, DeckAiMatchupPlan>;
   riskThresholds?: DeckAiRiskThresholds;
-  strategyHooks?: DeckAiStrategyHooks;
-  softCompensation?: DeckAiSoftCompensation;
 }
 
 export interface ScoredCard {

@@ -127,7 +127,6 @@ function sanitizeDecisionLog(log: AiDecisionLog, gameState: GameState): AiDecisi
 function buildDiagnosis(gameState: GameState, aiLogs: AiDecisionLog[]) {
   const queryFailures = aiLogs.filter(log => log.action === 'QUERY_FAILED').length;
   const effectFailures = aiLogs.filter(log => log.action === 'ACTIVATE_EFFECT_FAILED').length;
-  const softCompensations = aiLogs.filter(log => log.action === 'SOFT_COMPENSATION').length;
   const warnings: string[] = [];
 
   if (!gameState.winnerId) warnings.push('NO_WINNER');
@@ -140,7 +139,6 @@ function buildDiagnosis(gameState: GameState, aiLogs: AiDecisionLog[]) {
     warnings,
     queryFailures,
     effectFailures,
-    softCompensations,
     decisionCount: aiLogs.length,
   };
 }

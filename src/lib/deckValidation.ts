@@ -1,10 +1,12 @@
 import { Card, Deck } from '../types/game';
+import { getDeckCardIds } from './deckEntries';
 
 type CardResolver = (cardId?: string | null) => Card | undefined;
 
 const resolveDeckCards = (deck: Deck, resolveCard: CardResolver): Card[] | null => {
-  const cards = deck.cards.map(cardId => resolveCard(cardId)).filter(Boolean) as Card[];
-  return cards.length === deck.cards.length ? cards : null;
+  const cardIds = getDeckCardIds(deck.cards);
+  const cards = cardIds.map(cardId => resolveCard(cardId)).filter(Boolean) as Card[];
+  return cards.length === cardIds.length ? cards : null;
 };
 
 export const validateDeckForBattle = (deck?: Deck | null, resolveCard?: CardResolver): { valid: boolean; error?: string } => {

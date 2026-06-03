@@ -107,7 +107,6 @@ function createStats() {
     draws: 0,
     totalTurns: 0,
     warnings: 0,
-    softCompensations: 0,
     queryFailures: 0,
     effectFailures: 0,
     winReasons: {} as Record<string, number>,
@@ -198,7 +197,7 @@ const ISSUE_META: Record<string, { label: string; severity: IssueSeverity; recom
   BAD_PAYMENT: {
     label: '防守压力下支付过重',
     severity: 'warning',
-    recommendation: '提高待防守单位、神蚀单位、combo 件和可攻击单位的支付保护分。',
+    recommendation: '提高待防守单位、神蚀单位、关键单位和可攻击单位的支付保护分。',
   },
   LOW_DECK_PAYMENT: {
     label: '低牌库仍支付牌库费用',
@@ -209,11 +208,6 @@ const ISSUE_META: Record<string, { label: string; severity: IssueSeverity; recom
     label: '疑似错过斩杀',
     severity: 'warning',
     recommendation: '让一回合斩杀搜索优先于铺场/发动普通效果，并把该回合固化为场景测试。',
-  },
-  MISSED_COMBO: {
-    label: '疑似错过 combo',
-    severity: 'warning',
-    recommendation: '降低 combo 就绪时的发动阈值，或给对应卡组补 combo hook。',
   },
   UNDER_PRESSURE_NO_STABILIZE: {
     label: '受压时未转入防守',
@@ -228,7 +222,7 @@ const ISSUE_META: Record<string, { label: string; severity: IssueSeverity; recom
   STORY_TIMING_RISK: {
     label: '故事卡使用时点可疑',
     severity: 'warning',
-    recommendation: '检查故事卡是否有明确目标、战斗收益或 combo 目的；否则加入故事卡纪律规则。',
+    recommendation: '检查故事卡是否有明确目标或战斗收益；否则加入故事卡纪律规则。',
   },
   DECLINED_DEFENSE_ON_LOSS: {
     label: '败局中多次不防御',
@@ -297,7 +291,6 @@ function collectSampleIssues(sample: NormalizedSample): IssueFinding[] {
     exhaustedPayments: number;
     deckPayments: number;
     playBeforeAttack: number;
-    comboActions: number;
     ended: boolean;
     firstAttackIndex?: number;
   };
@@ -319,7 +312,6 @@ function collectSampleIssues(sample: NormalizedSample): IssueFinding[] {
         exhaustedPayments: 0,
         deckPayments: 0,
         playBeforeAttack: 0,
-        comboActions: 0,
         ended: false,
       });
     }
@@ -341,7 +333,7 @@ function collectSampleIssues(sample: NormalizedSample): IssueFinding[] {
     const action = String(log?.action || '');
 
     if (action === 'TURN_PLAN') trace.plan = log;
-    if (action === 'ATTACK' || action === 'COMBO_ALLIANCE_ATTACK') {
+    if (action === 'ATTACK') {
       trace.attacks++;
       trace.firstAttackIndex ??= index;
     }
@@ -367,23 +359,14 @@ function collectSampleIssues(sample: NormalizedSample): IssueFinding[] {
       if (action === 'PLAY_BATTLE_STORY') {
         trace.storyPlays++;
         const battleAttackers = numericLogDetail(log, 'battleAttackers');
-        const combo = logDetail(log, 'combo');
-        if (battleAttackers <= 0 || /none/i.test(combo)) {
-          addIssue(findings, sample, 'STORY_TIMING_RISK', '战斗故事卡缺少攻击者或 combo 目的，需要复查使用窗口', log);
+        if (battleAttackers <= 0) {
+          addIssue(findings, sample, 'STORY_TIMING_RISK', '战斗故事卡缺少攻击者，需要复查使用窗口', log);
         }
       }
     }
     if (action === 'DECLINE_DEFENSE') trace.declinedDefenses++;
     if (action === 'HOLD_ATTACKERS') trace.heldAttackers++;
     if (action === 'END_TURN') trace.ended = true;
-    if (
-      action === 'COMBO_ALLIANCE_ATTACK' ||
-      action === 'PLAY_BATTLE_STORY' ||
-      /201100037|eclipse|日蚀|combo/i.test(`${logDetail(log, 'effectId')} ${logDetail(log, 'combo')} ${log?.subject || ''}`)
-    ) {
-      trace.comboActions++;
-    }
-
     if (action === 'QUERY_FAILED') {
       addIssue(findings, sample, 'QUERY_FAILED', log?.reason || '查询失败', log);
     }
@@ -410,7 +393,6 @@ function collectSampleIssues(sample: NormalizedSample): IssueFinding[] {
       tacticalLine === 'lethal' ||
       tacticalLine === 'erosion-lethal' ||
       totalDamage >= damageToCritical;
-    const comboReady = truthyLogDetail(plan, 'comboReady') || truthyLogDetail(plan, 'comboPayoffPlayable');
     const incomingLethal = truthyLogDetail(plan, 'incomingLethal');
     const reserveDefenders = numericLogDetail(plan, 'reserveDefenders');
     const defendersNeeded = numericLogDetail(plan, 'defendersNeededNextTurn');
@@ -420,9 +402,6 @@ function collectSampleIssues(sample: NormalizedSample): IssueFinding[] {
 
     if (lethalPotential && trace.attacks === 0 && trace.ended) {
       addIssue(findings, sample, 'MISSED_LETHAL', `计划显示 ${tacticalLine || 'lethal'}，但本回合未攻击就结束`, plan);
-    }
-    if (comboReady && trace.comboActions === 0 && trace.ended) {
-      addIssue(findings, sample, 'MISSED_COMBO', 'comboReady/comboPayoffPlayable 为真，但没有执行 combo 动作', plan);
     }
     if (incomingLethal && !lethalPotential && !truthyLogDetail(plan, 'desperationAttack') && !/defense|stabilize/i.test(mode)) {
       addIssue(findings, sample, 'UNDER_PRESSURE_NO_STABILIZE', `incomingLethal=true，但计划模式为 ${mode || 'unknown'}`, plan);
@@ -617,7 +596,6 @@ function buildReport(samples: ReturnType<typeof normalizeRows>) {
       stats.playerWins += sample.winner_side === 'player' ? 1 : 0;
       stats.draws += sample.winner_side === 'draw' ? 1 : 0;
       stats.warnings += diagnosis.severity === 'warning' ? 1 : 0;
-      stats.softCompensations += Number(diagnosis.softCompensations || 0);
       stats.queryFailures += Number(diagnosis.queryFailures || 0);
       stats.effectFailures += Number(diagnosis.effectFailures || 0);
       stats.winReasons[sample.win_reason || 'UNKNOWN'] = (stats.winReasons[sample.win_reason || 'UNKNOWN'] || 0) + 1;
@@ -630,7 +608,7 @@ function buildReport(samples: ReturnType<typeof normalizeRows>) {
     }
 
     for (const log of logs) {
-      if (!['SOFT_COMPENSATION', 'TURN_PLAN', 'QUERY_FAILED', 'ACTIVATE_EFFECT_FAILED', 'ATTACK', 'DEFEND'].includes(log?.action)) continue;
+      if (!['TURN_PLAN', 'QUERY_FAILED', 'ACTIVATE_EFFECT_FAILED', 'ATTACK', 'DEFEND'].includes(log?.action)) continue;
       keyDecisions.push({
         sample: sample.game_id,
         bot: sample.bot_profile_id,
@@ -680,7 +658,6 @@ function statsRows(stats: Record<string, ReturnType<typeof createStats>>) {
       pct(value.draws, value.games),
       value.games > 0 ? (value.totalTurns / value.games).toFixed(1) : '0.0',
       value.warnings,
-      value.softCompensations,
       value.queryFailures,
       value.effectFailures,
       topEntries(value.winReasons, 3).map(([reason, count]) => `${reason}:${count}`).join(', '),
@@ -810,8 +787,8 @@ function buildMarkdownReport(report: ReturnType<typeof buildReport>) {
   lines.push('- For each Deck Repair Priority, turn the top issue example into a scenario test before changing strategy.');
   lines.push('- Bot win rate below 40% in a matchup: inspect TURN_PLAN and ATTACK/DEFEND decisions for that bot.');
   lines.push('- QueryFail or EffectFail above 0: inspect failed callback/effect IDs before tuning deck weights.');
-  lines.push('- SoftComp high but win rate low: opening smoothing helps consistency, but mid-game strategy still needs tuning.');
-  lines.push('- Player win rate very low across all archetypes: reduce soft compensation or aggressive hooks before release.');
+  lines.push('- Bot win rate high but decision warnings persist: inspect whether explicit deck strategy is over-prioritizing low-value lines.');
+  lines.push('- Player win rate very low across all archetypes: reduce overly aggressive weights or forced attack heuristics before release.');
   lines.push('');
 
   return lines.join('\n');

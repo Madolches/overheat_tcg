@@ -280,14 +280,12 @@ function collectDecisionDiagnostics(logs: AiDecisionLog[]) {
     payments: number;
     exhaustedPayments: number;
     ended: boolean;
-    comboActions: number;
     firstAttackSeen: boolean;
     playsBeforeFirstAttack: number;
   };
   const traces = new Map<string, TurnTrace>();
   const metrics: Record<string, number> = {
     MISSED_LETHAL: 0,
-    MISSED_COMBO: 0,
     BAD_EFFECT_TIMING: 0,
     BAD_PAYMENT: 0,
     OVER_DEVELOP: 0,
@@ -306,7 +304,6 @@ function collectDecisionDiagnostics(logs: AiDecisionLog[]) {
         payments: 0,
         exhaustedPayments: 0,
         ended: false,
-        comboActions: 0,
         firstAttackSeen: false,
         playsBeforeFirstAttack: 0,
       });
@@ -317,7 +314,7 @@ function collectDecisionDiagnostics(logs: AiDecisionLog[]) {
   for (const log of logs) {
     const trace = traceFor(log);
     if (log.action === 'TURN_PLAN') trace.plan = log;
-    if (log.action === 'ATTACK' || log.action === 'COMBO_ALLIANCE_ATTACK') {
+    if (log.action === 'ATTACK') {
       trace.attacks++;
       trace.firstAttackSeen = true;
     }
@@ -337,13 +334,6 @@ function collectDecisionDiagnostics(logs: AiDecisionLog[]) {
       }
     }
     if (log.action === 'END_TURN') trace.ended = true;
-    if (
-      log.action === 'COMBO_ALLIANCE_ATTACK' ||
-      log.action === 'PLAY_BATTLE_STORY' ||
-      /201100037|eclipse|日蚀|combo/i.test(`${rawLogDetail(log, 'effectId')} ${rawLogDetail(log, 'combo')} ${log.subject}`)
-    ) {
-      trace.comboActions++;
-    }
     if (log.action === 'QUERY_FAILED') metrics.QUERY_FAILED++;
     if (log.action === 'ACTIVATE_EFFECT_FAILED') metrics.EFFECT_FAILED++;
     if (log.action === 'ACTIVATE_EFFECT') {
@@ -371,14 +361,12 @@ function collectDecisionDiagnostics(logs: AiDecisionLog[]) {
       rawLogDetail(plan, 'tacticalLine') === 'erosion-lethal' ||
       (likelyDefenders === 0 && totalDamage >= damageToCritical) ||
       (damageThroughLikelyDefenders > 0 && damageThroughLikelyDefenders >= damageToCritical);
-    const comboReady = truthyLogDetail(plan, 'comboReady') || truthyLogDetail(plan, 'comboPayoffPlayable');
     const incomingLethal = truthyLogDetail(plan, 'incomingLethal');
     const reserveDefenders = numericLogDetail(plan, 'reserveDefenders');
     const defendersNeeded = numericLogDetail(plan, 'defendersNeededNextTurn');
     const mode = String(plan.subject || '');
 
     if (lethalPotential && trace.attacks === 0 && trace.ended) metrics.MISSED_LETHAL++;
-    if (comboReady && trace.comboActions === 0 && trace.ended) metrics.MISSED_COMBO++;
     if (incomingLethal && !lethalPotential && !/defense|stabilize/i.test(mode)) metrics.UNDER_PRESSURE_NO_STABILIZE++;
     if (trace.exhaustedPayments > 0 && (incomingLethal || reserveDefenders > 0 || defendersNeeded > 0)) {
       metrics.BAD_PAYMENT += trace.exhaustedPayments;
@@ -397,7 +385,6 @@ function withDecisionDiagnostics(diagnosis: MatchDiagnosis, logs: AiDecisionLog[
   const decisionDiagnostics = collectDecisionDiagnostics(logs);
   const severe =
     (decisionDiagnostics.metrics.MISSED_LETHAL || 0) > 0 ||
-    (decisionDiagnostics.metrics.MISSED_COMBO || 0) > 0 ||
     (decisionDiagnostics.metrics.UNDER_PRESSURE_NO_STABILIZE || 0) > 0;
   const severity = diagnosis.severity === 'info' && severe ? 'warning' : diagnosis.severity;
   const extraDetail = decisionDiagnostics.tags.length
@@ -1055,12 +1042,9 @@ function buildTuningSuggestionRows(results: MatchResult[], limits?: EvaluationLi
     } else if (problemText === 'MISSED_LETHAL') {
       focus = 'lethal search';
       suggestion = 'Prioritize one-turn lethal lines before play/effect development and add a scenario test for the missed turn.';
-    } else if (problemText === 'MISSED_COMBO') {
-      focus = 'combo execution';
-      suggestion = 'Add a deck-specific combo hook or lower the battle effect threshold when the combo is ready.';
     } else if (problemText === 'BAD_PAYMENT') {
       focus = 'payment guard';
-      suggestion = 'Increase payment preservation for ready attackers, blockers, god-marked units, and combo pieces.';
+      suggestion = 'Increase payment preservation for ready attackers, blockers, god-marked units, and key engine pieces.';
     } else if (problemText === 'BAD_EFFECT_TIMING') {
       focus = 'effect timing';
       suggestion = 'Add a static timing rule or observed timing override for this effect family.';
@@ -1291,6 +1275,11 @@ function buildMarkdownReport(report: any) {
 }
 
 async function main() {
+  if (AI_DECK_PROFILES.length === 0) {
+    console.log('暂无困难 AI 卡组，跳过困难 AI 对局评估。');
+    return;
+  }
+
   await initServerCardLibrary();
   const catalogRefs = uniqueCatalogRefs(await loadServerCards());
   const decks = new Map<string, Card[]>();

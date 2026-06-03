@@ -57,55 +57,10 @@ const MANUAL_EFFECT_TIMING_OVERRIDES: Record<string, {
   phaseBias?: Partial<Record<GamePhase, number>>;
   reasons?: string[];
 }> = {
-  '101000159_protect': {
-    tags: ['protection'],
-    phaseBias: { BATTLE_FREE: 7, COUNTERING: 7, MAIN: -5 },
-    reasons: ['white temple protection should answer a real battle/chain threat'],
-  },
-  '101100096_alliance_protect': {
-    tags: ['protection', 'combat'],
-    phaseBias: { BATTLE_FREE: 8, COUNTERING: 6, MAIN: -6 },
-    reasons: ['smile alliance protection is a battle window payoff'],
-  },
-  '101100096_reset_after_attack': {
-    tags: ['combat', 'resource'],
-    phaseBias: { DAMAGE_CALCULATION: 6, BATTLE_FREE: 5, MAIN: -6 },
-    reasons: ['smile reset is valuable after committing attacks'],
-  },
-  '101130439_reset_hall': {
-    tags: ['resource', 'setup'],
-    phaseBias: { MAIN: 7, BATTLE_FREE: -6, COUNTERING: -8 },
-    reasons: ['hall reset is a main-phase sequencing tool'],
-  },
-  '101130440_reset_boost': {
-    tags: ['resource', 'combat', 'buff'],
-    phaseBias: { BATTLE_DECLARATION: 5, BATTLE_FREE: 6, DAMAGE_CALCULATION: 5, MAIN: -2 },
-    reasons: ['magic spear reset boost should convert an attack/reset turn, not idle setup'],
-  },
-  '101130441_reset_boost': {
-    tags: ['resource', 'reset', 'combat', 'buff'],
-    phaseBias: { BATTLE_FREE: 7, COUNTERING: 11, DAMAGE_CALCULATION: 5, MAIN: -2 },
-    reasons: ['holy prince reset is a post-attack reset payoff for magic spear or hero sword'],
-  },
-  '101130458_reset_silence': {
-    tags: ['tempo', 'resource'],
-    phaseBias: { MAIN: 5, BATTLE_DECLARATION: 4, BATTLE_FREE: 3, COUNTERING: 2 },
-    reasons: ['hero sword reset/silence should answer a meaningful unit or push a pressure turn'],
-  },
-  '101140152_silence_god': {
-    tags: ['tempo', 'removal'],
-    phaseBias: { MAIN: 5, BATTLE_DECLARATION: 3, COUNTERING: 3 },
-    reasons: ['silence should be saved for a meaningful god-mark threat'],
-  },
   '201000059_prevent_destroy': {
     tags: ['protection', 'combat', 'counter'],
     phaseBias: { BATTLE_FREE: 9, COUNTERING: 9, MAIN: -9 },
     reasons: ['prevent-destroy story is held for battle or chain protection'],
-  },
-  '201100037_eclipse': {
-    tags: ['removal', 'combo', 'finisher'],
-    phaseBias: { BATTLE_FREE: 12, MAIN: -10, COUNTERING: -8 },
-    reasons: ['eclipse is best used in the protected smile alliance battle window'],
   },
   'gensou_swallow_counter': {
     tags: ['counter', 'protection', 'removal'],
@@ -157,11 +112,6 @@ const MANUAL_EFFECT_TIMING_OVERRIDES: Record<string, {
     phaseBias: { MAIN: 9, BATTLE_FREE: -9, COUNTERING: -10 },
     reasons: ['immortal alchemy cauldron is a main-phase engine activation'],
   },
-  'aketi_play_from_erosion': {
-    tags: ['resource', 'summon', 'setup'],
-    phaseBias: { MAIN: 8, BATTLE_FREE: -7, COUNTERING: -8 },
-    reasons: ['blue erosion play-from-zone effect is a main-phase development line'],
-  },
   '104030453_swap': {
     tags: ['engine', 'tempo'],
     phaseBias: { MAIN: 6, BATTLE_FREE: -5 },
@@ -182,30 +132,15 @@ const MANUAL_EFFECT_TIMING_OVERRIDES: Record<string, {
     phaseBias: { MAIN: 7, BATTLE_FREE: -8, COUNTERING: -9 },
     reasons: ['trade scale value effect belongs in main sequencing'],
   },
-  '204020024_activate': {
-    tags: ['tempo', 'removal'],
-    phaseBias: { MAIN: 4, BATTLE_DECLARATION: 4, BATTLE_FREE: 5, COUNTERING: 2 },
-    reasons: ['Aketi inducement should tap or bounce an opposing tactical target, not own board filler'],
-  },
   '104020066_activate_1': {
     tags: ['engine', 'resource'],
     phaseBias: { MAIN: 6, BATTLE_FREE: -5 },
     reasons: ['merchant value effect belongs in main sequencing'],
   },
-  '102050091_battle_save': {
-    tags: ['protection', 'combat'],
-    phaseBias: { BATTLE_FREE: 9, COUNTERING: 6, MAIN: -9 },
-    reasons: ['Dikai battle save protects an actual battle commitment'],
-  },
   '102050427_cannot_defend': {
     tags: ['tempo', 'finisher'],
     phaseBias: { MAIN: 5, BATTLE_DECLARATION: 6, BATTLE_FREE: 4 },
     reasons: ['cannot-defend effect is strongest when converting pressure into lethal damage'],
-  },
-  '102050432_reset_attack_unit': {
-    tags: ['reset', 'combat', 'finisher'],
-    phaseBias: { BATTLE_DECLARATION: -8, BATTLE_FREE: 9, COUNTERING: 8, DAMAGE_CALCULATION: 4, MAIN: 5 },
-    reasons: ['reset attack unit should be used after Dikai is exhausted by an attack or a real combat commitment'],
   },
   '102050087_destroy': {
     tags: ['removal', 'tempo'],

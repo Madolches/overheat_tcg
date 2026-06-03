@@ -1,10 +1,5 @@
 import { DeckAiProfile, DEFAULT_AI_WEIGHTS } from './types';
-import { whiteTempleProfile } from './decks/whiteTemple';
-import { blueAdventurerProfile } from './decks/blueAdventurer';
-import { redDikaiProfile } from './decks/redDikai';
-import { yellowAlchemyProfile } from './decks/yellowAlchemy';
-import { overlordTotemProfile } from './decks/overlordTotem';
-import { bigSalalaProfile } from './decks/bigSalala';
+import { adventurerGuildProfile } from './decks/adventurerGuild';
 
 export const genericProfile: DeckAiProfile = {
   id: 'generic',
@@ -14,17 +9,10 @@ export const genericProfile: DeckAiProfile = {
 };
 
 export const AI_DECK_PROFILES: DeckAiProfile[] = [
-  whiteTempleProfile,
-  blueAdventurerProfile,
-  redDikaiProfile,
-  bigSalalaProfile,
+  adventurerGuildProfile,
 ];
 
-export const ALL_DECK_AI_PROFILES: DeckAiProfile[] = [
-  ...AI_DECK_PROFILES,
-  yellowAlchemyProfile,
-  overlordTotemProfile,
-];
+export const ALL_DECK_AI_PROFILES: DeckAiProfile[] = [...AI_DECK_PROFILES];
 
 export function getDeckAiProfile(profileId?: string | null) {
   if (!profileId) return genericProfile;

@@ -28,13 +28,11 @@ import {
   scoreCardValue,
   scoreActivatableEffect,
   scoreMainPhaseCardSequencingValue,
-  applyOpeningHandSoftCompensation,
   scoreAttackCandidate,
   scorePaymentExhaustValue,
   scorePlayableCard,
   scorePaymentSacrificeValue
 } from './ai/hardStrategy';
-import { getComboAllianceAttack, getBestComboOpportunity, describeComboForDecision } from './ai/comboKnowledge';
 
 type PaymentSummary = {
   success: boolean;
@@ -7804,7 +7802,6 @@ export const ServerGameService = {
     } else {
     }
 
-    ServerGameService.applyHardAiSoftOpeningCompensation(gameState, uid);
     player.mulliganDone = true;
 
     // Check if both players are done
@@ -7889,71 +7886,6 @@ export const ServerGameService = {
     if (gameState.aiDecisionLogs.length > 300) {
       gameState.aiDecisionLogs.splice(0, gameState.aiDecisionLogs.length - 300);
     }
-  },
-
-  applyHardAiSoftOpeningCompensation(gameState: GameState, playerUid: string) {
-    const player = gameState.players[playerUid];
-    if (!player || ServerGameService.getBotDifficulty(gameState, playerUid) !== 'hard') return;
-    if ((player as any).hardAiSoftOpeningApplied) return;
-
-    const profile = ServerGameService.getBotProfile(gameState, playerUid);
-    if (!profile.softCompensation?.openingSmoothing) return;
-
-    (player as any).hardAiSoftOpeningApplied = true;
-    const result = applyOpeningHandSoftCompensation(player, profile);
-    if (!result.applied) {
-      if (result.before.severeBrick || result.before.mildBrick) {
-        ServerGameService.recordAiDecision(gameState, playerUid, {
-          action: 'SOFT_COMPENSATION_CHECK',
-          subject: '起手平滑检查',
-          reason: result.reason,
-          details: {
-            qualityBefore: result.before.quality,
-            earlyUnits: result.before.earlyUnits,
-            units: result.before.units,
-            engines: result.before.engines,
-            avgCost: result.before.avgCost,
-            notes: result.before.notes.join(', ') || 'none',
-            lookahead: result.inspectedDeckCards,
-          },
-        });
-      }
-      return;
-    }
-
-    ServerGameService.recordAiDecision(gameState, playerUid, {
-      action: result.fixedOpening ? 'FIXED_OPENING_HAND' : 'SOFT_COMPENSATION',
-      subject: result.fixedOpening
-        ? result.gained.map(card => ServerGameService.getAiCardName(card)).join(', ') || 'configured opening'
-        : `${result.returned.length} opening card(s)`,
-      reason: result.reason,
-      details: {
-        fixedOpening: !!result.fixedOpening,
-        missingFixedCardIds: result.missingFixedCardIds?.join(', ') || undefined,
-        returned: result.returned.length,
-        gained: result.gained.length,
-        qualityBefore: result.before.quality,
-        qualityAfter: result.after.quality,
-        earlyBefore: result.before.earlyUnits,
-        earlyAfter: result.after.earlyUnits,
-        enginesBefore: result.before.engines,
-        enginesAfter: result.after.engines,
-        avgCostBefore: result.before.avgCost,
-        avgCostAfter: result.after.avgCost,
-        lookahead: result.inspectedDeckCards,
-        extremeRescue: result.extremeRescue,
-      },
-      candidates: [
-        ...result.returned.map(card => ({
-          name: `返回:${ServerGameService.getAiCardName(card)}`,
-          note: result.fixedOpening ? 'fixed opening' : 'soft smoothing',
-        })),
-        ...result.gained.map(card => ({
-          name: `获得:${ServerGameService.getAiCardName(card)}`,
-          note: result.fixedOpening ? 'fixed opening' : 'soft smoothing',
-        })),
-      ],
-    });
   },
 
   describeAiSelection(gameState: GameState, query: any, selection: string) {
@@ -8096,46 +8028,6 @@ export const ServerGameService = {
     return !opponentIsAggro;
   },
 
-  getRedDikaiScadiErosionWindow(player: PlayerState | undefined) {
-    if (!player) return undefined;
-    const dikai = player.unitZone.find(unit => unit?.id === '102050432');
-    const scadi = player.itemZone.find(item =>
-      item?.id === '302050013' &&
-      (!dikai || item.equipTargetId === dikai.gamecardId)
-    );
-    if (!scadi?.equipTargetId) return undefined;
-    const equippedTarget = player.unitZone.find(unit => unit?.gamecardId === scadi.equipTargetId);
-    if (!equippedTarget) return undefined;
-    const erosion = countErosion(player);
-    return {
-      scadi,
-      equippedTarget,
-      erosion,
-      inWindow: erosion >= 5 && erosion <= 7,
-      belowWindow: erosion < 5,
-      aboveWindow: erosion > 7,
-    };
-  },
-
-  scoreRedDikaiScadiDeckPaymentAdjustment(player: PlayerState, deckPayment: number) {
-    const window = ServerGameService.getRedDikaiScadiErosionWindow(player);
-    if (!window || deckPayment <= 0) return 0;
-    const after = window.erosion + deckPayment;
-
-    if (window.belowWindow) {
-      if (after >= 5 && after <= 7) return -46 - deckPayment * 8;
-      if (after < 5) return -12 * deckPayment;
-      return 34 + (after - 7) * 22;
-    }
-
-    if (window.inWindow) {
-      if (after <= 7) return -4 * deckPayment;
-      return 48 + (after - 7) * 24;
-    }
-
-    return 30 + deckPayment * 16;
-  },
-
   scoreBotPaymentSelectionRisk(
     gameState: GameState,
     playerUid: string,
@@ -8251,14 +8143,6 @@ export const ServerGameService = {
         return total + accessMax;
       }, 0);
       estimatedDeckPayment = Math.max(0, paymentCost - feijingReduction - unitPayment);
-    }
-
-    if (profile.id === 'red-dikai' && estimatedDeckPayment > 0) {
-      const scadiAdjustment = ServerGameService.scoreRedDikaiScadiDeckPaymentAdjustment(player, estimatedDeckPayment);
-      if (scadiAdjustment !== 0) {
-        penalty += scadiAdjustment;
-        notes.push(scadiAdjustment < 0 ? 'scadi erosion window setup' : 'scadi erosion window risk');
-      }
     }
 
     if (estimatedDeckPayment > 0 && defensePressure) {
@@ -8713,7 +8597,6 @@ export const ServerGameService = {
     failureAction: string,
     reason: string
   ) {
-    const combo = getBestComboOpportunity(gameState, gameState.players[playerUid], ServerGameService.getBotProfile(gameState, playerUid));
     ServerGameService.recordAiDecision(gameState, playerUid, {
       action,
       subject: ServerGameService.getAiCardName(chosen.card),
@@ -8726,7 +8609,6 @@ export const ServerGameService = {
         paymentRisk: chosen.paymentRisk?.penalty ? Number(chosen.paymentRisk.penalty.toFixed(1)) : 0,
         readyDefendersAfterPayment: chosen.paymentRisk?.readyDefendersAfter,
         estimatedDeckPayment: chosen.paymentRisk?.estimatedDeckPayment,
-        combo: describeComboForDecision(combo),
         battleAttackers: gameState.battleState?.attackers?.length || 0,
       },
       candidates: candidates.slice(0, 3).map(candidate => ({
@@ -8987,9 +8869,6 @@ export const ServerGameService = {
           ? 18
           : 5
       : 0;
-    const redScadiErosionWindow = difficulty === 'hard' && profile.id === 'red-dikai'
-      ? ServerGameService.getRedDikaiScadiErosionWindow(player)
-      : undefined;
     let bestSelection: { feijingCardId?: string; exhaustUnitIds?: string[] } | undefined;
     let bestRemaining = Number.POSITIVE_INFINITY;
     let bestPaymentScore = Number.POSITIVE_INFINITY;
@@ -9079,14 +8958,10 @@ export const ServerGameService = {
         if (remainingAfterUnits > player.deck.length) continue;
         if (remainingAfterUnits > 0 && !canUseWindProduction && remainingAfterUnits >= 10 - totalErosion) continue;
 
-        const scadiDeckPaymentAdjustment = redScadiErosionWindow
-          ? ServerGameService.scoreRedDikaiScadiDeckPaymentAdjustment(player, remainingAfterUnits)
-          : 0;
         const paymentScore =
           feijingValue +
           selectedUnitValue +
           remainingAfterUnits * deckPaymentWeight +
-          scadiDeckPaymentAdjustment +
           exhaustUnitIds.length * 0.1;
         if (
           paymentScore < bestPaymentScore ||
@@ -9327,10 +9202,6 @@ export const ServerGameService = {
             attackBeforeDeveloping: turnPlan.attackBeforeDeveloping,
             minMainEffectScore: Number(turnPlan.minMainEffectScore.toFixed(1)),
             minBattleEffectScore: Number(turnPlan.minBattleEffectScore.toFixed(1)),
-            comboId: turnPlan.comboId || 'none',
-            comboReady: !!turnPlan.comboReady,
-            comboPayoffPlayable: !!turnPlan.comboPayoffPlayable,
-            comboNotes: turnPlan.comboNotes?.join(', ') || 'none',
             tacticalLine: turnPlan.tacticalLine || 'develop',
             tacticalScore: turnPlan.tacticalScore === undefined ? 0 : Number(turnPlan.tacticalScore.toFixed(1)),
             tacticalNotes: turnPlan.tacticalNotes?.join(', ') || 'none',
@@ -9889,14 +9760,7 @@ export const ServerGameService = {
             defensivePaymentPenalty += 18;
           }
         }
-        const redScadiWindow = difficulty === 'hard' && profile.id === 'red-dikai'
-          ? ServerGameService.getRedDikaiScadiErosionWindow(bot)
-          : undefined;
-        let scadiErosionPaymentBonus = 0;
-        if (redScadiWindow && estimatedDeckPayment > 0) {
-          const adjustment = ServerGameService.scoreRedDikaiScadiDeckPaymentAdjustment(bot, estimatedDeckPayment);
-          scadiErosionPaymentBonus -= adjustment;
-        }
+        const scadiErosionPaymentBonus = 0;
         let closingDevelopmentPenalty = 0;
         if (
           difficulty === 'hard' &&
@@ -10236,9 +10100,6 @@ export const ServerGameService = {
           score: scoreAttackCandidate(gameState, bot, card, profile),
         }))
         .sort((a, b) => b.score - a.score);
-      const comboAllianceAttack = difficulty === 'hard' && !forcedAttackUnit
-        ? getComboAllianceAttack(gameState, bot, profile, attackCandidates)
-        : undefined;
       const relaxedAttackThreshold =
         forcingAttackWindow ||
         isClosingTurnPlan(turnPlan) ||
@@ -10251,41 +10112,6 @@ export const ServerGameService = {
             ? 0
             : (turnPlan?.mode === 'defense' || turnPlan?.mode === 'stabilize' || turnPlan?.desperationAttack ? 30 : 14)
           : 0;
-      if (comboAllianceAttack) {
-        ServerGameService.markBotClosingAttackCommitment(gameState, playerUid, turnPlan);
-        comboAllianceAttack.attackers.forEach(card => reservedDefenderIds.delete(card.gamecardId));
-        ServerGameService.recordAiDecision(gameState, playerUid, {
-          action: 'COMBO_ALLIANCE_ATTACK',
-          subject: comboAllianceAttack.attackers.map(card => ServerGameService.getAiCardName(card)).join(' + '),
-          score: comboAllianceAttack.score,
-          reason: `Declare alliance attack to open ${comboAllianceAttack.comboName}.`,
-          details: {
-            comboId: comboAllianceAttack.comboId,
-            attackers: comboAllianceAttack.attackers.length,
-            reasons: comboAllianceAttack.reasons.join(', ') || 'none',
-            opponentErosion,
-            totalAvailableDamage,
-            likelyDefenders,
-            damageThroughLikelyDefenders,
-            reservedDefenders: reservedDefenderIds.size,
-            planMode: turnPlan?.mode,
-          },
-          candidates: comboAllianceAttack.attackers.map(card => ({
-            name: ServerGameService.getAiCardName(card),
-            score: scoreAttackCandidate(gameState, bot, card, profile),
-          })),
-        });
-        await ServerGameService.declareAttack(
-          gameState,
-          playerUid,
-          comboAllianceAttack.attackers.map(card => card.gamecardId),
-          true,
-          undefined,
-          undefined,
-          onUpdate
-        );
-        return;
-      }
       const attacker = difficulty === 'hard'
         ? forcedAttackUnit || (scoredAvailableAttackers[0]?.score > minimumAttackScore ? scoredAvailableAttackers[0].card : undefined)
         : forcedAttackUnit || bot.unitZone.find(c => {
@@ -10590,10 +10416,6 @@ export const ServerGameService = {
       pendingResolutions: [],
       effectUsage: {}
     };
-
-    if (botDifficulty === 'hard' && botProfile?.softCompensation?.fixedOpeningHandIds?.length) {
-      ServerGameService.applyHardAiSoftOpeningCompensation(gameState, 'BOT_PLAYER');
-    }
 
     return gameState;
   },

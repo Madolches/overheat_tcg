@@ -67,6 +67,7 @@ async function migrate() {
                 name VARCHAR(255) NOT NULL,
                 cards LONGTEXT NOT NULL,
                 tags LONGTEXT,
+                description LONGTEXT,
                 created_at BIGINT NOT NULL,
                 updated_at BIGINT NOT NULL,
                 INDEX (user_id),
@@ -74,6 +75,7 @@ async function migrate() {
             );
         `);
         await conn.query(`ALTER TABLE deck_square_posts ADD COLUMN IF NOT EXISTS tags LONGTEXT;`);
+        await conn.query(`ALTER TABLE deck_square_posts ADD COLUMN IF NOT EXISTS description LONGTEXT;`);
 
         await conn.query(`
             CREATE TABLE IF NOT EXISTS deck_square_likes (

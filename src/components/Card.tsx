@@ -6,6 +6,8 @@ import { Sword, Shield, Zap, Plus } from 'lucide-react';
 import { cn, getCardColorHanzi, getCardImageUrl, getGainedCardColors } from '../lib/utils';
 import { KeywordBadges } from './KeywordBadges';
 import { DEFAULT_CARD_BACK_URL } from '../data/customization';
+import { getCardSkinUrl } from '../data/cardSkins';
+import { useCardSkinSettings } from '../hooks/useCardSkinSettings';
 
 interface CardProps {
   card?: CardType;
@@ -67,6 +69,8 @@ const CardComponentImpl: React.FC<CardProps> = ({
   hideKeywords = false,
   effectiveAcValue
 }) => {
+  const { isCardSkinEnabled } = useCardSkinSettings();
+
   if (isBack || !card) {
     const backExhausted = !!isExhausted;
     return (
@@ -96,7 +100,9 @@ const CardComponentImpl: React.FC<CardProps> = ({
   const displayedAcValue = effectiveAcValue ?? card.acValue;
   const isNegativeCost = displayedAcValue < 0;
   const fullImageUrl = card.fullImageUrl || getCardImageUrl(card.id, card.rarity, false, card.availableRarities);
-  const imageUrl = card.imageUrl || fullImageUrl;
+  const shouldUseSkin = card.skinEnabled === true || (card.skinEnabled === undefined && isCardSkinEnabled(card));
+  const skinUrl = shouldUseSkin ? getCardSkinUrl(card) : undefined;
+  const imageUrl = skinUrl || card.imageUrl || fullImageUrl;
   const exhausted = isExhausted ?? !!card.isExhausted;
   const showStats = displayMode !== 'erosion_item' && displayMode !== 'none';
   const showAC = showStats && (displayMode === 'hand' || displayMode === 'deck' || displayMode === 'erosion_item');
