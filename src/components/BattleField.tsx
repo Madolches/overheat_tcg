@@ -216,12 +216,12 @@ export const BattleField: React.FC = () => {
   const [isConfronting, setIsConfronting] = useState(false);
 
   const lastAutoResolveRef = useRef<string | null>(null);
-  const autoSingleChainResolveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gameRef = useRef<GameState | null>(null);
   const pendingPlayCardRef = useRef<Card | null>(null);
   const [interruptionNotice, setInterruptionNotice] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [isPopupHidden, setIsPopupHidden] = useState(false);
+  const [confrontationPromptBlockedUntil, setConfrontationPromptBlockedUntil] = useState(0);
   const [queryHandoff, setQueryHandoff] = useState<{ query: EffectQuery; clearAt: number } | null>(null);
   const [dismissedPublicRevealId, setDismissedPublicRevealId] = useState<string | null>(null);
   const [hoverPreviewCard, setHoverPreviewCard] = useState<Card | null>(null);
@@ -285,6 +285,25 @@ export const BattleField: React.FC = () => {
     }
     return group;
   }, [battleAnimations.events, battleAnimationsEnabled]);
+  const confrontationAnimationPlaying = battleAnimationsEnabled && battleAnimations.events.some(event => event.type === 'confrontation');
+  const confrontationHintUntil = game?.animationHint?.type === 'CONFRONTATION_CHAIN'
+    ? Number(game.animationHint.createdAt || Date.now()) + Math.max(900, Number(game.animationHint.durationMs || 1100))
+    : 0;
+  const confrontationPromptWaiting =
+    confrontationAnimationPlaying ||
+    (battleAnimationsEnabled && game?.animationHint?.type === 'CONFRONTATION_CHAIN' && Date.now() < Math.max(confrontationPromptBlockedUntil, confrontationHintUntil));
+
+  useEffect(() => {
+    if (!battleAnimationsEnabled || game?.animationHint?.type !== 'CONFRONTATION_CHAIN') return;
+    const duration = Math.max(900, Number(game.animationHint.durationMs || 1100));
+    const until = Number(game.animationHint.createdAt || Date.now()) + duration;
+    setConfrontationPromptBlockedUntil(current => Math.max(current, until));
+    const remaining = Math.max(0, until - Date.now());
+    const timer = window.setTimeout(() => {
+      setConfrontationPromptBlockedUntil(current => current === until ? 0 : current);
+    }, remaining + 40);
+    return () => window.clearTimeout(timer);
+  }, [battleAnimationsEnabled, game?.animationHint?.id, game?.animationHint?.type, game?.animationHint?.durationMs, game?.animationHint?.createdAt]);
 
   useEffect(() => {
     if (activeBlockingAnimationEvents.length === 0 && stateBufferRef.current.length > 0) {
@@ -560,23 +579,7 @@ export const BattleField: React.FC = () => {
 
     if (shouldAutoPass) {
       if (game.phase === 'COUNTERING' && game.priorityPlayerId === myUid) {
-        const singleChainKey = `${game.gameId || gameId}-${game.counterStack?.[0]?.timestamp || 'stack'}-${game.counterStack?.length || 0}`;
-        const shouldPauseForSingleAutoChain =
-          localStrategy === 'AUTO' &&
-          game.counterStack?.length === 1;
-
-        if (shouldPauseForSingleAutoChain) {
-          if (lastAutoResolveRef.current !== singleChainKey) {
-            lastAutoResolveRef.current = singleChainKey;
-            if (autoSingleChainResolveTimeoutRef.current) clearTimeout(autoSingleChainResolveTimeoutRef.current);
-            autoSingleChainResolveTimeoutRef.current = setTimeout(() => {
-              autoSingleChainResolveTimeoutRef.current = null;
-              handleResolve();
-            }, 900);
-          }
-        } else {
-          handleResolve();
-        }
+        handleResolve();
       }
       if (game.phase === 'BATTLE_FREE' && game.battleState?.askConfront && 
          ((game.battleState.askConfront === 'ASKING_OPPONENT' && !me.isTurn) || 
@@ -584,12 +587,6 @@ export const BattleField: React.FC = () => {
         GameService.advancePhase(gameId, 'DECLINE_CONFRONTATION');
       }
     }
-    return () => {
-      if (autoSingleChainResolveTimeoutRef.current) {
-        clearTimeout(autoSingleChainResolveTimeoutRef.current);
-        autoSingleChainResolveTimeoutRef.current = null;
-      }
-    };
   }, [game?.phase, game?.priorityPlayerId, game?.battleState?.askConfront, game?.pendingQuery?.id, game?.isResolvingStack, game?.currentProcessingItem, localStrategy, canConfront, isSpectator]);
 
   // Reset interaction states when phase or priority changes
@@ -2592,6 +2589,7 @@ export const BattleField: React.FC = () => {
                     !game.isResolvingStack &&
                     !game.currentProcessingItem
                   }
+                  isCounteringPromptWaiting={confrontationPromptWaiting}
                   isDefensePromptActive={
                     !isSpectator &&
                     game.phase === 'DEFENSE_DECLARATION' &&

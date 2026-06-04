@@ -41,6 +41,7 @@ interface PlayFieldProps {
   isConfrontPromptActive?: boolean;
   isCounteringPromptActive?: boolean;
   isDefensePromptActive?: boolean;
+  isCounteringPromptWaiting?: boolean;
   onStartConfront?: () => void;
   onDeclineConfront?: () => void;
   onDeclineDefense?: () => void;
@@ -863,7 +864,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
   selectedDefender, allianceInitiator, timer, cardBackUrl, viewingZone,
   setViewingZone, highlightedCardIds, onShowLogs, onOpenRulebook,
   onSurrender, onPhaseClick, confrontationStrategy, onUpdateStrategy,
-  canConfront, isConfrontPromptActive, isCounteringPromptActive, isDefensePromptActive, onStartConfront, onDeclineConfront, onDeclineDefense,
+  canConfront, isConfrontPromptActive, isCounteringPromptActive, isDefensePromptActive, isCounteringPromptWaiting, onStartConfront, onDeclineConfront, onDeclineDefense,
   showPhaseMenu, isAnyPopupOpen, isPopupHidden, onHidePopup, onExpand, isSpectator, onHoverPreview, animatingCardIds
 }) => {
   const [ongoingEffectsPopup, setOngoingEffectsPopup] = useState<{
@@ -877,6 +878,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
   const opponentWealth = getPlayerWealthCount(opponent, wealthContext);
   const playerOngoingEffects = getPlayerOngoingEffects(game, player.uid);
   const opponentOngoingEffects = getPlayerOngoingEffects(game, opponent.uid);
+  const isCounteringChainPromptWaiting = !!isCounteringPromptActive && !!isCounteringPromptWaiting;
   const openOngoingEffects = (targetPlayer: PlayerState, isOpponentTarget?: boolean) => {
     setOngoingEffectsPopup({
       title: isSpectator
@@ -1102,20 +1104,21 @@ export const PlayField: React.FC<PlayFieldProps> = ({
             >
               {(isConfrontPromptActive || isCounteringPromptActive || isDefensePromptActive) ? (
                 <button
-                  disabled={isPopupHidden}
+                  disabled={isPopupHidden || isCounteringChainPromptWaiting}
                   onClick={(e) => {
                     e.stopPropagation();
                     if (isDefensePromptActive) {
                       onDeclineDefense?.();
                       return;
                     }
+                    if (isCounteringChainPromptWaiting) return;
                     onDeclineConfront?.();
                   }}
                   className="absolute inset-[-0.15rem] z-10 flex min-w-[132px] items-center justify-center gap-1.5 rounded-xl border border-sky-400/60 bg-sky-500/25 px-3 py-1.5 text-sky-100 shadow-[0_0_26px_rgba(56,189,248,0.42)] transition-all hover:bg-sky-500/35 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-sky-500/25 md:inset-[-0.25rem] md:min-w-[156px] md:gap-2 md:px-4 md:py-2"
                 >
                   {isDefensePromptActive ? <Shield className="h-4 w-4" /> : <Zap className="h-4 w-4" />}
                   <span className="text-xs font-black italic tracking-widest md:text-sm">
-                    {isDefensePromptActive ? '放弃防御' : '忽略对抗'}
+                    {isCounteringChainPromptWaiting ? '对抗链' : isDefensePromptActive ? '放弃防御' : '忽略对抗'}
                   </span>
                 </button>
               ) : (

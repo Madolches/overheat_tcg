@@ -148,8 +148,23 @@ export function useBattleAnimations(game: GameState | null, perspectiveUid?: str
       maxChainLengthRef.current = game.counterStack?.length || 0;
       if (game.animationHint?.id) {
         seenAnimationHintsRef.current.add(game.animationHint.id);
-        if (game.animationHint.type === 'DRAW_CARD') {
+        if (game.animationHint.type === 'DRAW_CARD' && game.animationHint.cardId) {
           hintedDrawCardsRef.current.add(`${game.animationHint.playerUid}:${game.animationHint.cardId}`);
+        }
+        if (game.animationHint.type === 'CONFRONTATION_CHAIN') {
+          const chainItems = (game.counterStack || []).map((item, index) =>
+            stackItemToChainAnimationItem(item, index + 1, game, perspectiveUid)
+          );
+          if (chainItems.length > 0) {
+            enqueue([{
+              id: `confrontation_hint_${game.animationHint.id}`,
+              type: 'confrontation',
+              side: 'neutral',
+              title: '对抗链',
+              chainLength: game.counterStack?.length || chainItems.length,
+              chainItems
+            }]);
+          }
         }
       }
       return;
@@ -159,37 +174,57 @@ export function useBattleAnimations(game: GameState | null, perspectiveUid?: str
     if (game.animationHint?.type === 'DRAW_CARD' && !seenAnimationHintsRef.current.has(game.animationHint.id)) {
       seenAnimationHintsRef.current.add(game.animationHint.id);
       const ownerUid = game.animationHint.playerUid;
-      hintedDrawCardsRef.current.add(`${ownerUid}:${game.animationHint.cardId}`);
-      const isNormalDrawPhase = game.phase === 'DRAW' && ownerUid === game.playerIds[game.currentTurnPlayer];
-      const revealTo = isNormalDrawPhase
-        ? (!isSpectator && perspectiveUid && ownerUid === perspectiveUid ? 'owner' : 'hidden')
-        : (game.animationHint.revealTo || 'all');
-      const shouldRevealCard = revealTo !== 'hidden';
-      const hintedCard = shouldRevealCard
-        ? (game.animationHint.card || findCardByGamecardId(game, game.animationHint.cardId))
-        : undefined;
-      console.log('[BattleAnimationHint] enqueue draw animation', {
-        hintId: game.animationHint.id,
-        phase: game.phase,
-        ownerUid,
-        revealTo,
-        hasCard: !!hintedCard
-      });
-      nextEvents.push({
-        id: `card_draw_hint_${game.animationHint.id}`,
-        type: 'card-draw',
-        side: sideForUid(ownerUid, perspectiveUid, game),
-        title: isNormalDrawPhase ? '抽牌' : '卡组加入手牌',
-        cardName: hintedCard?.fullName || '抽到的卡',
-        cardImageUrl: hintedCard ? getCardPreviewImage(hintedCard) : undefined,
-        sourceCardId: game.animationHint.cardId,
-        playerUid: ownerUid,
-        sourceAnchor: getAnchorForZone(ownerUid, 'DECK'),
-        targetAnchor: getAnchorForZone(ownerUid, 'HAND'),
-        targetZone: 'HAND',
-        revealTo,
-        cardBackUrl
-      });
+      const hintedCardId = game.animationHint.cardId;
+      if (hintedCardId) {
+        hintedDrawCardsRef.current.add(`${ownerUid}:${hintedCardId}`);
+        const isNormalDrawPhase = game.phase === 'DRAW' && ownerUid === game.playerIds[game.currentTurnPlayer];
+        const revealTo = isNormalDrawPhase
+          ? (!isSpectator && perspectiveUid && ownerUid === perspectiveUid ? 'owner' : 'hidden')
+          : (game.animationHint.revealTo || 'all');
+        const shouldRevealCard = revealTo !== 'hidden';
+        const hintedCard = shouldRevealCard
+          ? (game.animationHint.card || findCardByGamecardId(game, hintedCardId))
+          : undefined;
+        console.log('[BattleAnimationHint] enqueue draw animation', {
+          hintId: game.animationHint.id,
+          phase: game.phase,
+          ownerUid,
+          revealTo,
+          hasCard: !!hintedCard
+        });
+        nextEvents.push({
+          id: `card_draw_hint_${game.animationHint.id}`,
+          type: 'card-draw',
+          side: sideForUid(ownerUid, perspectiveUid, game),
+          title: isNormalDrawPhase ? '抽牌' : '卡组加入手牌',
+          cardName: hintedCard?.fullName || '抽到的卡',
+          cardImageUrl: hintedCard ? getCardPreviewImage(hintedCard) : undefined,
+          sourceCardId: hintedCardId,
+          playerUid: ownerUid,
+          sourceAnchor: getAnchorForZone(ownerUid, 'DECK'),
+          targetAnchor: getAnchorForZone(ownerUid, 'HAND'),
+          targetZone: 'HAND',
+          revealTo,
+          cardBackUrl
+        });
+      }
+    }
+    if (game.animationHint?.type === 'CONFRONTATION_CHAIN' && !seenAnimationHintsRef.current.has(game.animationHint.id)) {
+      seenAnimationHintsRef.current.add(game.animationHint.id);
+      const counterLength = game.counterStack?.length || 0;
+      const chainItems = (game.counterStack || []).map((item, index) =>
+        stackItemToChainAnimationItem(item, index + 1, game, perspectiveUid)
+      );
+      if (counterLength > 0 && chainItems.length > 0) {
+        nextEvents.push({
+          id: `confrontation_hint_${game.animationHint.id}`,
+          type: 'confrontation',
+          side: 'neutral',
+          title: '对抗链',
+          chainLength: counterLength,
+          chainItems
+        });
+      }
     }
     let isPaymentFeeState = false;
     (game.logs || []).forEach((log, index) => {
@@ -370,13 +405,12 @@ export function useBattleAnimations(game: GameState | null, perspectiveUid?: str
     const currentProcessingKey = processingItemKey(game);
     if (currentProcessingKey && currentProcessingKey !== previousProcessingKeyRef.current) {
       const item = game.currentProcessingItem;
-      if (maxChainLengthRef.current === 1 && item) {
+      if (maxChainLengthRef.current === 1 && item && !(item as any).chainAnimationShown) {
         nextEvents.push({
           id: `confrontation_chain_1_${item.timestamp || Date.now()}_resolve`,
           type: 'confrontation',
           side: 'neutral',
-          title: '对抗连锁',
-          subtitle: 'L1',
+          title: '对抗链',
           chainLength: 1,
           chainItems: [stackItemToChainAnimationItem(item, 1, game, perspectiveUid)]
         });
@@ -402,7 +436,8 @@ export function useBattleAnimations(game: GameState | null, perspectiveUid?: str
     previousProcessingKeyRef.current = currentProcessingKey;
 
     // Play confrontation animation whenever a new chain link is added.
-    const startedLongChain = counterLength > previousCounterLengthRef.current && counterLength >= 2;
+    const hasConfrontationHint = game.animationHint?.type === 'CONFRONTATION_CHAIN';
+    const startedLongChain = !hasConfrontationHint && counterLength > previousCounterLengthRef.current && counterLength >= 2;
     if (startedLongChain) {
       const chainStartIndex = Math.max(0, counterLength - 3);
       const latestChainItems = (game.counterStack || []).slice(chainStartIndex).map((item, offset) =>
@@ -412,8 +447,7 @@ export function useBattleAnimations(game: GameState | null, perspectiveUid?: str
         id: `confrontation_chain_${counterLength}_${game.counterStack?.[counterLength - 1]?.timestamp || Date.now()}_build`,
         type: 'confrontation',
         side: 'neutral',
-        title: '对抗连锁',
-        subtitle: `L1-L${counterLength}`,
+        title: '对抗链',
         chainLength: counterLength,
         chainItems: latestChainItems
       });
@@ -587,14 +621,14 @@ function stackItemToChainAnimationItem(
 ): NonNullable<BattleAnimationEvent['chainItems']>[number] {
   const side = sideForUid(item.ownerUid, perspectiveUid, game);
   const phaseTitle = phaseEndTitle(item);
-  const title = item.card?.fullName || phaseTitle || (item.type === 'ATTACK' ? '攻击宣言' : '对抗宣言');
+  const title = item.card?.fullName || phaseTitle || (item.type === 'ATTACK' ? '攻击宣言' : '回合结束');
   const subtitle = item.type === 'PLAY'
     ? '打出卡牌'
     : item.type === 'EFFECT'
-      ? effectSubtitle(item)
+      ? '发动效果'
       : item.type === 'ATTACK'
-        ? (item.isAlliance ? '联军攻击宣言' : '攻击宣言')
-        : phaseTitle;
+        ? '宣言攻击'
+        : '回合结束';
 
   return {
     linkNumber,
@@ -610,17 +644,7 @@ function stackItemToChainAnimationItem(
 
 function phaseEndTitle(item: StackItem) {
   if (item.type !== 'PHASE_END') return undefined;
-  if (item.nextPhase === 'DAMAGE_CALCULATION') return '宣言结束战斗自由阶段';
-  if (item.nextPhase === 'DISCARD') return '宣言进入回合结束阶段';
-  if (item.nextPhase === 'BATTLE_DECLARATION') return '宣言进入战斗阶段';
-  if (item.nextPhase === 'MAIN') return '宣言返回主要阶段';
-  return '阶段宣言';
-}
-
-function effectSubtitle(item: StackItem) {
-  const effect = item.effectIndex !== undefined ? item.card?.effects?.[item.effectIndex] : undefined;
-  if (!effect?.description) return '发动效果';
-  return compactText(effect.description);
+  return '回合结束';
 }
 
 function sideForUid(uid: string | null | undefined, perspectiveUid: string | null | undefined, game: GameState): BattleAnimationEvent['side'] {

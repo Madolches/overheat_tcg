@@ -618,9 +618,9 @@ export interface GameState {
   animationUntil?: number;
   animationHint?: {
     id: string;
-    type: 'DRAW_CARD';
+    type: 'DRAW_CARD' | 'CONFRONTATION_CHAIN';
     playerUid: string;
-    cardId: string;
+    cardId?: string;
     card?: Card;
     revealTo?: 'owner' | 'all' | 'hidden';
     durationMs?: number;

@@ -677,7 +677,7 @@ const ConfrontationAnimation: React.FC<{ event: BattleAnimationEvent }> = ({ eve
         linkNumber: event.chainLength || 1,
         side: 'neutral' as const,
         type: 'EFFECT' as const,
-        title: event.title || '对抗连锁',
+        title: event.title || '对抗链',
         subtitle: event.subtitle,
         cardName: event.cardName,
         cardImageUrl: event.cardImageUrl,
@@ -696,22 +696,11 @@ const ConfrontationAnimation: React.FC<{ event: BattleAnimationEvent }> = ({ eve
         initial={{ y: 42, scale: 0.98 }}
         animate={{ y: [42, 0, 8], scale: [0.98, 1, 0.99] }}
         transition={{ duration: 3, times: [0, 0.2, 1], ease: 'easeOut' }}
-        className="relative w-full max-w-[min(96vw,1100px)] overflow-hidden rounded-xl border border-cyan-100/25 bg-zinc-950/88 px-3 py-3 shadow-[0_0_46px_rgba(8,145,178,0.45)] backdrop-blur-md md:px-5"
+        className="relative w-full max-w-[min(96vw,980px)] overflow-hidden rounded-lg border border-white/12 bg-zinc-950/90 px-3 py-3 shadow-[0_0_38px_rgba(0,0,0,0.55)] backdrop-blur-md md:px-4"
       >
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-100/85 to-transparent" />
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded border border-cyan-100/35 bg-cyan-300/10 text-cyan-100 shadow-[0_0_18px_rgba(103,232,249,0.55)]">
-              <Zap className="h-4 w-4" />
-            </div>
-            <div>
-              <div className="text-[10px] font-black tracking-[0.28em] text-cyan-100">CHAIN</div>
-              <div className="text-xs font-black italic text-white/75 md:text-sm">对抗连锁 L1-L{items[items.length - 1]?.linkNumber || 1}</div>
-            </div>
-          </div>
-          <div className="rounded border border-white/10 bg-black/45 px-2 py-1 text-[10px] font-black tracking-widest text-white/45">
-            后入先结算
-          </div>
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/50 to-transparent" />
+        <div className="mb-2 text-left text-sm font-black italic tracking-widest text-white md:text-base">
+          对抗链
         </div>
         <div className="flex items-stretch gap-2 overflow-x-auto pb-1 custom-scrollbar">
           {items.map((item, index) => (
@@ -743,22 +732,16 @@ const ConfrontationChainNode: React.FC<{ item: BattleAnimationChainItem; index: 
   return (
     <motion.div
       initial={{ opacity: 0, y: 24, scale: 0.94 }}
-      animate={{ opacity: [0, 1, 1, 0], y: [24, 0, 0, 12], scale: [0.94, isLatest ? 1.05 : 1, isLatest ? 1.03 : 1, 0.98] }}
+      animate={{ opacity: [0, 1, 1, 0], y: [24, 0, 0, 12], scale: [0.94, isLatest ? 1.03 : 1, isLatest ? 1.01 : 1, 0.98] }}
       transition={{ duration: 2.72, delay: index * 0.1, times: [0, 0.14, 0.88, 1], ease: 'easeOut' }}
       className={cn(
-        "relative flex min-w-[12.5rem] max-w-[13.5rem] shrink-0 items-center gap-2 overflow-hidden rounded-lg border bg-black/70 p-2 shadow-lg md:min-w-[15rem] md:max-w-[16rem] md:p-2.5",
-        isMine ? "border-cyan-200/50 shadow-cyan-500/20" : isOpponent ? "border-red-200/45 shadow-red-500/20" : "border-white/20",
-        isLatest && "ring-2 ring-[#d7b45a]/80 shadow-[0_0_30px_rgba(215,180,90,0.45)]"
+        "relative flex min-w-[16rem] max-w-[18rem] shrink-0 items-center gap-3 overflow-hidden rounded-md border bg-black/72 p-2.5 shadow-lg md:min-w-[19rem] md:max-w-[21rem]",
+        isMine ? "border-emerald-300/55 shadow-emerald-500/20" : isOpponent ? "border-red-300/55 shadow-red-500/20" : "border-white/20",
+        isLatest && "ring-1 ring-white/35"
       )}
     >
-      <div className={cn("absolute inset-x-0 top-0 h-1", isMine ? "bg-cyan-300/75" : isOpponent ? "bg-red-400/75" : "bg-white/35")} />
-      <div className={cn(
-        "flex h-10 w-10 shrink-0 items-center justify-center rounded border text-sm font-black shadow-[0_0_18px_rgba(103,232,249,0.42)]",
-        isMine ? "border-cyan-100/45 bg-cyan-300/15 text-cyan-100" : isOpponent ? "border-red-100/45 bg-red-500/15 text-red-100" : "border-white/20 bg-white/10 text-white"
-      )}>
-        L{item.linkNumber}
-      </div>
-      <div className="relative flex h-16 aspect-[3/4] shrink-0 items-center justify-center overflow-hidden rounded border border-white/15 bg-zinc-950 md:h-20">
+      <div className={cn("absolute inset-y-0 left-0 w-1", isMine ? "bg-emerald-400/80" : isOpponent ? "bg-red-500/80" : "bg-white/35")} />
+      <div className="relative flex h-20 aspect-[3/4] shrink-0 items-center justify-center overflow-visible rounded border border-white/15 bg-zinc-950 md:h-24">
         {hasCard ? (
           <img
             src={item.cardImageUrl}
@@ -768,36 +751,32 @@ const ConfrontationChainNode: React.FC<{ item: BattleAnimationChainItem; index: 
             referrerPolicy="no-referrer"
           />
         ) : (
-          <Icon className={cn("h-7 w-7", isOpponent ? "text-red-100" : "text-cyan-100")} />
+          <Icon className={cn("h-7 w-7", isOpponent ? "text-red-100" : isMine ? "text-emerald-100" : "text-white")} />
         )}
-        {isLatest && (
-          <motion.div
-            animate={{ opacity: [0.25, 0.75, 0.25] }}
-            transition={{ duration: 0.9, repeat: Infinity }}
-            className="absolute inset-0 border-2 border-[#d7b45a]"
-          />
-        )}
+        <motion.div
+          initial={{ y: 12, opacity: 0, scale: 0.85 }}
+          animate={{ y: [12, -2, -8], opacity: [0, 1, 0], scale: [0.85, 1, 1.05] }}
+          transition={{ duration: 1.45, delay: index * 0.1 + 0.18, times: [0, 0.35, 1], ease: 'easeOut' }}
+          className={cn(
+            "absolute -bottom-2 -right-2 flex h-8 w-8 items-center justify-center border-2 bg-black text-base font-black leading-none shadow-lg",
+            isMine ? "border-emerald-300 text-emerald-100 shadow-emerald-500/30" : isOpponent ? "border-red-300 text-red-100 shadow-red-500/30" : "border-white/45 text-white"
+          )}
+        >
+          {item.linkNumber}
+        </motion.div>
       </div>
       <div className="min-w-0 flex-1">
-        <div className={cn("mb-1 text-[9px] font-black tracking-[0.18em]", isMine ? "text-cyan-200" : isOpponent ? "text-red-200" : "text-white/60")}>
-          {isMine ? '我方对抗' : isOpponent ? '对方对抗' : '对抗'}
-        </div>
         <div className="line-clamp-2 text-xs font-black leading-tight text-white md:text-sm">
           {item.cardName || item.title}
         </div>
         {item.subtitle && (
-          <div className="mt-1 line-clamp-1 text-[10px] leading-tight text-white/50">
+          <div className={cn("mt-2 text-[11px] font-black tracking-wider", isMine ? "text-emerald-200" : isOpponent ? "text-red-200" : "text-white/60")}>
             {item.subtitle}
-          </div>
-        )}
-        {isLatest && (
-          <div className="mt-1 inline-flex rounded bg-[#d7b45a]/90 px-1.5 py-0.5 text-[8px] font-black leading-none text-black">
-            最新链节
           </div>
         )}
       </div>
       {index > 0 && (
-        <div className="absolute -left-2 top-1/2 hidden h-px w-4 -translate-y-1/2 bg-cyan-100/50 md:block" />
+        <div className="absolute -left-2 top-1/2 hidden h-px w-4 -translate-y-1/2 bg-white/35 md:block" />
       )}
     </motion.div>
   );

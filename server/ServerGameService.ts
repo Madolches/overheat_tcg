@@ -74,6 +74,21 @@ export const ServerGameService = {
     await new Promise(resolve => setTimeout(resolve, delayMs));
   },
 
+  markConfrontationChainAnimation(gameState: GameState, durationMs = 1100) {
+    if (!gameState.counterStack?.length) return;
+    if (ServerGameService.shouldSkipVisualDelay(gameState)) return;
+    const topItem = gameState.counterStack[gameState.counterStack.length - 1];
+    const chainKey = `${topItem.timestamp || Date.now()}-${gameState.counterStack.length}`;
+    (topItem as any).chainAnimationShown = true;
+    gameState.animationHint = {
+      id: `confrontation-${chainKey}`,
+      type: 'CONFRONTATION_CHAIN',
+      playerUid: gameState.priorityPlayerId || topItem.ownerUid,
+      durationMs,
+      createdAt: Date.now()
+    };
+  },
+
   clearAllianceAttackMarkers(gameState: GameState, attackerIds?: string[]) {
     const targetIds = attackerIds?.length ? new Set(attackerIds) : undefined;
     Object.values(gameState.players || {}).forEach(player => {
@@ -2169,13 +2184,6 @@ export const ServerGameService = {
 
     if (strategy === 'AUTO' && hasAction) return gameState;
 
-    const singleStackItem = gameState.counterStack.length === 1 ? gameState.counterStack[0] : undefined;
-    if (strategy === 'AUTO' && singleStackItem && !singleStackItem.autoSingleChainShown) {
-      singleStackItem.autoSingleChainShown = true;
-      if (onUpdate) await onUpdate(gameState);
-      await ServerGameService.waitForVisualDelay(gameState, 900);
-    }
-
     await ServerGameService.resolveCounterStack(gameState, onUpdate);
     return gameState;
   },
@@ -2495,6 +2503,16 @@ export const ServerGameService = {
           : `link${linkNumber}：发动[${stackItem.card.fullName}]的[${effectLabel}]。`,
         metadata: { linkNumber, stackType: stackItem.type, effectIndex: stackItem.effectIndex }
       });
+    }
+
+    const priorityPlayer = gameState.priorityPlayerId ? gameState.players[gameState.priorityPlayerId] : undefined;
+    const strategy = priorityPlayer?.confrontationStrategy || 'AUTO';
+    const shouldShowChain =
+      !isUncounterable &&
+      !!gameState.priorityPlayerId &&
+      (strategy === 'ON' || (strategy === 'AUTO' && ServerGameService.playerHasAvailableConfrontationAction(gameState, gameState.priorityPlayerId)));
+    if (shouldShowChain) {
+      ServerGameService.markConfrontationChainAnimation(gameState, 1100);
     }
   },
 
