@@ -130,20 +130,6 @@ async function initDB() {
             )
         `);
 
-        await conn.query(`
-            CREATE TABLE IF NOT EXISTS card_comments (
-                id VARCHAR(50) PRIMARY KEY,
-                card_id VARCHAR(50) NOT NULL,
-                user_id VARCHAR(50) NOT NULL,
-                author_name VARCHAR(100) NOT NULL,
-                content TEXT NOT NULL,
-                created_at BIGINT NOT NULL,
-                updated_at BIGINT NOT NULL,
-                INDEX idx_card_comments_card_created (card_id, created_at),
-                INDEX idx_card_comments_user (user_id)
-            )
-        `);
-
         const accounts = [
             { id: 'admin', username: 'admin', password: 'admin123', name: 'Administrator', role: 'admin' },
             { id: 'user_guest1', username: 'guest1', password: 'guest111', name: 'Test User 1', role: 'user' },

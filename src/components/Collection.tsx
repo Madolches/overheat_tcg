@@ -17,7 +17,6 @@ import { getCardSkinUrl } from '../data/cardSkins';
 import { useCardSkinSettings } from '../hooks/useCardSkinSettings';
 import { CardSkinToggle } from './CardSkinToggle';
 import { getDeckCardIds } from '../lib/deckEntries';
-import { CardCommentsPanel } from './CardCommentsPanel';
 import {
   buildAdjustedVariantLookup,
   getCardAdjustmentVersionKey,
@@ -875,8 +874,6 @@ export const Collection: React.FC = () => {
                         </button>
                       </div>
                     </div>
-
-                    <CardCommentsPanel cardId={selectedCard.id} />
                   </div>
 
                   <div className="mt-6 md:mt-8 pt-6 md:pt-8 border-t border-white/5 flex items-center justify-between">
