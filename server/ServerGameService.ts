@@ -327,6 +327,21 @@ export const ServerGameService = {
     return undefined;
   },
 
+  getTriggerZoneLabel(zone?: TriggerLocation) {
+    const labels: Record<TriggerLocation, string> = {
+      HAND: '手牌',
+      UNIT: '战场',
+      ITEM: '道具区',
+      GRAVE: '墓地',
+      EXILE: '放逐区',
+      EROSION_FRONT: '侵蚀区正面',
+      EROSION_BACK: '侵蚀区背面',
+      PLAY: '使用区',
+      DECK: '卡组'
+    };
+    return zone ? labels[zone] || zone : '';
+  },
+
   isUnaffectedByCardEffect(gameState: GameState, target: Card, source?: Card, sourceOwnerUid?: string) {
     if (!source || target.gamecardId === source.gamecardId) return false;
     const targetOwnerUid = ServerGameService.findCardLocation(gameState, target.gamecardId)?.ownerUid;
@@ -2154,6 +2169,13 @@ export const ServerGameService = {
 
     if (strategy === 'AUTO' && hasAction) return gameState;
 
+    const singleStackItem = gameState.counterStack.length === 1 ? gameState.counterStack[0] : undefined;
+    if (strategy === 'AUTO' && singleStackItem && !singleStackItem.autoSingleChainShown) {
+      singleStackItem.autoSingleChainShown = true;
+      if (onUpdate) await onUpdate(gameState);
+      await ServerGameService.waitForVisualDelay(gameState, 900);
+    }
+
     await ServerGameService.resolveCounterStack(gameState, onUpdate);
     return gameState;
   },
@@ -3294,8 +3316,8 @@ export const ServerGameService = {
       type: 'ASK_TRIGGER',
       playerUid,
       options: [],
-      title: '发动提示',
-      description: `是否发动 ${getCardIdentity(gameState, playerUid, card)} [${card.fullName}] 的诱发效果：${effect.description}`,
+      title: `是否发动${ServerGameService.getTriggerZoneLabel(triggerLocation)}${card.fullName}的诱发效果？`,
+      description: `是否发动${ServerGameService.getTriggerZoneLabel(triggerLocation)}${card.fullName}的诱发效果？`,
       minSelections: 1,
       maxSelections: 1,
       callbackKey: 'TRIGGER_CHOICE',

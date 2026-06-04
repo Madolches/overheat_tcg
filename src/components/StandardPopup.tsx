@@ -43,6 +43,7 @@ type PopupOption = {
   zoneLabel?: string;
   disabled?: boolean;
   disabledReason?: string;
+  cardWidth?: 'default' | 'card';
 };
 
 type VisualOptionMeta = {
@@ -159,6 +160,9 @@ interface StandardPopupProps {
   instant?: boolean;
   presentation?: 'center' | 'duel-bottom';
   optionLayout?: 'grid' | 'row';
+  selectionStatusPlacement?: 'default' | 'header-center';
+  hidePaymentCancel?: boolean;
+  compactOverlay?: boolean;
 }
 
 const getOptionId = (option: PopupOption) => option.selectionId || option.card?.gamecardId || option.card?.id || option.id || '';
@@ -404,11 +408,21 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
   squarePanel = false,
   instant = false,
   presentation = 'center',
-  optionLayout
+  optionLayout,
+  selectionStatusPlacement = 'default',
+  hidePaymentCancel = false,
+  compactOverlay = false
 }) => {
   if (!isOpen) return null;
   const isDuelBottom = presentation === 'duel-bottom';
   const isRowLayout = optionLayout === 'row' || isDuelBottom;
+  const showHeaderSelectionStatus =
+    selectionStatusPlacement === 'header-center' &&
+    (mode === 'card_selection' || mode === 'player_selection' || mode === 'choice_selection') &&
+    maxSelections > 0;
+  const selectionStatusText = minSelections === maxSelections
+    ? `选择 ${maxSelections} 张`
+    : `选择 ${minSelections}-${maxSelections} 张`;
 
   const renderedOptions: PopupOption[] = options || cards.map(card => ({
     id: card.gamecardId || card.id,
@@ -426,6 +440,70 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
     const optionId = getOptionId(option);
     onCardClick?.({ gamecardId: optionId, id: optionId, fullName: option.label || optionId, type: 'UNIT', color: 'NONE' } as Card, e);
   };
+
+  if (compactOverlay) {
+    return (
+      <AnimatePresence initial={false}>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: isHidden ? 0 : 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.15 }}
+          className={cn(
+            "fixed inset-0 z-[1000] flex items-center justify-center p-4",
+            isHidden ? "pointer-events-none invisible" : "pointer-events-none visible"
+          )}
+        >
+          <motion.div
+            initial={{ scale: 0.98, y: 8 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.98, y: 8 }}
+            transition={{ type: "spring", damping: 24, stiffness: 380 }}
+            className="pointer-events-auto flex w-full max-w-xl flex-col overflow-hidden rounded-xl border border-white/15 bg-zinc-950/90 shadow-[0_14px_45px_rgba(0,0,0,0.45)] backdrop-blur-md"
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="relative flex min-h-11 items-center justify-center border-b border-white/10 px-12 py-2 text-center">
+              <div className="line-clamp-1 text-sm font-black text-white md:text-base">
+                {title}
+              </div>
+              {onHide && (
+                <button
+                  onClick={onHide}
+                  className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md border border-white/10 bg-white/5 text-white/55 transition-all hover:bg-white/10 hover:text-white"
+                  title="隐藏窗口以查看战场"
+                  aria-label="隐藏窗口以查看战场"
+                >
+                  <ChevronDown className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2 p-2">
+              <button
+                onClick={onConfirm}
+                disabled={confirmDisabled}
+                className={cn(
+                  "h-10 rounded-md bg-[#d7b45a] text-sm font-black text-black shadow-[#d7b45a]/20 transition-all hover:bg-[#e7c76b] active:scale-[0.98]",
+                  confirmDisabled && "cursor-not-allowed opacity-50 hover:bg-[#d7b45a]"
+                )}
+              >
+                {confirmText}
+              </button>
+              <button
+                onClick={onCancel || onClose}
+                disabled={confirmDisabled}
+                className={cn(
+                  "h-10 rounded-md border border-white/10 bg-zinc-800 text-sm font-black text-white transition-all hover:bg-zinc-700 active:scale-[0.98]",
+                  confirmDisabled && "cursor-not-allowed opacity-50 hover:bg-zinc-800"
+                )}
+              >
+                {cancelText}
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      </AnimatePresence>
+    );
+  }
 
   return (
     <AnimatePresence initial={false}>
@@ -509,16 +587,30 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
               </button>
             )}
 
-            <div className={cn("flex items-center gap-3", isDuelBottom ? "justify-start pr-24" : "justify-center mb-2")}>
-              {mode === 'double_selection' && <Sparkles className="w-6 h-6 text-[#f27d26] animate-pulse" />}
-              {(mode === 'card_selection' || mode === 'player_selection' || mode === 'choice_selection') && <Zap className="w-6 h-6 text-[#f27d26]" />}
-              {mode === 'payment_selection' && <Loader2 className="w-6 h-6 text-[#f27d26] animate-spin" />}
-              <h2 className={cn(
-                "font-black italic uppercase tracking-tighter text-white",
-                isDuelBottom ? "truncate text-sm md:text-xl" : "text-xl md:text-3xl"
-              )}>
-                {title}
-              </h2>
+            <div className={cn(
+              "relative flex w-full items-center gap-3",
+              isDuelBottom ? "justify-start pr-24" : "justify-center mb-2",
+              showHeaderSelectionStatus && isDuelBottom && "pr-12"
+            )}>
+              <div className={cn("flex min-w-0 items-center gap-3", showHeaderSelectionStatus && "max-w-[42%]")}>
+                {mode === 'double_selection' && <Sparkles className="w-6 h-6 shrink-0 text-[#f27d26] animate-pulse" />}
+                {(mode === 'card_selection' || mode === 'player_selection' || mode === 'choice_selection') && <Zap className="w-6 h-6 shrink-0 text-[#f27d26]" />}
+                {mode === 'payment_selection' && <Loader2 className="w-6 h-6 shrink-0 text-[#f27d26] animate-spin" />}
+                <h2 className={cn(
+                  "min-w-0 font-black italic uppercase tracking-tighter text-white",
+                  isDuelBottom ? "truncate text-sm md:text-xl" : "text-xl md:text-3xl"
+                )}>
+                  {title}
+                </h2>
+              </div>
+              {showHeaderSelectionStatus && (
+                <div className={cn(
+                  "absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-md border border-white/10 bg-white/5 px-4 py-1.5 text-center text-[10px] font-black uppercase tracking-widest text-zinc-300 md:text-xs",
+                  !isDuelBottom && "top-[calc(100%+1rem)] translate-y-0 rounded-full"
+                )}>
+                  {selectionStatusText}
+                </div>
+              )}
             </div>
             
             {description && (
@@ -531,7 +623,7 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
             )}
 
             {/* Selection Status */}
-            {(mode === 'card_selection' || mode === 'player_selection' || mode === 'choice_selection') && maxSelections > 0 && (
+            {selectionStatusPlacement !== 'header-center' && (mode === 'card_selection' || mode === 'player_selection' || mode === 'choice_selection') && maxSelections > 0 && (
               <div className={cn(
                 "px-4 py-1.5 bg-white/5 border border-white/10 text-[10px] md:text-xs font-black text-zinc-400 uppercase tracking-widest",
                 isDuelBottom ? "absolute bottom-2 left-1/2 -translate-x-1/2 rounded-md md:bottom-3" : "mt-4 rounded-full"
@@ -603,7 +695,12 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
 
                   if (shouldDrawOption) {
                     return (
-                      <div key={`${optionId || i}-${i}`} className={cn(isRowLayout && "w-36 shrink-0 md:w-44")}>
+                      <div
+                        key={`${optionId || i}-${i}`}
+                        className={cn(
+                          isRowLayout && (option.cardWidth === 'card' ? "w-24 shrink-0 md:w-32 lg:w-36" : "w-36 shrink-0 md:w-44")
+                        )}
+                      >
                         <VisualOptionCard
                           option={option}
                           isSelected={isSelected}
@@ -681,7 +778,7 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
                 <Loader2 className="w-3 h-3 animate-spin" />
                 等待确认
               </div>
-              {mode === 'payment_selection' && onCancel && (
+              {mode === 'payment_selection' && onCancel && !hidePaymentCancel && (
                 <button
                   onClick={onCancel}
                   className={cn(

@@ -370,6 +370,17 @@ export function useBattleAnimations(game: GameState | null, perspectiveUid?: str
     const currentProcessingKey = processingItemKey(game);
     if (currentProcessingKey && currentProcessingKey !== previousProcessingKeyRef.current) {
       const item = game.currentProcessingItem;
+      if (maxChainLengthRef.current === 1 && item) {
+        nextEvents.push({
+          id: `confrontation_chain_1_${item.timestamp || Date.now()}_resolve`,
+          type: 'confrontation',
+          side: 'neutral',
+          title: '对抗连锁',
+          subtitle: 'L1',
+          chainLength: 1,
+          chainItems: [stackItemToChainAnimationItem(item, 1, game, perspectiveUid)]
+        });
+      }
       // Only show resolving animation if the confrontation chain reached >= 2 links
       if (maxChainLengthRef.current >= 2) {
         nextEvents.push({

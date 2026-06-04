@@ -432,6 +432,7 @@ export interface StackItem {
   timestamp: number;
   isNegated?: boolean;
   isInterrupted?: boolean;
+  autoSingleChainShown?: boolean;
   skipDefense?: boolean;
 }
 
@@ -458,6 +459,7 @@ export interface EffectQuery {
     zoneLabel?: string;
     disabled?: boolean;
     disabledReason?: string;
+    cardWidth?: 'default' | 'card';
   }[];
   title: string;
   description: string;

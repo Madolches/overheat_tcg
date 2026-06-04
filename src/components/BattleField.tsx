@@ -216,6 +216,7 @@ export const BattleField: React.FC = () => {
   const [isConfronting, setIsConfronting] = useState(false);
 
   const lastAutoResolveRef = useRef<string | null>(null);
+  const autoSingleChainResolveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gameRef = useRef<GameState | null>(null);
   const pendingPlayCardRef = useRef<Card | null>(null);
   const [interruptionNotice, setInterruptionNotice] = useState<string | null>(null);
@@ -559,7 +560,23 @@ export const BattleField: React.FC = () => {
 
     if (shouldAutoPass) {
       if (game.phase === 'COUNTERING' && game.priorityPlayerId === myUid) {
-        handleResolve();
+        const singleChainKey = `${game.gameId || gameId}-${game.counterStack?.[0]?.timestamp || 'stack'}-${game.counterStack?.length || 0}`;
+        const shouldPauseForSingleAutoChain =
+          localStrategy === 'AUTO' &&
+          game.counterStack?.length === 1;
+
+        if (shouldPauseForSingleAutoChain) {
+          if (lastAutoResolveRef.current !== singleChainKey) {
+            lastAutoResolveRef.current = singleChainKey;
+            if (autoSingleChainResolveTimeoutRef.current) clearTimeout(autoSingleChainResolveTimeoutRef.current);
+            autoSingleChainResolveTimeoutRef.current = setTimeout(() => {
+              autoSingleChainResolveTimeoutRef.current = null;
+              handleResolve();
+            }, 900);
+          }
+        } else {
+          handleResolve();
+        }
       }
       if (game.phase === 'BATTLE_FREE' && game.battleState?.askConfront && 
          ((game.battleState.askConfront === 'ASKING_OPPONENT' && !me.isTurn) || 
@@ -567,6 +584,12 @@ export const BattleField: React.FC = () => {
         GameService.advancePhase(gameId, 'DECLINE_CONFRONTATION');
       }
     }
+    return () => {
+      if (autoSingleChainResolveTimeoutRef.current) {
+        clearTimeout(autoSingleChainResolveTimeoutRef.current);
+        autoSingleChainResolveTimeoutRef.current = null;
+      }
+    };
   }, [game?.phase, game?.priorityPlayerId, game?.battleState?.askConfront, game?.pendingQuery?.id, game?.isResolvingStack, game?.currentProcessingItem, localStrategy, canConfront, isSpectator]);
 
   // Reset interaction states when phase or priority changes
@@ -1231,9 +1254,34 @@ export const BattleField: React.FC = () => {
   const querySubmitLabel = normalizedPendingQueryType === 'SELECT_PAYMENT'
     ? '确认支付'
     : (isInspectOnlyPendingQuery ? '确认' : '确认选择');
-  const pendingTriggerSourceCard = normalizedPendingQueryType === 'ASK_TRIGGER'
-    ? findCardInGame(displayedPendingQuery?.context?.sourceCardId)
+  const pendingPaymentSourceCard = normalizedPendingQueryType === 'SELECT_PAYMENT'
+    ? findCardInGame(
+        displayedPendingQuery?.context?.paymentTargetId ||
+        displayedPendingQuery?.context?.targetCardId ||
+        displayedPendingQuery?.context?.targetId ||
+        displayedPendingQuery?.context?.sourceCardId
+      )
     : undefined;
+  const isEffectPaymentQuery =
+    normalizedPendingQueryType === 'SELECT_PAYMENT' &&
+    displayedPendingQuery?.callbackKey !== 'PLAY_CARD_PAYMENT';
+  const pendingQueryTitle = (() => {
+    if (isQueryHandoffWaiting) return '处理中...';
+    if (normalizedPendingQueryType === 'SELECT_PAYMENT' && pendingPaymentSourceCard) {
+      return `支付${pendingPaymentSourceCard.fullName}费用`;
+    }
+    return displayedPendingQuery?.title || '';
+  })();
+  const pendingQueryDescription = (() => {
+    if (isQueryHandoffWaiting) return '正在连续处理下一段效果选择';
+    if (normalizedPendingQueryType === 'ASK_TRIGGER') return '';
+    if (normalizedPendingQueryType === 'SELECT_PAYMENT') return '';
+    return displayedPendingQuery?.description || '';
+  })();
+  const pendingQueryPresentation =
+    normalizedPendingQueryType === 'ASK_TRIGGER' ? 'center' : 'duel-bottom';
+  const pendingQuerySelectionStatusPlacement =
+    normalizedPendingQueryType === 'SELECT_CARD' ? 'header-center' : 'default';
 
   const highlightedCardIds = useMemo(() => {
     const ids = new Set<string>();
@@ -2411,7 +2459,8 @@ export const BattleField: React.FC = () => {
             value: 'NO_CARD',
             label: '不加入手牌',
             icon: 'grave',
-            detail: '将正面侵蚀卡送入墓地'
+            detail: '将正面侵蚀卡送入墓地',
+            cardWidth: 'card'
           },
           ...me.erosionFront
             .filter(c => c !== null && c.displayState === 'FRONT_UPRIGHT')
@@ -3238,15 +3287,12 @@ export const BattleField: React.FC = () => {
       <StandardPopup
         key={`${displayedPendingQuery?.id || 'no-query'}-${pendingQueryPopupMode}`}
         isOpen={!!(!isSpectator && displayedPendingQuery && displayedPendingQuery.playerUid === myUid)}
-        title={isQueryHandoffWaiting ? '处理中...' : (displayedPendingQuery?.title || '')}
-        description={
-          isQueryHandoffWaiting
-            ? '正在连续处理下一段效果选择'
-            : (normalizedPendingQueryType === 'SELECT_PAYMENT' ? '' : (displayedPendingQuery?.description || ''))
-        }
+        title={pendingQueryTitle}
+        description={pendingQueryDescription}
         mode={pendingQueryPopupMode}
-        presentation="duel-bottom"
+        presentation={pendingQueryPresentation}
         optionLayout="row"
+        selectionStatusPlacement={pendingQuerySelectionStatusPlacement}
         options={
           normalizedPendingQueryType === 'ASK_TRIGGER' || normalizedPendingQueryType === 'SELECT_CHOICE' || normalizedPendingQueryType === 'SELECT_CARD'
             ? pendingQueryOptions
@@ -3306,6 +3352,8 @@ export const BattleField: React.FC = () => {
         confirmText={isQueryHandoffWaiting ? '处理中' : (pendingQueryPopupMode === 'double_selection' ? binaryConfirmText : querySubmitLabel)}
         cancelText={isQueryHandoffWaiting ? '处理中' : binaryCancelText}
         confirmDisabled={isQueryHandoffWaiting}
+        hidePaymentCancel={isEffectPaymentQuery}
+        compactOverlay={normalizedPendingQueryType === 'ASK_TRIGGER'}
         onConfirm={() => {
           if (!gameId || !displayedPendingQuery || isQueryHandoffWaiting) return;
           const submittingQuery = displayedPendingQuery;
@@ -3323,22 +3371,6 @@ export const BattleField: React.FC = () => {
         isHidden={isPopupHidden}
         instant
       >
-        {pendingTriggerSourceCard && (
-          <div className="flex items-center gap-3 rounded-lg border border-cyan-100/15 bg-black/35 p-2 md:max-w-xl">
-            <div className="w-14 shrink-0 overflow-hidden rounded border border-white/15 md:w-20">
-              <CardComponent card={pendingTriggerSourceCard} disableZoom cardBackUrl={cardBackUrl} />
-            </div>
-            <div className="min-w-0">
-              <div className="text-[10px] font-black tracking-[0.22em] text-cyan-100/80">诱发来源</div>
-              <div className="line-clamp-1 text-sm font-black text-white md:text-base">
-                {pendingTriggerSourceCard.fullName}
-              </div>
-              <div className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-white/45 md:text-xs">
-                {displayedPendingQuery?.description}
-              </div>
-            </div>
-          </div>
-        )}
         {normalizedPendingQueryType === 'SELECT_PAYMENT' && !isQueryHandoffWaiting && displayedPendingQuery && (
           renderPaymentTrayContent(displayedPendingQuery.paymentCost || 0, displayedPendingQuery.paymentColor)
         )}
