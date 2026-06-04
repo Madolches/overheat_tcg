@@ -1,6 +1,6 @@
 import { Card, CardEffect, TriggerLocation } from '../types/game';
 import { createAdjustedCardVariant } from '../lib/cardAdjustments';
-import { addInfluence, addTempDamage, addTempPower, allUnitsOnField, canPutUnitOntoBattlefield, createSelectCardQuery, ensureData, erosionCost, getOpponentUid, moveCard, ownUnits } from './BaseUtil';
+import { addInfluence, addTempDamage, addTempPower, allUnitsOnField, canPutUnitOntoBattlefield, createSelectCardQuery, ensureData, erosionCost, getOpponentUid, moveCard, ownUnits, putUnitOntoField } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
     id: '102050090_attack_lock',
@@ -75,6 +75,7 @@ const cardEffects: CardEffect[] = [{
       );
     },
     targetSpec: {
+      preselect: false,
       title: '选择强化单位',
       description: '选择战场上的最多2个单位，本回合中伤害+1、力量+1000。',
       minSelections: 0,
@@ -136,6 +137,45 @@ const card: Card = {
   uniqueId: null as any,
 };
 
+const isAdjustedSeliya = (card: Card | null | undefined) =>
+  !!card && card.id === '102050090' && card.adjustmentVersion === 'adjusted';
+
+const firstAdjustedSeliyaInDeckFromTop = (deck: Card[]) =>
+  [...deck].reverse().find(isAdjustedSeliya);
+
+const shouldUseAdjustedGoddessEntry: NonNullable<CardEffect['condition']> = (_gameState, playerState, instance, event) => {
+  if (event?.playerUid !== playerState.uid) return false;
+  if (!canPutUnitOntoBattlefield(playerState, instance)) return false;
+  if (instance.cardlocation === 'HAND') return true;
+  if (instance.cardlocation !== 'DECK') return false;
+  return firstAdjustedSeliyaInDeckFromTop(playerState.deck)?.gamecardId === instance.gamecardId;
+};
+
+const executeAdjustedGoddessEntry: NonNullable<CardEffect['execute']> = async (instance, gameState, playerState) => {
+  const liveInstance =
+    playerState.hand.find(card => card.gamecardId === instance.gamecardId) ||
+    playerState.deck.find(card => card.gamecardId === instance.gamecardId) ||
+    instance;
+
+  if (canPutUnitOntoBattlefield(playerState, liveInstance)) {
+    putUnitOntoField(gameState, playerState.uid, liveInstance, liveInstance);
+  }
+
+  const candidates = allUnitsOnField(gameState);
+  if (candidates.length === 0) return;
+  createSelectCardQuery(
+    gameState,
+    playerState.uid,
+    candidates,
+    '选择强化单位',
+    '选择战场上的最多2个单位，本回合中伤害+1、力量+1000。',
+    0,
+    Math.min(2, candidates.length),
+    { sourceCardId: liveInstance.gamecardId, effectId: '102050090_goddess_entry' },
+    card => card.cardlocation || 'UNIT'
+  );
+};
+
 const buildAdjustedEffects = (baseCard: Card): CardEffect[] =>
   (baseCard.effects || []).map(effect => {
     if (effect.id !== '102050090_goddess_entry') {
@@ -144,8 +184,12 @@ const buildAdjustedEffects = (baseCard: Card): CardEffect[] =>
 
     return {
       ...effect,
+      limitNameType: true,
       triggerLocation: ['HAND', 'DECK'],
-      description: '10+：进入女神化时，可以从手牌或卡组放置到战场，选择最多2个单位伤害+1、力量+1000。'
+      description: '10+：进入女神化时，可以从手牌或卡组放置到战场，选择最多2个单位伤害+1、力量+1000。',
+      condition: shouldUseAdjustedGoddessEntry,
+      execute: executeAdjustedGoddessEntry,
+      targetSpec: effect.targetSpec ? { ...effect.targetSpec, preselect: false } : undefined
     };
   });
 
