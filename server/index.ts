@@ -4399,30 +4399,6 @@ function getClientCardCatalog(includeEffects: boolean) {
         .map(card => serializeCatalogCard(card, includeEffects));
 }
 
-function normalizeCommentCardId(value: any) {
-    return String(value || '').trim();
-}
-
-function isCommentCardIdValid(cardId: string) {
-    return getLiveCardVariations()
-        .filter(isCardVisibleInCatalog)
-        .some(card => card.id === cardId);
-}
-
-function buildCardComment(row: any, user: any) {
-    const userId = user?.userId?.toString();
-    return {
-        id: row.id,
-        cardId: row.card_id,
-        userId: row.user_id,
-        authorName: row.author_name,
-        content: row.content,
-        createdAt: Number(row.created_at || 0),
-        updatedAt: Number(row.updated_at || 0),
-        canDelete: row.user_id?.toString() === userId || isAdminUser(user)
-    };
-}
-
 app.get('/api/cards/meta', async (req, res): Promise<void> => {
     try {
         const includeEffects = req.query.includeEffects === '1';
@@ -4431,91 +4407,6 @@ app.get('/api/cards/meta', async (req, res): Promise<void> => {
     } catch (err) {
         console.error('[CardsMeta] Failed to build card catalog:', err);
         res.status(500).json({ error: 'Failed to load card catalog' });
-    }
-});
-
-app.get('/api/cards/:cardId/comments', async (req, res): Promise<void> => {
-    const user = await getAuthenticatedUserFromHeader(req, res);
-    if (!user) { return; }
-
-    const cardId = normalizeCommentCardId(req.params.cardId);
-    if (!isCommentCardIdValid(cardId)) {
-        res.status(404).json({ error: '未找到该卡牌' });
-        return;
-    }
-
-    try {
-        const rows = await pool.query(
-            'SELECT * FROM card_comments WHERE card_id = ? ORDER BY created_at DESC LIMIT 100',
-            [cardId]
-        );
-        res.json({ comments: rows.map((row: any) => buildCardComment(row, user)) });
-    } catch (err) {
-        console.error('Card comments list error:', err);
-        res.status(500).json({ error: 'DB Error' });
-    }
-});
-
-app.post('/api/cards/:cardId/comments', async (req, res): Promise<void> => {
-    const user = await getAuthenticatedUserFromHeader(req, res);
-    if (!user) { return; }
-
-    const cardId = normalizeCommentCardId(req.params.cardId);
-    const content = String(req.body?.content || '').trim();
-    if (!isCommentCardIdValid(cardId)) {
-        res.status(404).json({ error: '未找到该卡牌' });
-        return;
-    }
-    if (!content) {
-        res.status(400).json({ error: '评论内容不能为空' });
-        return;
-    }
-    if (content.length > 500) {
-        res.status(400).json({ error: '评论不能超过 500 字' });
-        return;
-    }
-
-    try {
-        const now = Date.now();
-        const commentId = `card_comment_${now.toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
-        await pool.query(
-            'INSERT INTO card_comments (id, card_id, user_id, author_name, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [commentId, cardId, user.userId.toString(), getUserUsernameLabel(user), content, now, now]
-        );
-        const rows = await pool.query('SELECT * FROM card_comments WHERE id = ?', [commentId]);
-        res.json({ comment: buildCardComment(rows[0], user) });
-    } catch (err) {
-        console.error('Card comment create error:', err);
-        res.status(500).json({ error: 'DB Error' });
-    }
-});
-
-app.delete('/api/cards/comments/:commentId', async (req, res): Promise<void> => {
-    const user = await getAuthenticatedUserFromHeader(req, res);
-    if (!user) { return; }
-
-    const commentId = String(req.params.commentId || '').trim();
-    if (!commentId) {
-        res.status(400).json({ error: '评论 ID 无效' });
-        return;
-    }
-
-    try {
-        const rows = await pool.query('SELECT * FROM card_comments WHERE id = ?', [commentId]);
-        if (rows.length === 0) {
-            res.status(404).json({ error: '评论不存在' });
-            return;
-        }
-        const comment = rows[0];
-        if (comment.user_id?.toString() !== user.userId.toString() && !isAdminUser(user)) {
-            res.status(403).json({ error: '无权删除该评论' });
-            return;
-        }
-        await pool.query('DELETE FROM card_comments WHERE id = ?', [commentId]);
-        res.json({ ok: true, id: commentId });
-    } catch (err) {
-        console.error('Card comment delete error:', err);
-        res.status(500).json({ error: 'DB Error' });
     }
 });
 
