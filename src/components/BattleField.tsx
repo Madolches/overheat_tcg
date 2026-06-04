@@ -19,7 +19,7 @@ import { cn, getCardColorHanzi, getCardColorLabel, getCardImageUrl, getCardIdent
 import { KeywordBadges } from './KeywordBadges';
 import { BattleLogPanel } from './BattleLogPanel';
 import { battleLogText } from '../lib/battleLog';
-import { BattleAnimationLayer, battleAnimationGroupDuration, isBlockingBattleAnimation } from './BattleAnimationLayer';
+import { BattleAnimationLayer, battleAnimationGroupDuration, getBattleAnimationPlaybackGroup } from './BattleAnimationLayer';
 import { useBattleAnimationPreference, useBattleAnimations } from '../hooks/useBattleAnimations';
 
 const EFFECT_TYPE_LABELS: Record<string, string> = {
@@ -275,17 +275,11 @@ export const BattleField: React.FC = () => {
   }, []);
   const activeBlockingAnimationEvents = useMemo(() => {
     if (!battleAnimationsEnabled) return [];
-    if (!battleAnimations.events.length) return [];
-    const first = battleAnimations.events[0];
-    if (!isBlockingBattleAnimation(first)) return [];
-    const group = [];
-    for (const event of battleAnimations.events) {
-      if (event.type !== first.type) break;
-      group.push(event);
-    }
-    return group;
+    return getBattleAnimationPlaybackGroup(battleAnimations.events);
   }, [battleAnimations.events, battleAnimationsEnabled]);
-  const confrontationAnimationPlaying = battleAnimationsEnabled && battleAnimations.events.some(event => event.type === 'confrontation');
+  const serverAnimationHoldingUi = battleAnimationsEnabled && serverAnimationHoldUntil > Date.now();
+  const isBattleAnimationBlockingUi = activeBlockingAnimationEvents.length > 0 || serverAnimationHoldingUi;
+  const confrontationAnimationPlaying = activeBlockingAnimationEvents.some(event => event.type === 'confrontation');
   const confrontationHintUntil = game?.animationHint?.type === 'CONFRONTATION_CHAIN' && !game.isResolvingStack
     ? Number(game.animationHint.createdAt || Date.now()) + Math.max(900, Number(game.animationHint.durationMs || 1100))
     : 0;
@@ -321,12 +315,28 @@ export const BattleField: React.FC = () => {
     const remaining = serverAnimationHoldUntil - Date.now();
     if (remaining <= 0) return;
     const timer = window.setTimeout(() => {
-      const isAnimationPlaying = battleAnimationsEnabled && (battleAnimationsRef.current?.events?.some(isBlockingBattleAnimation) || false);
+      const isAnimationPlaying = battleAnimationsEnabled && getBattleAnimationPlaybackGroup(battleAnimationsRef.current?.events || []).length > 0;
       if (isAnimationPlaying || stateBufferRef.current.length === 0) return;
       applyBufferedGameState();
     }, remaining);
     return () => window.clearTimeout(timer);
   }, [activeBlockingAnimationEvents.length, applyBufferedGameState, battleAnimationsEnabled, serverAnimationHoldUntil, stateBufferVersion]);
+
+  useEffect(() => {
+    if (!serverAnimationHoldingUi || activeBlockingAnimationEvents.length > 0 || stateBufferRef.current.length > 0) return;
+    const remaining = serverAnimationHoldUntil - Date.now();
+    if (remaining <= 0) {
+      serverAnimationHoldUntilRef.current = 0;
+      setServerAnimationHoldUntil(0);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      if (stateBufferRef.current.length > 0) return;
+      serverAnimationHoldUntilRef.current = 0;
+      setServerAnimationHoldUntil(0);
+    }, remaining + 40);
+    return () => window.clearTimeout(timer);
+  }, [activeBlockingAnimationEvents.length, serverAnimationHoldUntil, serverAnimationHoldingUi, stateBufferVersion]);
 
   useEffect(() => {
     if (!battleAnimationsEnabled || !activeBlockingAnimationEvents.length || !socket || !gameId) return;
@@ -343,7 +353,10 @@ export const BattleField: React.FC = () => {
   const animatingCardIds = useMemo(() => {
     const ids = new Set<string>();
     battleAnimations.events.forEach(event => {
-      if (isBlockingBattleAnimation(event) && event.sourceCardId) {
+      if (
+        event.sourceCardId &&
+        (event.type === 'card-played' || event.type === 'card-draw' || event.type === 'erosion-flip')
+      ) {
         ids.add(event.sourceCardId);
       }
     });
@@ -388,6 +401,7 @@ export const BattleField: React.FC = () => {
 
   const canConfront = useMemo(() => {
     if (isSpectator || !game || !me || !myUid) return false;
+    if (isBattleAnimationBlockingUi) return false;
     if (game.pendingQuery || game.isResolvingStack || game.currentProcessingItem) return false;
 
     const isCounteringTurn = game.phase === 'COUNTERING' && game.priorityPlayerId === myUid;
@@ -429,7 +443,7 @@ export const BattleField: React.FC = () => {
     return activationZones.some(({ cards, location }) =>
       cards.some(card => canActivateCardEffect(card, location))
     );
-  }, [game, me, myUid, isSpectator]);
+  }, [game, me, myUid, isSpectator, isBattleAnimationBlockingUi]);
 
 
 
@@ -529,7 +543,7 @@ export const BattleField: React.FC = () => {
       const elapsed = now - (game.phaseTimerStart || now);
 
       const me = game.players[myUid];
-      const isAnimationPlaying = battleAnimationsEnabled && (battleAnimationsRef.current?.events?.some(isBlockingBattleAnimation) || false);
+      const isAnimationPlaying = battleAnimationsEnabled && getBattleAnimationPlaybackGroup(battleAnimationsRef.current?.events || []).length > 0;
       const isWaiting = game.isResolvingStack ||
         game.currentProcessingItem ||
         game.pendingQuery ||
@@ -561,7 +575,7 @@ export const BattleField: React.FC = () => {
 
   useEffect(() => {
     if (isSpectator || !game || !gameId) return;
-    if (game.pendingQuery || game.isResolvingStack || game.currentProcessingItem) return;
+    if (isBattleAnimationBlockingUi || game.pendingQuery || game.isResolvingStack || game.currentProcessingItem) return;
     
     // OFF Strategy: Always auto-pass
     // AUTO Strategy: Auto-pass ONLY if no cards/effects available
@@ -587,7 +601,7 @@ export const BattleField: React.FC = () => {
         GameService.advancePhase(gameId, 'DECLINE_CONFRONTATION');
       }
     }
-  }, [game?.phase, game?.priorityPlayerId, game?.battleState?.askConfront, game?.pendingQuery?.id, game?.isResolvingStack, game?.currentProcessingItem, localStrategy, canConfront, isSpectator]);
+  }, [game?.phase, game?.priorityPlayerId, game?.battleState?.askConfront, game?.pendingQuery?.id, game?.isResolvingStack, game?.currentProcessingItem, localStrategy, canConfront, isSpectator, isBattleAnimationBlockingUi]);
 
   // Reset interaction states when phase or priority changes
   useEffect(() => {
@@ -699,7 +713,7 @@ export const BattleField: React.FC = () => {
       const serverAnimationUntil = Number(newState.animationUntil || 0);
       const serverHoldUntil = hintDuration > 0 ? Date.now() + hintDuration : serverAnimationUntil;
       const isServerAnimationHold = serverHoldUntil > Date.now();
-      const localAnimationPlaying = battleAnimationsEnabled && (battleAnimationsRef.current?.events?.some(isBlockingBattleAnimation) || false);
+      const localAnimationPlaying = battleAnimationsEnabled && getBattleAnimationPlaybackGroup(battleAnimationsRef.current?.events || []).length > 0;
       const existingServerHold = serverAnimationHoldUntilRef.current > Date.now();
       const startsServerHold = isServerAnimationHold && serverAnimationHoldUntilRef.current === 0;
       const isAnimationPlaying = localAnimationPlaying || existingServerHold;
@@ -1135,6 +1149,7 @@ export const BattleField: React.FC = () => {
   const previewEffectiveColors = displayedPreviewCard ? getEffectiveCardColors(displayedPreviewCard) : [];
 
   const displayedPendingQuery = game?.pendingQuery || queryHandoff?.query || null;
+  const canShowPendingInteraction = !isBattleAnimationBlockingUi;
   const isQueryHandoffWaiting = !!queryHandoff && !game?.pendingQuery;
   const pendingQuery = displayedPendingQuery;
   const normalizedPendingQueryType = pendingQuery?.type?.replace(/-/g, '_').toUpperCase();
@@ -1283,6 +1298,7 @@ export const BattleField: React.FC = () => {
   const highlightedCardIds = useMemo(() => {
     const ids = new Set<string>();
     if (isSpectator || !game || !me || !myUid) return ids;
+    if (isBattleAnimationBlockingUi) return ids;
     if (isSelectCardPendingQuery && game.pendingQuery?.playerUid === myUid) {
       selectablePendingQueryCardIds.forEach(id => ids.add(id));
       return ids;
@@ -1347,7 +1363,7 @@ export const BattleField: React.FC = () => {
     });
 
     return ids;
-  }, [game, me, myUid, isSpectator, isSelectCardPendingQuery, selectablePendingQueryCardIds]);
+  }, [game, me, myUid, isSpectator, isBattleAnimationBlockingUi, isSelectCardPendingQuery, selectablePendingQueryCardIds]);
 
 
 
@@ -1795,6 +1811,7 @@ export const BattleField: React.FC = () => {
 
   const handleResolve = async () => {
     if (!gameId) return;
+    if (isBattleAnimationBlockingUi) return;
     if (game.pendingQuery || game.isResolvingStack || game.currentProcessingItem) return;
     try {
       setIsConfronting(false);
@@ -2574,6 +2591,7 @@ export const BattleField: React.FC = () => {
                   canConfront={canConfront}
                   isConfrontPromptActive={
                     !isSpectator &&
+                    !isBattleAnimationBlockingUi &&
                     game.phase === 'BATTLE_FREE' &&
                     !!game.battleState?.askConfront &&
                     (
@@ -2583,6 +2601,7 @@ export const BattleField: React.FC = () => {
                   }
                   isCounteringPromptActive={
                     !isSpectator &&
+                    !isBattleAnimationBlockingUi &&
                     game.phase === 'COUNTERING' &&
                     game.priorityPlayerId === myUid &&
                     !game.pendingQuery &&
@@ -2592,6 +2611,7 @@ export const BattleField: React.FC = () => {
                   isCounteringPromptWaiting={confrontationPromptWaiting}
                   isDefensePromptActive={
                     !isSpectator &&
+                    !isBattleAnimationBlockingUi &&
                     game.phase === 'DEFENSE_DECLARATION' &&
                     !me.isTurn &&
                     !game.pendingQuery &&
@@ -2623,13 +2643,13 @@ export const BattleField: React.FC = () => {
                     !!viewingZone ||
                     isRulebookOpen ||
                     (!isSpectator && (
-                      !!game.pendingQuery ||
+                      (!isBattleAnimationBlockingUi && !!game.pendingQuery) ||
                       game.phase === 'EROSION' ||
                       game.phase === 'DISCARD' ||
                       game.phase === 'END' ||
                       !!pendingPlayCard ||
-                      !!effectSelection ||
-                      !!effectConfirmation ||
+                      (!isBattleAnimationBlockingUi && !!effectSelection) ||
+                      (!isBattleAnimationBlockingUi && !!effectConfirmation) ||
                       !!allianceConfirmation ||
                       showPhaseMenu
                     )) ||
@@ -2645,7 +2665,7 @@ export const BattleField: React.FC = () => {
                 onEventComplete={battleAnimations.dismiss}
                 hoverPreview={hoverPreviewCard}
               />
-              {battleAnimationsEnabled && battleAnimations.events.some(e => e.type === 'card-played') && (
+              {isBattleAnimationBlockingUi && (
                 <div className="absolute inset-0 z-[210] pointer-events-auto bg-transparent cursor-wait" />
               )}
             </div>
@@ -2769,7 +2789,7 @@ export const BattleField: React.FC = () => {
       {/* Card Action Menu */}
       {/* Unified Card Action Menu */}
       <AnimatePresence>
-        {cardMenu && (
+        {!isBattleAnimationBlockingUi && cardMenu && (
           <>
             <div className="fixed inset-0 z-[1990]" onClick={() => setCardMenu(null)}></div>
             <motion.div
@@ -2789,7 +2809,7 @@ export const BattleField: React.FC = () => {
             >
               <div className="md:hidden w-12 h-1 bg-white/20 rounded-full mb-2 shrink-0" />
               <div className="md:hidden text-[10px] font-black text-white/40 tracking-[0.2em] mb-2 shrink-0">操作</div>
-              {isPopupHidden && isSelectCardPendingQuery && game.pendingQuery?.playerUid === myUid && (() => {
+              {canShowPendingInteraction && isPopupHidden && isSelectCardPendingQuery && game.pendingQuery?.playerUid === myUid && (() => {
                 const optionId = cardMenu.card.gamecardId || cardMenu.card.id;
                 if (!selectablePendingQueryCardIds.has(optionId)) return null;
                 const isSelected = selectedQueryIds.includes(optionId);
@@ -2816,7 +2836,7 @@ export const BattleField: React.FC = () => {
                   </motion.button>
                 );
               })()}
-              {isPopupHidden && game.pendingQuery?.playerUid === myUid && (
+              {canShowPendingInteraction && isPopupHidden && game.pendingQuery?.playerUid === myUid && (
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   className="px-4 py-3 md:py-1.5 text-[12px] md:text-[10px] font-bold text-black bg-[#f27d26] rounded-full shadow-lg border border-white/20 flex items-center justify-center w-full"
@@ -2828,7 +2848,7 @@ export const BattleField: React.FC = () => {
                   展开窗口
                 </motion.button>
               )}
-              {isPopupHidden && isSelectCardPendingQuery && game.pendingQuery?.playerUid === myUid && selectedQueryIds.length >= (game.pendingQuery?.minSelections || 0) && (
+              {canShowPendingInteraction && isPopupHidden && isSelectCardPendingQuery && game.pendingQuery?.playerUid === myUid && selectedQueryIds.length >= (game.pendingQuery?.minSelections || 0) && (
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   className="px-4 py-3 md:py-1.5 text-[12px] md:text-[10px] font-bold text-white bg-[#22c55e] rounded-full shadow-lg border border-white/20 flex items-center justify-center w-full"
@@ -3098,7 +3118,7 @@ export const BattleField: React.FC = () => {
 
       {/* Effect Selection Modal */}
       <AnimatePresence>
-        {effectSelection && (
+        {canShowPendingInteraction && effectSelection && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: isPopupHidden ? 0 : 1 }}
@@ -3170,7 +3190,7 @@ export const BattleField: React.FC = () => {
 
       {/* Effect Confirmation Modal */}
       <AnimatePresence>
-        {effectConfirmation && (
+        {canShowPendingInteraction && effectConfirmation && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: isPopupHidden ? 0 : 1 }}
@@ -3264,7 +3284,7 @@ export const BattleField: React.FC = () => {
 
       {/* Waiting for Opponent Query Overlay */}
       <AnimatePresence>
-        {!isSpectator && game.pendingQuery && game.pendingQuery.playerUid !== myUid && (
+        {canShowPendingInteraction && !isSpectator && game.pendingQuery && game.pendingQuery.playerUid !== myUid && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -3284,7 +3304,7 @@ export const BattleField: React.FC = () => {
       {/* Standardized My Pending Query Popup */}
       <StandardPopup
         key={`${displayedPendingQuery?.id || 'no-query'}-${pendingQueryPopupMode}`}
-        isOpen={!!(!isSpectator && displayedPendingQuery && displayedPendingQuery.playerUid === myUid)}
+        isOpen={!!(canShowPendingInteraction && !isSpectator && displayedPendingQuery && displayedPendingQuery.playerUid === myUid)}
         title={pendingQueryTitle}
         description={pendingQueryDescription}
         mode={pendingQueryPopupMode}

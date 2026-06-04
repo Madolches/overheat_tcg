@@ -67,16 +67,42 @@ const DISPLAY_MS: Record<BattleAnimationType, number> = {
   'card-draw': 2000
 };
 
-const CARD_MOVE_TYPES = new Set<BattleAnimationType>(['card-played', 'erosion-flip', 'card-draw']);
+const PARALLEL_ANIMATION_TYPES = new Set<BattleAnimationType>(['card-played', 'erosion-flip', 'card-draw']);
+const UI_BLOCKING_ANIMATION_TYPES = new Set<BattleAnimationType>([
+  'card-played',
+  'damage',
+  'attack',
+  'confrontation',
+  'goddess',
+  'defeat',
+  'erosion-flip',
+  'card-draw'
+]);
 
-export const isBlockingBattleAnimation = (event: BattleAnimationEvent) => CARD_MOVE_TYPES.has(event.type);
+export const isUiBlockingBattleAnimation = (event: BattleAnimationEvent) => UI_BLOCKING_ANIMATION_TYPES.has(event.type);
+export const isBlockingBattleAnimation = isUiBlockingBattleAnimation;
+
+export const getBattleAnimationPlaybackGroup = (events: BattleAnimationEvent[]) => {
+  if (!events.length) return [];
+  const first = events[0];
+  if (!isUiBlockingBattleAnimation(first)) return [];
+  if (!PARALLEL_ANIMATION_TYPES.has(first.type)) return [first];
+
+  const group: BattleAnimationEvent[] = [];
+  for (const event of events) {
+    if (event.type !== first.type) break;
+    group.push(event);
+  }
+  return group;
+};
 
 export const battleAnimationGroupDuration = (events: BattleAnimationEvent[]) => {
-  if (!events.length) return 0;
-  const firstType = events[0].type;
+  const playbackGroup = getBattleAnimationPlaybackGroup(events);
+  if (!playbackGroup.length) return 0;
+  const firstType = playbackGroup[0].type;
   if (firstType === 'erosion-flip') return 1500;
-  if (firstType === 'card-draw') return 2000 + (events.length - 1) * 120;
-  return (events[0].durationMs || DISPLAY_MS[firstType]) + (events.length - 1) * 120;
+  if (firstType === 'card-draw') return 2000 + (playbackGroup.length - 1) * 120;
+  return (playbackGroup[0].durationMs || DISPLAY_MS[firstType]) + (playbackGroup.length - 1) * 120;
 };
 
 const EVENT_TONE: Record<BattleAnimationType, string> = {
@@ -145,26 +171,8 @@ export const BattleAnimationLayer: React.FC<BattleAnimationLayerProps> = ({
 }) => {
   const layerRef = useRef<HTMLDivElement>(null);
 
-  // Group parallel events: contiguous 'card-played' events at the front can play simultaneously
   const parallelEvents = React.useMemo(() => {
-    const list: BattleAnimationEvent[] = [];
-    let groupType: string | null = null;
-    
-    for (const event of events) {
-      if (!groupType) {
-        groupType = event.type === 'card-played' || event.type === 'erosion-flip' || event.type === 'card-draw' ? event.type : 'cinematic';
-      }
-      
-      if (groupType === 'cinematic') {
-        if (list.length === 0) list.push(event);
-        break;
-      } else if (event.type === groupType) {
-        list.push(event);
-      } else {
-        break;
-      }
-    }
-    return list;
+    return getBattleAnimationPlaybackGroup(events);
   }, [events]);
 
   useEffect(() => {
