@@ -5,11 +5,13 @@ import { isCardVisibleInCatalog } from '../lib/cardCatalogFilters';
 type CardCatalogMode = 'with-effects' | 'no-effects';
 
 const CARD_CATALOG_STORAGE_KEYS: Record<CardCatalogMode, string> = {
-  'with-effects': 'card_catalog_v6_with_effects',
-  'no-effects': 'card_catalog_v6_no_effects'
+  'with-effects': 'card_catalog_v7_with_effects',
+  'no-effects': 'card_catalog_v7_no_effects'
 };
 
 const OLD_CARD_CATALOG_STORAGE_KEYS = [
+  'card_catalog_v6_with_effects',
+  'card_catalog_v6_no_effects',
   'card_catalog_v5_with_effects',
   'card_catalog_v5_no_effects',
   'card_catalog_v4_with_effects',
@@ -43,7 +45,7 @@ function resolveMode(includeEffects: boolean) {
 async function fetchCardCatalog(includeEffects: boolean) {
   const mode = resolveMode(includeEffects);
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
-  const res = await fetch(`${BACKEND_URL}/api/cards/meta?includeEffects=${includeEffects ? '1' : '0'}&catalogVersion=6`, {
+  const res = await fetch(`${BACKEND_URL}/api/cards/meta?includeEffects=${includeEffects ? '1' : '0'}&catalogVersion=7`, {
     cache: 'no-store'
   });
 

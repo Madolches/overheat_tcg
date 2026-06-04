@@ -4,12 +4,14 @@ import { hasCardSkin } from '../data/cardSkins';
 
 interface CardSkinSettings {
   enabledCardKeys: string[];
+  showOpponentCardSkins: boolean;
 }
 
 const STORAGE_KEY = 'ohr_card_skin_settings_v2';
 const CHANGE_EVENT = 'ohr-card-skin-settings-change';
 const DEFAULT_SETTINGS: CardSkinSettings = {
-  enabledCardKeys: []
+  enabledCardKeys: [],
+  showOpponentCardSkins: true
 };
 
 const isBrowser = typeof window !== 'undefined';
@@ -26,7 +28,8 @@ const normalizeSettings = (value: unknown): CardSkinSettings => {
   const enabledCardKeys = Array.isArray(raw.enabledCardKeys) ? raw.enabledCardKeys : [];
 
   return {
-    enabledCardKeys: Array.from(new Set(enabledCardKeys.filter((key): key is string => typeof key === 'string')))
+    enabledCardKeys: Array.from(new Set(enabledCardKeys.filter((key): key is string => typeof key === 'string'))),
+    showOpponentCardSkins: raw.showOpponentCardSkins !== false
   };
 };
 
@@ -81,7 +84,12 @@ export const setCardSkinEnabled = (card: Card, enabled: boolean) => {
   if (enabled) enabledKeys.add(key);
   else enabledKeys.delete(key);
 
-  writeCardSkinSettings({ enabledCardKeys: Array.from(enabledKeys) });
+  writeCardSkinSettings({ ...settings, enabledCardKeys: Array.from(enabledKeys) });
+};
+
+export const setShowOpponentCardSkins = (enabled: boolean) => {
+  const settings = getStoredCardSkinSettings();
+  writeCardSkinSettings({ ...settings, showOpponentCardSkins: enabled });
 };
 
 export const useCardSkinSettings = () => {
@@ -101,10 +109,16 @@ export const useCardSkinSettings = () => {
     setCardSkinEnabled(card, !isCardSkinEnabledWithSettings(card, getStoredCardSkinSettings()));
   }, []);
 
+  const updateShowOpponentCardSkins = useCallback((enabled: boolean) => {
+    setShowOpponentCardSkins(enabled);
+  }, []);
+
   return {
     settings,
     isCardSkinEnabled,
     setCardSkinEnabled: updateCardSkinEnabled,
-    toggleCardSkin
+    toggleCardSkin,
+    showOpponentCardSkins: settings.showOpponentCardSkins,
+    setShowOpponentCardSkins: updateShowOpponentCardSkins
   };
 };

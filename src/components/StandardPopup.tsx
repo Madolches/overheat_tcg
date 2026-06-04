@@ -133,7 +133,7 @@ interface StandardPopupProps {
   
   // Card Selection & Display props
   cards?: Card[];
-  cardMeta?: Record<string, { ownerName?: string; slotLabel?: string; zoneLabel?: string; isMine?: boolean; isFaceDown?: boolean; effectiveAcValue?: number }>;
+  cardMeta?: Record<string, { ownerName?: string; slotLabel?: string; zoneLabel?: string; isMine?: boolean; isFaceDown?: boolean; effectiveAcValue?: number; ignoreSkin?: boolean }>;
   options?: PopupOption[];
   selectedIds?: string[];
   highlightedIds?: string[];
@@ -167,8 +167,7 @@ const isPlayerOption = (option: PopupOption) => {
 const isGeneratedChoiceOptionId = (id?: string) =>
   /^\d+_option_[A-Z]+$/i.test(String(id || ''));
 
-const getChoiceOptionEyebrow = (option: PopupOption) =>
-  option.optionCode ? `选项 ${option.optionCode}` : undefined;
+const getChoiceOptionEyebrow = (_option: PopupOption) => undefined;
 
 const getChoiceOptionLabel = (option: PopupOption, id: string) =>
   option.label || option.card?.fullName || (isGeneratedChoiceOptionId(id) ? getChoiceOptionEyebrow(option) : id) || '选项';
@@ -211,7 +210,7 @@ const getVisualOptionMeta = (option: PopupOption): VisualOptionMeta => {
   if (standardVisual) {
     const Icon = standardVisual.Icon || getChoiceIcon(option);
     return {
-      eyebrow: standardEyebrow || standardVisual.eyebrow || '效果选项',
+      eyebrow: standardEyebrow || standardVisual.eyebrow || '',
       title: label,
       detail: detail || standardVisual.detail,
       Icon,
@@ -223,7 +222,7 @@ const getVisualOptionMeta = (option: PopupOption): VisualOptionMeta => {
   switch (semanticId) {
     case 'OPTION_A':
       return {
-        eyebrow: standardEyebrow || '选项A',
+        eyebrow: standardEyebrow || '',
         title: label,
         detail: detail || '强化进入战场的单位',
         Icon: Flame,
@@ -232,7 +231,7 @@ const getVisualOptionMeta = (option: PopupOption): VisualOptionMeta => {
       };
     case 'OPTION_B':
       return {
-        eyebrow: standardEyebrow || '选项B',
+        eyebrow: standardEyebrow || '',
         title: label,
         detail: detail || '横置对手单位',
         Icon: RotateCcw,
@@ -241,7 +240,7 @@ const getVisualOptionMeta = (option: PopupOption): VisualOptionMeta => {
       };
     case 'OPTION_C':
       return {
-        eyebrow: standardEyebrow || '选项C',
+        eyebrow: standardEyebrow || '',
         title: label,
         detail: detail || '从墓地移动卡牌',
         Icon: Layers,
@@ -250,7 +249,7 @@ const getVisualOptionMeta = (option: PopupOption): VisualOptionMeta => {
       };
     case 'MODE_A':
       return {
-        eyebrow: standardEyebrow || '模式A',
+        eyebrow: standardEyebrow || '',
         title: label,
         detail: detail || '抽卡与侵蚀区操作',
         Icon: PackagePlus,
@@ -259,7 +258,7 @@ const getVisualOptionMeta = (option: PopupOption): VisualOptionMeta => {
       };
     case 'MODE_B':
       return {
-        eyebrow: standardEyebrow || '模式B',
+        eyebrow: standardEyebrow || '',
         title: label,
         detail: detail || '破坏指定目标',
         Icon: Trash2,
@@ -268,7 +267,7 @@ const getVisualOptionMeta = (option: PopupOption): VisualOptionMeta => {
       };
     case 'MODE_EXHAUST':
       return {
-        eyebrow: standardEyebrow || '模式A',
+        eyebrow: standardEyebrow || '',
         title: label,
         detail: detail || '横置目标单位',
         Icon: RotateCcw,
@@ -277,7 +276,7 @@ const getVisualOptionMeta = (option: PopupOption): VisualOptionMeta => {
       };
     case 'MODE_BOUNCE':
       return {
-        eyebrow: standardEyebrow || '模式B',
+        eyebrow: standardEyebrow || '',
         title: label,
         detail: detail || '返回手牌',
         Icon: Undo2,
@@ -290,7 +289,7 @@ const getVisualOptionMeta = (option: PopupOption): VisualOptionMeta => {
       const isDanger = Icon === Trash2 || Icon === Sword;
       const isMove = Icon === RotateCcw || Icon === Undo2 || Icon === Layers;
       return {
-        eyebrow: standardEyebrow || (isType ? '卡片种类' : '效果选项'),
+        eyebrow: standardEyebrow || (isType ? '卡片种类' : ''),
         title: label,
         detail,
         Icon,
@@ -342,10 +341,12 @@ const VisualOptionCard: React.FC<{
       <div className="absolute inset-x-4 bottom-4 h-px bg-black/25" />
       <div className="relative z-10 flex h-full flex-col items-center justify-between px-3 py-4 text-center text-white md:px-4 md:py-5">
         <div className="w-full">
-          <div className="mx-auto inline-flex max-w-full items-center justify-center rounded-md border border-white/15 bg-zinc-950/55 px-2 py-1 text-center text-[8px] md:text-[10px] font-black uppercase leading-tight tracking-[0.12em] text-white/80 shadow-sm backdrop-blur-sm">
-            {meta.eyebrow}
-          </div>
-          <div className="mt-2 line-clamp-3 text-sm md:text-base font-black leading-tight">
+          {meta.eyebrow && (
+            <div className="mx-auto inline-flex max-w-full items-center justify-center rounded-md border border-white/15 bg-zinc-950/55 px-2 py-1 text-center text-[8px] md:text-[10px] font-black uppercase leading-tight tracking-[0.12em] text-white/80 shadow-sm backdrop-blur-sm">
+              {meta.eyebrow}
+            </div>
+          )}
+          <div className={cn('line-clamp-3 text-sm font-black leading-tight md:text-base', meta.eyebrow ? 'mt-2' : 'mt-1')}>
             {meta.title}
           </div>
         </div>
@@ -603,7 +604,7 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
                           : cn("border-white/5 opacity-80 hover:opacity-100", "cursor-pointer")
                       )}
                     >
-                      <CardComponent card={card} isBack={isFaceDown} disableZoom={true} cardBackUrl={cardBackUrl} effectiveAcValue={meta.effectiveAcValue} />
+                      <CardComponent card={card} isBack={isFaceDown} disableZoom={true} cardBackUrl={cardBackUrl} effectiveAcValue={meta.effectiveAcValue} ignoreSkin={!!meta.ignoreSkin} />
                       {locationText && (
                         <div className="absolute left-2 top-2 max-w-[calc(100%-1rem)] rounded-lg bg-black/80 px-2 py-1 text-[10px] font-black leading-tight text-white shadow-lg ring-1 ring-white/10">
                           {locationText}

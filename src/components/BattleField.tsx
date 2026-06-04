@@ -378,7 +378,7 @@ export const BattleField: React.FC = () => {
   const lastStrategyUpdateRef = useRef<number>(0);
   const lastJoinEmitRef = useRef<number>(0);
   const [pregameNow, setPregameNow] = useState(Date.now());
-  const { isCardSkinEnabled } = useCardSkinSettings();
+  const { isCardSkinEnabled, showOpponentCardSkins } = useCardSkinSettings();
   const [debugTarget, setDebugTarget] = useState<DebugTarget | null>(null);
   const [debugSelectedCard, setDebugSelectedCard] = useState<Card | null>(null);
   const [debugMoveTargetZone, setDebugMoveTargetZone] = useState<TriggerLocation>('HAND');
@@ -386,8 +386,31 @@ export const BattleField: React.FC = () => {
   const [debugMoveTargetIndex, setDebugMoveTargetIndex] = useState<number>(0);
   const [debugDrawCount, setDebugDrawCount] = useState<number>(1);
 
-  const getPreviewFullImage = (card: Card) => {
-    const shouldUseSkin = card.skinEnabled === true || (card.skinEnabled === undefined && isCardSkinEnabled(card));
+  const isOpponentOwnedCard = (card?: Card | null) => {
+    if (!card || !opponent) return false;
+    const zones = [
+      ...opponent.hand,
+      ...opponent.deck,
+      ...opponent.grave,
+      ...opponent.exile,
+      ...opponent.unitZone,
+      ...opponent.itemZone,
+      ...opponent.erosionFront,
+      ...opponent.erosionBack,
+      ...opponent.playZone
+    ];
+    return zones.some(candidate => candidate?.gamecardId === card.gamecardId);
+  };
+
+  const shouldIgnoreSkinForCard = (card?: Card | null, options?: { ownerUid?: string | null; isOpponent?: boolean }) => {
+    if (showOpponentCardSkins) return false;
+    if (options?.isOpponent) return true;
+    if (options?.ownerUid && myUid && options.ownerUid.toString() !== myUid.toString()) return true;
+    return isOpponentOwnedCard(card);
+  };
+
+  const getPreviewFullImage = (card: Card, options?: { ownerUid?: string | null; isOpponent?: boolean }) => {
+    const shouldUseSkin = !shouldIgnoreSkinForCard(card, options) && (card.skinEnabled === true || (card.skinEnabled === undefined && isCardSkinEnabled(card)));
     return (shouldUseSkin && getCardSkinUrl(card)) ||
       card.fullImageUrl ||
       card.imageUrl ||
@@ -3104,6 +3127,7 @@ export const BattleField: React.FC = () => {
                   isPopupHidden={isPopupHidden}
                   onHidePopup={() => setIsPopupHidden(true)}
                   onExpand={() => setIsPopupHidden(false)}
+                  ignoreOpponentCardSkins={!showOpponentCardSkins}
                   sandboxEditMode={isDebugEnabled}
                   onSandboxZoneClick={openDebugTarget}
 
@@ -3177,7 +3201,13 @@ export const BattleField: React.FC = () => {
                   <div className="w-48 md:w-56 relative z-10 transition-all">
                     {game.currentProcessingItem.card ? (
                       <div className="relative group">
-                        <CardComponent card={game.currentProcessingItem.card} isExhausted={false} disableZoom cardBackUrl={cardBackUrl} />
+                        <CardComponent
+                          card={game.currentProcessingItem.card}
+                          isExhausted={false}
+                          disableZoom
+                          cardBackUrl={cardBackUrl}
+                          ignoreSkin={shouldIgnoreSkinForCard(game.currentProcessingItem.card, { ownerUid: game.currentProcessingItem.ownerUid })}
+                        />
                         <div className="absolute -inset-0.5 bg-gradient-to-t from-red-600/50 to-transparent opacity-50 rounded-2xl" />
 
                         {/* UL/UR Labels for Resolving Card */}
@@ -3990,7 +4020,8 @@ export const BattleField: React.FC = () => {
                   slotLabel: o.slotLabel,
                   zoneLabel,
                   isMine: o.isMine,
-                  isFaceDown: isHiddenExile || isHiddenErosionBack
+                  isFaceDown: isHiddenExile || isHiddenErosionBack,
+                  ignoreSkin: shouldIgnoreSkinForCard(card, { isOpponent: o.isMine === false })
                 }
               ];
             })

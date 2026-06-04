@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { RAY_CARDS, CARD_BACKS } from '../data/customization';
 import { readJsonResponse } from '../lib/http';
+import { useCardSkinSettings } from '../hooks/useCardSkinSettings';
 
 export const Profile: React.FC = () => {
   const user = getAuthUser();
@@ -19,6 +20,7 @@ export const Profile: React.FC = () => {
   const [isSelectingCard, setIsSelectingCard] = useState(false);
   const [isSelectingBack, setIsSelectingBack] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const { showOpponentCardSkins, setShowOpponentCardSkins } = useCardSkinSettings();
 
   useEffect(() => {
     const loadProfile = async () => {
@@ -167,10 +169,12 @@ export const Profile: React.FC = () => {
                 description={favoriteBack ? `当前: ${favoriteBack.name}` : "在对战中展示你的个性化卡背"} 
               />
             </div>
-            <SettingCard 
-              title="偏好设置" 
-              icon={<Settings className="w-6 h-6" />} 
-              description="管理游戏音效、画面等其他设置" 
+            <PreferenceToggleCard
+              title="显示对手卡牌皮肤"
+              icon={<Settings className="w-6 h-6" />}
+              description={showOpponentCardSkins ? '对局中显示对手使用的卡牌皮肤' : '对局中忽略对手卡牌皮肤，仅显示原卡图'}
+              checked={showOpponentCardSkins}
+              onChange={setShowOpponentCardSkins}
             />
           </div>
         </div>
@@ -301,5 +305,52 @@ const SettingCard = ({ title, icon, description }: any) => (
       <h2 className="text-lg font-bold italic tracking-tighter">{title}</h2>
     </div>
     <p className="text-zinc-500 text-sm">{description}</p>
+  </motion.div>
+);
+
+const PreferenceToggleCard = ({
+  title,
+  icon,
+  description,
+  checked,
+  onChange
+}: {
+  title: string;
+  icon: React.ReactNode;
+  description: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) => (
+  <motion.div
+    whileHover={{ scale: 1.02 }}
+    className="p-6 rounded-2xl bg-zinc-900/60 backdrop-blur-sm border border-zinc-800 hover:border-red-500/50 transition-all group"
+  >
+    <div className="flex items-start justify-between gap-4">
+      <div className="min-w-0">
+        <div className="flex items-center gap-4 mb-3">
+          <div className="p-3 rounded-xl bg-black/60 group-hover:bg-red-600 transition-colors">{icon}</div>
+          <h2 className="text-lg font-bold italic tracking-tighter">{title}</h2>
+        </div>
+        <p className="text-zinc-500 text-sm">{description}</p>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        className={cn(
+          'relative mt-1 inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors',
+          checked ? 'border-red-400/50 bg-red-600' : 'border-zinc-600 bg-zinc-900'
+        )}
+        title={checked ? '关闭后将忽略对手卡牌皮肤' : '开启后将显示对手卡牌皮肤'}
+      >
+        <span
+          className={cn(
+            'absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow-lg transition-transform',
+            checked ? 'translate-x-5' : 'translate-x-0'
+          )}
+        />
+      </button>
+    </div>
   </motion.div>
 );

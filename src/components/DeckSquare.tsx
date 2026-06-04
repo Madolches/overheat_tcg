@@ -6,20 +6,10 @@ import { Card } from '../types/game';
 import { useCardCatalog } from '../hooks/useCardCatalog';
 import { CardComponent } from './Card';
 import { KeywordBadges } from './KeywordBadges';
+import { CardEffectList } from './CardEffectList';
 import { cn } from '../lib/utils';
 import { getAuthUser } from '../socket';
-
-const EFFECT_TYPE_LABELS: Record<string, string> = {
-  ACTIVATE: '主动',
-  ACTIVATED: '主动',
-  TRIGGER: '触发',
-  TRIGGERED: '触发',
-  CONTINUOUS: '永续',
-  ALWAYS: '永续'
-};
-
-const getEffectTypeLabel = (type?: string | null) =>
-  type ? EFFECT_TYPE_LABELS[type] || type : '效果';
+import { isAdjustedCard } from '../lib/cardAdjustments';
 
 const DECK_PREVIEW_TYPE_ORDER: Record<string, number> = {
   UNIT: 0,
@@ -98,7 +88,7 @@ export const DeckSquare: React.FC = () => {
   const groupedPreview = (post: DeckSquarePost) => {
     const counts = new Map<string, { card: Card; count: number }>();
     resolveDeckCards(post).forEach(card => {
-      const key = card.id;
+      const key = card.uniqueId || card.id;
       const existing = counts.get(key);
       if (existing) existing.count += 1;
       else counts.set(key, { card, count: 1 });
@@ -348,7 +338,7 @@ export const DeckSquare: React.FC = () => {
                   <div className="mb-4 grid grid-cols-4 gap-2 sm:grid-cols-8">
                     {preview.map(({ card, count }) => (
                       <button
-                        key={card.id}
+                        key={card.uniqueId || card.id}
                         onClick={() => {
                           setSelectedPost(post);
                           setSelectedCard(card);
@@ -357,6 +347,11 @@ export const DeckSquare: React.FC = () => {
                         title={`查看 ${card.fullName}`}
                       >
                         <CardComponent card={card} displayMode="deck" disableZoom hideKeywords />
+                        {isAdjustedCard(card) && (
+                          <span className="absolute left-1 top-1 rounded-md bg-cyan-500/90 px-1.5 py-0.5 text-[9px] font-black text-white">
+                            {card.adjustmentLabel || '调整后'}
+                          </span>
+                        )}
                         <span className="absolute bottom-1 right-1 rounded-md bg-black/80 px-1.5 py-0.5 text-[10px] font-black">x{count}</span>
                       </button>
                     ))}
@@ -451,12 +446,17 @@ export const DeckSquare: React.FC = () => {
               <div className="grid grid-cols-3 gap-3 sm:grid-cols-5 md:grid-cols-8 lg:grid-cols-10">
                 {groupedPreview(selectedPost).map(({ card, count }) => (
                   <button
-                    key={card.id}
+                    key={card.uniqueId || card.id}
                     onClick={() => setSelectedCard(card)}
                     className="relative text-left transition-transform hover:scale-105"
                     title={`查看 ${card.fullName}`}
                   >
                     <CardComponent card={card} displayMode="deck" disableZoom />
+                    {isAdjustedCard(card) && (
+                      <span className="absolute left-1 top-1 rounded-md bg-cyan-500/90 px-1.5 py-0.5 text-[9px] font-black text-white">
+                        {card.adjustmentLabel || '调整后'}
+                      </span>
+                    )}
                     <span className="absolute bottom-1 right-1 rounded-md bg-black/85 px-2 py-1 text-xs font-black">x{count}</span>
                   </button>
                 ))}
@@ -563,7 +563,14 @@ export const DeckSquare: React.FC = () => {
                 <div>
                   <p className="text-[10px] font-black uppercase tracking-[0.24em] text-red-500">{selectedCard.id}</p>
                   <h2 className="mt-1 text-2xl font-black italic tracking-tight text-white md:text-4xl">{selectedCard.fullName}</h2>
-                  <p className="mt-2 text-xs font-bold text-zinc-500">{selectedCard.cardPackage || '未知卡包'} · {selectedCard.rarity}</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-bold text-zinc-500">
+                    <span>{selectedCard.cardPackage || '未知卡包'} · {selectedCard.rarity}</span>
+                    {isAdjustedCard(selectedCard) && (
+                      <span className="rounded-full border border-cyan-300/25 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-black text-cyan-100">
+                        {selectedCard.adjustmentLabel || '调整后'}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <button
                   onClick={() => setSelectedCard(null)}
@@ -586,31 +593,7 @@ export const DeckSquare: React.FC = () => {
 
                   <div>
                     <p className="mb-3 text-xs font-black uppercase tracking-widest text-zinc-500">效果</p>
-                    {selectedCard.effects?.length ? (
-                      <div className="space-y-3">
-                        {selectedCard.effects.map((effect, index) => (
-                          <div key={effect.id || `${selectedCard.id}-effect-${index}`} className="rounded-xl border border-white/5 bg-black/40 p-4">
-                            <div className="mb-2 flex flex-wrap items-center gap-2">
-                              <span className="rounded-full bg-red-500/15 px-2.5 py-1 text-[10px] font-black text-red-200">
-                                {getEffectTypeLabel(effect.type)}
-                              </span>
-                              {effect.limitCount && (
-                                <span className="rounded-full bg-zinc-800 px-2.5 py-1 text-[10px] font-black text-zinc-300">
-                                  限制 {effect.limitCount}
-                                </span>
-                              )}
-                            </div>
-                            <p className="whitespace-pre-wrap text-sm font-bold leading-relaxed text-zinc-100">
-                              {effect.description || effect.content || '暂无效果文本'}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="rounded-xl border border-dashed border-zinc-800 bg-black/30 p-5 text-center text-sm font-bold text-zinc-500">
-                        这张卡暂无可显示的效果文本
-                      </div>
-                    )}
+                    <CardEffectList card={selectedCard} />
                   </div>
                 </div>
               </div>

@@ -24,6 +24,7 @@ interface CardProps {
   isHighlighted?: boolean;
   hideKeywords?: boolean;
   effectiveAcValue?: number;
+  ignoreSkin?: boolean;
 }
 
 const getRarityClass = (rarity: Rarity) => {
@@ -67,7 +68,8 @@ const CardComponentImpl: React.FC<CardProps> = ({
   cardBackUrl,
   isHighlighted,
   hideKeywords = false,
-  effectiveAcValue
+  effectiveAcValue,
+  ignoreSkin = false
 }) => {
   const { isCardSkinEnabled } = useCardSkinSettings();
 
@@ -100,7 +102,7 @@ const CardComponentImpl: React.FC<CardProps> = ({
   const displayedAcValue = effectiveAcValue ?? card.acValue;
   const isNegativeCost = displayedAcValue < 0;
   const fullImageUrl = card.fullImageUrl || getCardImageUrl(card.id, card.rarity, false, card.availableRarities);
-  const shouldUseSkin = card.skinEnabled === true || (card.skinEnabled === undefined && isCardSkinEnabled(card));
+  const shouldUseSkin = !ignoreSkin && (card.skinEnabled === true || (card.skinEnabled === undefined && isCardSkinEnabled(card)));
   const skinUrl = shouldUseSkin ? getCardSkinUrl(card) : undefined;
   const imageUrl = skinUrl || card.imageUrl || fullImageUrl;
   const exhausted = isExhausted ?? !!card.isExhausted;
