@@ -20,6 +20,14 @@ import { getCardSkinUrl } from '../data/cardSkins';
 import { useCardSkinSettings } from '../hooks/useCardSkinSettings';
 import { CardSkinToggle } from './CardSkinToggle';
 import { applyDeckEntrySkin, normalizeDeckCardEntries } from '../lib/deckEntries';
+import {
+  buildAdjustedVariantLookup,
+  getCardAdjustmentGroupId,
+  getCardAdjustmentVersionKey,
+  getCardOwnershipKey,
+  getCardVariantKey,
+  isAdjustedCard
+} from '../lib/cardAdjustments';
 
 const INITIAL_VISIBLE_CARD_COUNT = 48;
 
@@ -60,6 +68,7 @@ export const DeckBuilder: React.FC = () => {
   const [renameValue, setRenameValue] = useState('');
   const [newDeckName, setNewDeckName] = useState('新卡组');
   const [visibleCardCount, setVisibleCardCount] = useState(INITIAL_VISIBLE_CARD_COUNT);
+  const [selectedAdjustmentVersions, setSelectedAdjustmentVersions] = useState<Record<string, 'original' | 'adjusted'>>({});
   const [filters, setFilters] = useState({
     ac: '',
     damage: '',
@@ -456,24 +465,35 @@ export const DeckBuilder: React.FC = () => {
   };
 
   const addToDeck = (card: CardType) => {
-    // Count per card ID (not uniqueId) for limit check
-    const count = deckBaseCounts[card.id] || 0;
+    const selectedCard = resolveSelectedCardVersion(card);
+    const groupId = getCardAdjustmentGroupId(selectedCard);
+    const selectedVersion = getCardAdjustmentVersionKey(selectedCard);
+    const existingDifferentVersion = deckCards.find(deckCard =>
+      getCardAdjustmentGroupId(deckCard) === groupId &&
+      getCardAdjustmentVersionKey(deckCard) !== selectedVersion
+    );
+    if (existingDifferentVersion) {
+      showNotice('调整版本不能混用', '同一张卡的调整前/后版本不能同时加入卡组。', 'warning');
+      return;
+    }
+
+    const count = deckBaseCounts[groupId] || 0;
 
     if (count < 4 && deck.length < 50) {
-      if (card.godMark && godMarkCount >= 10) {
+      if (selectedCard.godMark && godMarkCount >= 10) {
         showNotice('神蚀卡已达上限', '卡组中带有神蚀标记的卡牌不能超过10张。', 'warning');
         return;
       }
 
-      const ownedQty = collection[card.uniqueId] || 0;
+      const ownedQty = collection[getCardOwnershipKey(selectedCard)] || 0;
       if (ownedQty <= count) {
         showNotice('卡牌数量不足', '你拥有的该卡牌数量不足。', 'warning');
         return;
       }
 
-      setDeck([...deck, { card, skinEnabled: isCardSkinEnabled(card) }]);
+      setDeck([...deck, { card: selectedCard, skinEnabled: isCardSkinEnabled(selectedCard) }]);
       setAddSuccessToast({
-        cardName: card.fullName,
+        cardName: selectedCard.fullName,
         count: count + 1
       });
     } else if (count >= 4) {
@@ -568,6 +588,43 @@ export const DeckBuilder: React.FC = () => {
     [cardLibrary]
   );
 
+  const adjustedVariantLookup = useMemo(
+    () => buildAdjustedVariantLookup(cardLibrary),
+    [cardLibrary]
+  );
+
+  const resolveSelectedCardVersion = (card: CardType) => {
+    const entry = adjustedVariantLookup.get(getCardVariantKey(card));
+    if (!entry?.adjusted) return card;
+    const selectedVersion = selectedAdjustmentVersions[getCardVariantKey(card)] || getCardAdjustmentVersionKey(card);
+    return selectedVersion === 'adjusted' ? entry.adjusted : (entry.original || card);
+  };
+
+  const setCardVersionPreference = (card: CardType, version: 'original' | 'adjusted') => {
+    const key = getCardVariantKey(card);
+    const entry = adjustedVariantLookup.get(key);
+    const targetCard = version === 'adjusted' ? entry?.adjusted : entry?.original;
+    if (!targetCard) return;
+
+    setSelectedAdjustmentVersions(prev => ({ ...prev, [key]: version }));
+    setDeck(current => current.map(slot => {
+      if (getCardVariantKey(slot.card) !== key) {
+        return slot;
+      }
+      return {
+        ...slot,
+        card: {
+          ...targetCard,
+          skinEnabled: slot.skinEnabled
+        }
+      };
+    }));
+    setZoomedCard(current => current && getCardVariantKey(current.card) === key
+      ? { ...current, card: { ...targetCard, skinEnabled: current.card.skinEnabled } }
+      : current
+    );
+  };
+
   const deckCards = useMemo(() => deck.map(slot => slot.card), [deck]);
   const deckEntries = useMemo(
     () => deck.map(slot => ({
@@ -581,7 +638,8 @@ export const DeckBuilder: React.FC = () => {
     const counts: Record<string, number> = {};
 
     for (const card of deckCards) {
-      counts[card.id] = (counts[card.id] || 0) + 1;
+      const groupId = getCardAdjustmentGroupId(card);
+      counts[groupId] = (counts[groupId] || 0) + 1;
     }
 
     return counts;
@@ -596,8 +654,8 @@ export const DeckBuilder: React.FC = () => {
     const seenByCollectionKey: Record<string, number> = {};
 
     return deckCards.map(card => {
-      const ownedQty = collection[card.uniqueId] || 0;
-      const collectionKey = card.uniqueId;
+      const collectionKey = getCardOwnershipKey(card);
+      const ownedQty = collection[collectionKey] || 0;
       const copyNumber = (seenByCollectionKey[collectionKey] || 0) + 1;
       seenByCollectionKey[collectionKey] = copyNumber;
 
@@ -619,6 +677,7 @@ export const DeckBuilder: React.FC = () => {
   };
 
   const filteredCards = useMemo(() => cardLibrary.filter(c => {
+    if (isAdjustedCard(c)) return false;
     // Text search
     const matchesSearch = c.fullName.includes(deferredSearchTerm) ||
       (c.specialName && c.specialName.includes(deferredSearchTerm));
@@ -635,18 +694,26 @@ export const DeckBuilder: React.FC = () => {
     if (filters.rarity !== 'ALL' && c.rarity !== filters.rarity) return false;
 
     // Ownership
-    const isOwned = (collection[c.uniqueId] || 0) > 0;
+    const displayCard = resolveSelectedCardVersion(c);
+    const isOwned = (collection[getCardOwnershipKey(displayCard)] || 0) > 0;
     if (filters.ownership === 'OWNED' && !isOwned) return false;
     if (filters.ownership === 'NOT_OWNED' && isOwned) return false;
 
     return true;
-  }), [cardLibrary, collection, deferredSearchTerm, filters]);
+  }), [cardLibrary, collection, deferredSearchTerm, filters, selectedAdjustmentVersions, adjustedVariantLookup]);
 
   const visibleCards = useMemo(
     () => filteredCards.slice(0, visibleCardCount),
     [filteredCards, visibleCardCount]
   );
   const zoomedDisplayCard = zoomedCard?.card || null;
+  const zoomedOwnershipKey = zoomedDisplayCard ? getCardOwnershipKey(zoomedDisplayCard) : '';
+  const zoomedOwnedQty = zoomedOwnershipKey ? (collection[zoomedOwnershipKey] || 0) : 0;
+  const zoomedVariantEntry = zoomedDisplayCard
+    ? adjustedVariantLookup.get(getCardVariantKey(zoomedDisplayCard))
+    : undefined;
+  const zoomedHasAdjustedVersion = !!zoomedVariantEntry?.adjusted;
+  const zoomedSelectedVersion = zoomedDisplayCard ? getCardAdjustmentVersionKey(zoomedDisplayCard) : 'original';
 
   const loadingOverlayTitle = saving ? '保存卡组中' : '处理中';
   const loadingOverlayDescription = saving
@@ -1194,6 +1261,11 @@ export const DeckBuilder: React.FC = () => {
                       数量不足 {ownership.ownedQty}/{ownership.copyNumber}
                     </div>
                   )}
+                  {isAdjustedCard(card) && (
+                    <div className="absolute left-1 top-1 z-10 rounded bg-cyan-500/90 px-1.5 py-0.5 text-[9px] font-black text-white shadow">
+                      调整后
+                    </div>
+                  )}
                   <button
                     onClick={() => removeFromDeck(index)}
                     className="absolute -right-1 -top-1 z-10 flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-red-600 shadow-2xl transition-all hover:scale-110 md:h-6 md:w-6 md:opacity-60 md:group-hover:opacity-100"
@@ -1355,7 +1427,12 @@ export const DeckBuilder: React.FC = () => {
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {visibleCards.map((card, index) => {
-            const isOwned = (collection[card.uniqueId] || 0) > 0;
+            const displayCard = resolveSelectedCardVersion(card);
+            const variantEntry = adjustedVariantLookup.get(getCardVariantKey(card));
+            const hasAdjustedVersion = !!variantEntry?.adjusted;
+            const selectedVersion = getCardAdjustmentVersionKey(displayCard);
+            const ownedQty = collection[getCardOwnershipKey(displayCard)] || 0;
+            const isOwned = ownedQty > 0;
             return (
               <div
                 key={card.uniqueId || card.id || `card-${index}`}
@@ -1368,29 +1445,51 @@ export const DeckBuilder: React.FC = () => {
                 <div className="flex gap-3">
                   <div
                     className="w-16 h-24 rounded-lg overflow-hidden flex-shrink-0 shadow-lg cursor-zoom-in"
-                    onClick={() => setZoomedCard({ card })}
+                    onClick={() => setZoomedCard({ card: displayCard })}
                   >
                     <img
-                      src={getDisplayCardImageUrl(card)}
+                      src={getDisplayCardImageUrl(displayCard)}
                       className={cn("w-full h-full object-cover", !isOwned && "brightness-[0.4]")}
                       loading="lazy"
                       decoding="async"
                       onError={(event) => {
-                        const fallback = getCardImageUrl(card.id, card.rarity, false, card.availableRarities);
+                        const fallback = getCardImageUrl(displayCard.id, displayCard.rarity, false, displayCard.availableRarities);
                         if (event.currentTarget.src !== fallback) event.currentTarget.src = fallback;
                       }}
                     />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h4 className="font-black italic text-sm truncate">{card.fullName}</h4>
-                    <p className="text-[10px] text-zinc-500 uppercase tracking-widest mb-1">{getCardTypeLabel(card.type)} - {card.rarity}</p>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <h4 className="font-black italic text-sm truncate">{displayCard.fullName}</h4>
+                      {isAdjustedCard(displayCard) && (
+                        <span className="shrink-0 rounded bg-cyan-500/20 px-1.5 py-0.5 text-[9px] font-black text-cyan-200">调整后</span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-zinc-500 uppercase tracking-widest mb-1">{getCardTypeLabel(displayCard.type)} - {displayCard.rarity}</p>
+                    <p className="text-[10px] text-zinc-400 font-bold">数量：{ownedQty}</p>
+                    {hasAdjustedVersion && (
+                      <div className="mt-2 inline-flex rounded-lg border border-zinc-700 bg-black/50 p-0.5">
+                        {(['original', 'adjusted'] as const).map(version => (
+                          <button
+                            key={version}
+                            type="button"
+                            onClick={() => setCardVersionPreference(displayCard, version)}
+                            className={cn(
+                              "rounded-md px-2 py-1 text-[10px] font-black transition-colors",
+                              selectedVersion === version ? "bg-cyan-600 text-white" : "text-zinc-500 hover:text-white"
+                            )}
+                          >
+                            {version === 'original' ? '原版' : '调整后'}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <p className="text-[10px] text-zinc-500 mb-1">卡包：{card.cardPackage || '未知'}</p>
-                    <p className="text-[10px] text-zinc-400 font-bold">数量：{collection[card.uniqueId] || 0}</p>
                   </div>
                 </div>
                 {isOwned && (
                   <button
-                    onClick={() => addToDeck(card)}
+                    onClick={() => addToDeck(displayCard)}
                     className="absolute top-2 right-2 p-1 bg-red-600 hover:bg-red-700 rounded-full text-white shadow-lg opacity-60 group-hover:opacity-100 transition-all z-10"
                   >
                     <Plus className="w-4 h-4" />
@@ -1456,10 +1555,10 @@ export const DeckBuilder: React.FC = () => {
                     }}
                   />
                   <div className="absolute bottom-4 -right-2 bg-red-600 px-3 py-1.5 rounded-xl border border-red-400 font-black italic shadow-2xl rotate-12 z-20">
-                    <span className="text-sm">x{collection[zoomedDisplayCard.uniqueId] || 0}</span>
+                    <span className="text-sm">x{zoomedOwnedQty}</span>
                   </div>
                   <div className="absolute -bottom-4 -left-4 bg-zinc-800 px-4 py-2 rounded-xl border border-white/10 font-black italic shadow-2xl -rotate-6 z-20 flex flex-col items-center">
-                    <span>{deckBaseCounts[zoomedDisplayCard.id] || 0} / 4</span>
+                    <span>{deckBaseCounts[getCardAdjustmentGroupId(zoomedDisplayCard)] || 0} / 4</span>
                   </div>
                 </div>
               </div>
@@ -1480,6 +1579,35 @@ export const DeckBuilder: React.FC = () => {
                   <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.3em]">关键词</p>
                   <KeywordBadges card={zoomedDisplayCard} variant="detail" />
                 </div>
+
+                {zoomedHasAdjustedVersion && (
+                  <div className="mt-4 rounded-2xl border border-cyan-500/20 bg-cyan-500/10 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <span className="text-xs font-black text-cyan-100">卡牌版本</span>
+                      {isAdjustedCard(zoomedDisplayCard) && (
+                        <span className="rounded bg-cyan-500/20 px-2 py-1 text-[10px] font-black text-cyan-200">调整后</span>
+                      )}
+                    </div>
+                    <div className="inline-flex rounded-xl border border-cyan-500/30 bg-black/40 p-1">
+                      {(['original', 'adjusted'] as const).map(version => (
+                        <button
+                          key={version}
+                          type="button"
+                          onClick={() => setCardVersionPreference(zoomedDisplayCard, version)}
+                          className={cn(
+                            "rounded-lg px-4 py-2 text-xs font-black transition-colors",
+                            zoomedSelectedVersion === version ? "bg-cyan-600 text-white" : "text-zinc-400 hover:text-white"
+                          )}
+                        >
+                          {version === 'original' ? '原版' : '调整后'}
+                        </button>
+                      ))}
+                    </div>
+                    {zoomedDisplayCard.adjustmentDescription && (
+                      <p className="mt-2 text-xs font-bold leading-relaxed text-cyan-100/80">{zoomedDisplayCard.adjustmentDescription}</p>
+                    )}
+                  </div>
+                )}
 
                 <CardSkinToggle
                   card={zoomedDisplayCard}
@@ -1510,11 +1638,11 @@ export const DeckBuilder: React.FC = () => {
                         </div>
                       </div>
                       <button
-                        onClick={() => handleDecompose(zoomedDisplayCard.uniqueId)}
-                        disabled={actionLoading || (collection[zoomedDisplayCard.uniqueId] || 0) <= 0}
+                        onClick={() => handleDecompose(zoomedOwnershipKey)}
+                        disabled={actionLoading || zoomedOwnedQty <= 0}
                         className={cn(
                           "px-6 md:px-8 py-2 md:py-3 rounded-2xl font-black italic text-xs md:text-sm transition-all uppercase",
-                          (collection[zoomedDisplayCard.uniqueId] || 0) > 0
+                          zoomedOwnedQty > 0
                             ? "bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/20"
                             : "bg-zinc-700 text-zinc-500 cursor-not-allowed"
                         )}
@@ -1534,7 +1662,7 @@ export const DeckBuilder: React.FC = () => {
                         </div>
                       </div>
                       <button
-                        onClick={() => handleCraft(zoomedDisplayCard.uniqueId)}
+                        onClick={() => handleCraft(zoomedOwnershipKey)}
                         disabled={actionLoading || cardCrystals < (CRYSTAL_VALUES[zoomedDisplayCard.rarity]?.produce || 0)}
                         className={cn(
                           "px-6 md:px-8 py-2 md:py-3 rounded-2xl font-black italic text-xs md:text-sm transition-all uppercase",

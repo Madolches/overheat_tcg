@@ -1,4 +1,6 @@
 import { Card, GameState } from '../types/game';
+import { expandAdjustedCardVariants } from '../lib/cardAdjustments';
+import type { CardAdjustmentFactory } from '../lib/cardAdjustments';
 import { grantedTotemReviveFromGrave, somelinStorybookGrantedActivate } from '../scripts/BaseUtil';
 
 const modules = import.meta.glob('../scripts/*.ts');
@@ -11,15 +13,41 @@ const isCardModule = (mod: any): mod is { default: Card } =>
   typeof mod.default === 'object' &&
   typeof mod.default.id === 'string';
 
+const getAdjustmentFactory = (mod: any): CardAdjustmentFactory | undefined =>
+  typeof mod?.createAdjustedCards === 'function' ? mod.createAdjustedCards : undefined;
+
+const getModuleCards = (mod: any): Card[] => {
+  if (!isCardModule(mod)) return [];
+
+  const baseCard = mod.default;
+  const variants = baseCard.availableRarities && baseCard.availableRarities.length > 0
+    ? baseCard.availableRarities.map((rarity: any) => ({
+      ...baseCard,
+      rarity,
+      uniqueId: `${baseCard.id}:${rarity}`
+    }))
+    : [{
+      ...baseCard,
+      uniqueId: `${baseCard.id}:${baseCard.rarity}`
+    }];
+
+  return expandAdjustedCardVariants(variants, getAdjustmentFactory(mod));
+};
+
+const registerCard = (card: Card) => {
+  CARD_LIBRARY[card.uniqueId] = card;
+  if (!CARD_LIBRARY[card.id]) {
+    CARD_LIBRARY[card.id] = card;
+  }
+};
+
 export async function loadCardLibrary() {
   if (Object.keys(CARD_LIBRARY).length > 0) return;
 
   cardLibraryPromise ||= Promise.all(
     Object.values(modules).map(async loader => {
       const mod = await loader() as any;
-      if (isCardModule(mod)) {
-        CARD_LIBRARY[mod.default.id] = mod.default;
-      }
+      getModuleCards(mod).forEach(registerCard);
     })
   ).then(() => undefined);
 
@@ -69,6 +97,9 @@ export function hydrateCard(card: Card | null) {
         applyContinuous: originalEffect.applyContinuous,
         removeContinuous: originalEffect.removeContinuous,
         wealthValue: originalEffect.wealthValue ?? runtimeEffect?.wealthValue,
+        description: originalEffect.description ?? runtimeEffect?.description,
+        content: originalEffect.content ?? runtimeEffect?.content,
+        triggerLocation: originalEffect.triggerLocation ?? runtimeEffect?.triggerLocation,
         playerEffectScope: originalEffect.playerEffectScope ?? runtimeEffect?.playerEffectScope,
         playerEffectDescription: originalEffect.playerEffectDescription ?? runtimeEffect?.playerEffectDescription,
         hideFromCardInfluence: originalEffect.hideFromCardInfluence ?? runtimeEffect?.hideFromCardInfluence

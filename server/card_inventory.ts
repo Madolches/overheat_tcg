@@ -1,5 +1,6 @@
 import { Card } from '../src/types/game';
 import { SERVER_CARD_LIBRARY } from './card_loader';
+import { isAdjustedCard } from '../src/lib/cardAdjustments';
 
 export type CardInventoryVariation = {
     cardId: string;
@@ -28,7 +29,7 @@ export function getLiveCardVariations(): Card[] {
 }
 
 export function getLiveCardInventoryVariations(): CardInventoryVariation[] {
-    return getLiveCardVariations().map(card => ({
+    return getLiveCardVariations().filter(card => !isAdjustedCard(card)).map(card => ({
         cardId: card.id,
         rarity: card.rarity,
         uniqueId: card.uniqueId
@@ -40,7 +41,7 @@ export function getBaseCardIds(): string[] {
     const cardIds: string[] = [];
 
     for (const card of getLiveCardVariations()) {
-        if (seen.has(card.id)) {
+        if (isAdjustedCard(card) || seen.has(card.id)) {
             continue;
         }
 

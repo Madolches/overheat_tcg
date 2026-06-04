@@ -4,6 +4,7 @@ import { Card, PlayerOngoingEffect, PlayerState, StackItem, GameState, SandboxEd
 import { CardComponent } from './Card';
 import { StandardPopup } from './StandardPopup';
 import { KeywordBadges } from './KeywordBadges';
+import { CardEffectList } from './CardEffectList';
 import { GameService } from '../services/gameService';
 import { ArrowDown, Shield, Sword, Zap, Flag, BookOpen, Play, X, LogOut, Coins, Sparkles } from 'lucide-react';
 import { cn, getCardImageUrl } from '../lib/utils';
@@ -74,7 +75,8 @@ const CardSlot: React.FC<{
   slotLabel?: string;
   cardBackUrl?: string;
   isHighlighted?: boolean;
-}> = ({ card, label, onClick, onPreview, onHover, className, isFaceUp = true, isExhausted, isSelectedForPayment, isDeck, count = 0, showCount = true, isAttacking, isDefending, isOpponent, isAllianceInitiator, displayMode, slotLabel, cardBackUrl, isHighlighted }) => {
+  allowFaceDownHover?: boolean;
+}> = ({ card, label, onClick, onPreview, onHover, className, isFaceUp = true, isExhausted, isSelectedForPayment, isDeck, count = 0, showCount = true, isAttacking, isDefending, isOpponent, isAllianceInitiator, displayMode, slotLabel, cardBackUrl, isHighlighted, allowFaceDownHover = false }) => {
   // Dynamic height scaling for stack areas (Deck, Grave, Exile)
   const isStackArea = isDeck || label === '墓地' || label === '放逐';
   const numericCount = typeof count === 'number' ? count : 0;
@@ -105,7 +107,7 @@ const CardSlot: React.FC<{
           if (onClick) onClick(e);
           if (!isFaceUp && card && onPreview && !isOpponent) onPreview(card);
         }}
-        onMouseEnter={() => card && isFaceUp && onHover?.(card)}
+        onMouseEnter={() => card && (isFaceUp || allowFaceDownHover) && onHover?.(card)}
         onMouseLeave={() => onHover?.(null)}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -600,6 +602,7 @@ const PlayerHalf: React.FC<{
                           <CardSlot
                             card={displayCard} isFaceUp={displayCard.isFaceUp} onPreview={displayCard.isFaceUp ? onPreviewCard : undefined}
                             onHover={onHoverCard}
+                            allowFaceDownHover={!displayCard.isFaceUp}
                             onClick={(e) => clickSandboxZone(displayCard.isFaceUp ? 'erosionFront' : 'erosionBack', i, displayCard) || onCardClick?.(displayCard, displayCard.isFaceUp ? 'erosion_front' : 'erosion_back', i, e)}
                             isSelectedForPayment={displayCard.isFaceUp && paymentSelection?.erosionFrontIds?.includes(displayCard.gamecardId)}
                             className={displayCard.isFaceUp ? "border-red-600" : "border-red-900/50"}
@@ -684,6 +687,7 @@ const PlayerHalf: React.FC<{
                             isFaceUp={displayCard.isFaceUp}
                             onPreview={onPreviewCard}
                             onHover={onHoverCard}
+                            allowFaceDownHover={!displayCard.isFaceUp}
                             onClick={(e) => clickSandboxZone(displayCard.isFaceUp ? 'erosionFront' : 'erosionBack', i, displayCard) || onCardClick?.(displayCard, displayCard.isFaceUp ? 'erosion_front' : 'erosion_back', i, e)}
                             isSelectedForPayment={displayCard.isFaceUp && paymentSelection?.erosionFrontIds?.includes(displayCard.gamecardId)}
                             className={displayCard.isFaceUp ? "border-red-600" : "border-red-900/50"}
@@ -910,7 +914,10 @@ export const PlayField: React.FC<PlayFieldProps> = ({
 
       <StandardPopup
         isOpen={!!viewingZone}
-        onClose={() => setViewingZone?.(null)}
+        onClose={() => {
+          setHoveredCard(null);
+          setViewingZone?.(null);
+        }}
         title={viewingZone?.title || ''}
         mode="card_display"
         cards={viewingZoneDisplayCards}
@@ -931,6 +938,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
           })
         )}
         onCardClick={(card, e) => {
+          setHoveredCard(null);
           if (onCardClick && viewingZone) {
             if (viewingZone.type === 'hand' && viewingZone.isOpponentZone) {
               onPreviewCard?.(card);
@@ -946,6 +954,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
             onPreviewCard?.(card);
           }
         }}
+        onCardHover={setHoveredCard}
         cardBackUrl={cardBackUrl}
         highlightedIds={Array.from(highlightedCardIds || [])}
       />
@@ -999,7 +1008,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
         )}
       </AnimatePresence>
       {isDesktop && hoveredCard && (
-        <div className="pointer-events-none absolute right-4 top-4 z-[120] hidden w-[300px] rounded-2xl border border-white/10 bg-black/75 p-3 shadow-2xl backdrop-blur-md lg:block">
+        <div className="pointer-events-none fixed right-4 top-24 z-[1300] hidden max-h-[calc(100vh-7rem)] w-[520px] overflow-hidden rounded-2xl border border-white/10 bg-black/85 p-3 shadow-2xl backdrop-blur-md lg:grid lg:grid-cols-[155px_1fr] lg:gap-3">
           <div className="overflow-hidden rounded-xl border border-white/10 bg-black/40">
             <img
               src={getPreviewFullImage(hoveredCard)}
@@ -1009,16 +1018,38 @@ export const PlayField: React.FC<PlayFieldProps> = ({
               referrerPolicy="no-referrer"
             />
           </div>
-          <div className="mt-3">
+          <div className="min-h-0 overflow-hidden">
             <div className="text-sm font-black text-white">{hoveredCard.fullName}</div>
             <div className="mt-1 text-[10px] font-bold tracking-widest text-white/45">
               {hoveredCard.id} · {hoveredCard.type} · {hoveredCard.color}
             </div>
+            <div className="mt-2 grid grid-cols-3 gap-1.5">
+              <div className="rounded-lg border border-white/5 bg-white/5 px-2 py-1 text-center">
+                <div className="text-[8px] font-black text-white/35">AC</div>
+                <div className="text-xs font-black text-white">{hoveredCard.acValue ?? '-'}</div>
+              </div>
+              <div className="rounded-lg border border-white/5 bg-white/5 px-2 py-1 text-center">
+                <div className="text-[8px] font-black text-white/35">力量</div>
+                <div className="text-xs font-black text-white">{hoveredCard.type === 'UNIT' ? hoveredCard.power : '-'}</div>
+              </div>
+              <div className="rounded-lg border border-white/5 bg-white/5 px-2 py-1 text-center">
+                <div className="text-[8px] font-black text-white/35">伤害</div>
+                <div className="text-xs font-black text-white">{hoveredCard.type === 'UNIT' ? hoveredCard.damage : '-'}</div>
+              </div>
+            </div>
+            <div className="mt-2">
+              <KeywordBadges card={hoveredCard} variant="compact" />
+            </div>
             {hoveredCard.description && (
-              <div className="mt-2 text-xs leading-relaxed text-white/70">
+              <div className="mt-2 rounded-xl border border-white/5 bg-white/5 p-2 text-[11px] leading-relaxed text-white/55">
                 {hoveredCard.description}
               </div>
             )}
+            <CardEffectList
+              card={hoveredCard}
+              compact
+              className="mt-2 max-h-[270px] overflow-y-auto pr-1 custom-scrollbar"
+            />
           </div>
         </div>
       )}

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 
-import { GameState, PlayerState, Card, StackItem, CardEffect, TriggerLocation, GAME_TIMEOUTS } from '../types/game';
+import { GameState, PlayerState, Card, StackItem, CardEffect, TriggerLocation, GAME_TIMEOUTS, SandboxEditableZone, SandboxPlayerKey } from '../types/game';
 import { socket, getAuthUser, onceAuthenticated, isSocketAuthenticated } from '../socket';
 
 import { GameService } from '../services/gameService';
@@ -14,9 +14,10 @@ import { PlayField } from './PlayField';
 import { Rulebook } from './Rulebook';
 import { motion, AnimatePresence } from 'motion/react';
 import { StandardPopup } from './StandardPopup';
-import { Flag, Trophy, Frown, Home, Sword, Shield, Zap, LogOut, BookOpen, Send, Loader2, Trash2, X, Play, Search, ChevronRight, ShieldCheck, Layers, Sparkles, Flame, AlertTriangle, PackagePlus, Scissors, Circle, FileText } from 'lucide-react';
+import { Flag, Trophy, Frown, Home, Sword, Shield, Zap, LogOut, BookOpen, Send, Loader2, Trash2, X, Play, Search, ChevronRight, ShieldCheck, Layers, Sparkles, Flame, AlertTriangle, PackagePlus, Scissors, Circle, FileText, Wrench, Shuffle, RotateCcw, MoveRight } from 'lucide-react';
 import { cn, getCardColorHanzi, getCardColorLabel, getCardImageUrl, getCardIdentity, getCardTypeLabel, getEffectiveCardColors, getLocationLabel, getPhaseLabel } from '../lib/utils';
 import { KeywordBadges } from './KeywordBadges';
+import { CardEffectList } from './CardEffectList';
 import { BattleLogPanel } from './BattleLogPanel';
 import { battleLogText } from '../lib/battleLog';
 import { getCardSkinUrl } from '../data/cardSkins';
@@ -245,6 +246,62 @@ const RPS_OPTIONS = [
   { id: 'PAPER' as const, label: '布', Icon: FileText }
 ];
 
+type DebugTarget = {
+  playerKey: SandboxPlayerKey;
+  zone: SandboxEditableZone;
+  index?: number;
+  card?: Card | null;
+};
+
+const DEBUG_ZONE_LABELS: Record<SandboxEditableZone, string> = {
+  deck: '牌库',
+  hand: '手牌',
+  grave: '墓地',
+  exile: '除外区',
+  itemZone: '道具区',
+  unitZone: '单位区',
+  erosionFront: '侵蚀区正面',
+  erosionBack: '侵蚀区背面'
+};
+
+const DEBUG_DESTINATIONS: Array<{ zone: TriggerLocation; label: string }> = [
+  { zone: 'HAND', label: '手牌' },
+  { zone: 'DECK', label: '牌库顶' },
+  { zone: 'GRAVE', label: '墓地' },
+  { zone: 'EXILE', label: '除外区' },
+  { zone: 'UNIT', label: '单位区' },
+  { zone: 'ITEM', label: '道具区' },
+  { zone: 'EROSION_FRONT', label: '侵蚀区正面' },
+  { zone: 'EROSION_BACK', label: '侵蚀区背面' }
+];
+
+const DEBUG_FIXED_SLOT_ZONES = new Set<TriggerLocation>(['UNIT', 'ITEM', 'EROSION_FRONT', 'EROSION_BACK']);
+const DEBUG_BOOLEAN_PATCH_KEYS = ['godMark', 'canAttack', 'canActivateEffect', 'isrush', 'isAnnihilation', 'isShenyi', 'isHeroic'] as const;
+
+const applyLocalDebugPatch = (card: Card, patch: any): Card => {
+  const next = { ...card };
+  (['power', 'damage', 'acValue'] as const).forEach(key => {
+    if (patch[key] !== undefined) {
+      const value = Number(patch[key]) || 0;
+      (next as any)[key] = value;
+    }
+  });
+  DEBUG_BOOLEAN_PATCH_KEYS.forEach(key => {
+    if (patch[key] !== undefined) {
+      (next as any)[key] = !!patch[key];
+    }
+  });
+  if (patch.isExhausted !== undefined) {
+    next.isExhausted = !!patch.isExhausted;
+    next.displayState = next.isExhausted ? 'FRONT_HORIZONTAL' : 'FRONT_UPRIGHT';
+  }
+  if (patch.displayState !== undefined) {
+    next.displayState = patch.displayState;
+    next.isExhausted = next.displayState === 'FRONT_HORIZONTAL';
+  }
+  return next;
+};
+
 export const BattleField: React.FC = () => {
   const { gameId } = useParams<{ gameId: string }>();
   const navigate = useNavigate();
@@ -322,6 +379,12 @@ export const BattleField: React.FC = () => {
   const lastJoinEmitRef = useRef<number>(0);
   const [pregameNow, setPregameNow] = useState(Date.now());
   const { isCardSkinEnabled } = useCardSkinSettings();
+  const [debugTarget, setDebugTarget] = useState<DebugTarget | null>(null);
+  const [debugSelectedCard, setDebugSelectedCard] = useState<Card | null>(null);
+  const [debugMoveTargetZone, setDebugMoveTargetZone] = useState<TriggerLocation>('HAND');
+  const [debugMoveTargetPlayerUid, setDebugMoveTargetPlayerUid] = useState<string>('');
+  const [debugMoveTargetIndex, setDebugMoveTargetIndex] = useState<number>(0);
+  const [debugDrawCount, setDebugDrawCount] = useState<number>(1);
 
   const getPreviewFullImage = (card: Card) => {
     const shouldUseSkin = card.skinEnabled === true || (card.skinEnabled === undefined && isCardSkinEnabled(card));
@@ -339,6 +402,16 @@ export const BattleField: React.FC = () => {
   const confrontationStrategy = (me?.confrontationStrategy || 'AUTO') as 'ON' | 'AUTO' | 'OFF';
   const [localStrategy, setLocalStrategy] = useState<'ON' | 'AUTO' | 'OFF'>(confrontationStrategy);
   const activeMulliganReveal = !isSpectator && game?.phase === 'MULLIGAN' ? me?.mulliganReveal : undefined;
+  const debugControllerUid = useMemo(() => {
+    if (!game || !myUid) return undefined;
+    if (game.mode === 'friend') return game.hostUid?.toString();
+    if (game.mode === 'sandbox') return game.hostUid?.toString() || game.playerIds.find(uid => uid?.toString() !== 'BOT_PLAYER')?.toString();
+    if (game.mode === 'practice') return game.playerIds.find(uid => uid?.toString() !== 'BOT_PLAYER')?.toString() || myUid.toString();
+    return undefined;
+  }, [game, myUid]);
+  const canControlDebug = !!game && !!myUid && !isSpectator && ['practice', 'friend', 'sandbox'].includes(game.mode || '') && debugControllerUid === myUid.toString();
+  const isDebugEnabled = !!game?.debugMode?.enabled && !!myUid && game.debugMode.controllerUid === myUid.toString();
+  const isDebugIdle = !!game && !game.pendingQuery && !game.isResolvingStack && !game.currentProcessingItem;
   const handleToggleLogs = () => {
     if (typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches) {
       setShowLogSidebar(current => !current);
@@ -350,6 +423,127 @@ export const BattleField: React.FC = () => {
     if (!gameId) return;
     socket.emit('gameAction', { gameId, action: 'CHAT_MESSAGE', payload: { content } });
   };
+
+  const getDebugPlayerByKey = (playerKey: SandboxPlayerKey): PlayerState | null => {
+    if (playerKey === 'player') return me;
+    return opponent;
+  };
+
+  const getDebugTargetCards = (target: DebugTarget | null): Card[] => {
+    const owner = target ? getDebugPlayerByKey(target.playerKey) : null;
+    if (!owner || !target) return [];
+    if (target.zone === 'deck') return [...(owner.deck || [])].reverse();
+    if (target.zone === 'hand') return owner.hand || [];
+    if (target.zone === 'grave') return owner.grave || [];
+    if (target.zone === 'exile') return owner.exile || [];
+    if (target.zone === 'itemZone') return (owner.itemZone || []).filter((card): card is Card => !!card);
+    if (target.zone === 'unitZone') return (owner.unitZone || []).filter((card): card is Card => !!card);
+    if (target.zone === 'erosionFront') return (owner.erosionFront || []).filter((card): card is Card => !!card);
+    if (target.zone === 'erosionBack') return (owner.erosionBack || []).filter((card): card is Card => !!card);
+    return [];
+  };
+
+  const findDebugCardInGame = (gameState: GameState | null, gamecardId: string): Card | null => {
+    if (!gameState || !gamecardId) return null;
+    for (const player of Object.values(gameState.players || {})) {
+      const zones: Array<Array<Card | null | undefined> | undefined> = [
+        player.deck,
+        player.hand,
+        player.grave,
+        player.exile,
+        player.itemZone,
+        player.unitZone,
+        player.erosionFront,
+        player.erosionBack,
+        player.playZone
+      ];
+      for (const zoneCards of zones) {
+        const found = zoneCards?.find(card => card?.gamecardId === gamecardId);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  const openDebugTarget = (target: DebugTarget) => {
+    if (!isDebugEnabled || !isDebugIdle) {
+      setLastError(isDebugEnabled ? '当前有待处理操作，调试操作暂不可用。' : '请先开启调试模式。');
+      return;
+    }
+    setDebugTarget(target);
+    if (target.card) {
+      setDebugSelectedCard(target.card);
+      setDebugMoveTargetPlayerUid(getDebugPlayerByKey(target.playerKey)?.uid || '');
+      setDebugMoveTargetZone('HAND');
+      setDebugMoveTargetIndex(0);
+    } else {
+      setDebugSelectedCard(null);
+      setDebugMoveTargetPlayerUid(getDebugPlayerByKey(target.playerKey)?.uid || '');
+    }
+  };
+
+  const toggleDebugMode = async () => {
+    if (!gameId || !canControlDebug) return;
+    try {
+      await GameService.setDebugMode(gameId, !isDebugEnabled);
+    } catch (error: any) {
+      setLastError(error.message);
+    }
+  };
+
+  const runDebugDraw = async (playerUid: string) => {
+    if (!gameId) return;
+    try {
+      await GameService.debugDraw(gameId, playerUid, debugDrawCount);
+    } catch (error: any) {
+      setLastError(error.message);
+    }
+  };
+
+  const runDebugShuffle = async (playerUid: string) => {
+    if (!gameId) return;
+    try {
+      await GameService.debugShuffle(gameId, playerUid);
+    } catch (error: any) {
+      setLastError(error.message);
+    }
+  };
+
+  const runDebugMove = async () => {
+    if (!gameId || !debugSelectedCard || !debugMoveTargetPlayerUid) return;
+    try {
+      await GameService.debugMoveCard(gameId, {
+        cardId: debugSelectedCard.gamecardId,
+        targetPlayerUid: debugMoveTargetPlayerUid,
+        targetZone: debugMoveTargetZone,
+        targetIndex: DEBUG_FIXED_SLOT_ZONES.has(debugMoveTargetZone) ? debugMoveTargetIndex : undefined,
+        displayState: debugMoveTargetZone === 'EROSION_BACK' || debugMoveTargetZone === 'DECK' ? 'BACK_UPRIGHT' : undefined
+      });
+      setDebugSelectedCard(null);
+    } catch (error: any) {
+      setLastError(error.message);
+    }
+  };
+
+  const runDebugPatch = async (patch: any) => {
+    if (!gameId || !debugSelectedCard) return;
+    const previousCard = debugSelectedCard;
+    setDebugSelectedCard(current => current?.gamecardId === debugSelectedCard.gamecardId ? applyLocalDebugPatch(current, patch) : current);
+    try {
+      await GameService.debugPatchCard(gameId, debugSelectedCard.gamecardId, patch);
+    } catch (error: any) {
+      setDebugSelectedCard(current => current?.gamecardId === previousCard.gamecardId ? previousCard : current);
+      setLastError(error.message);
+    }
+  };
+
+  useEffect(() => {
+    if (!debugSelectedCard) return;
+    const latestCard = findDebugCardInGame(game, debugSelectedCard.gamecardId);
+    if (latestCard) {
+      setDebugSelectedCard(latestCard);
+    }
+  }, [debugSelectedCard?.gamecardId, game]);
 
   useEffect(() => {
     if (game?.phase !== 'RPS' && game?.phase !== 'FIRST_PLAYER_CHOICE') return;
@@ -1445,6 +1639,35 @@ export const BattleField: React.FC = () => {
   const handleCardClick = (card: Card, zone: string, index?: number, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
 
+    if (isDebugEnabled) {
+      const zoneMap: Record<string, SandboxEditableZone> = {
+        hand: 'hand',
+        unit: 'unitZone',
+        item: 'itemZone',
+        grave: 'grave',
+        exile: 'exile',
+        erosion_front: 'erosionFront',
+        erosion_back: 'erosionBack',
+        deck: 'deck'
+      };
+      const debugZone = zoneMap[zone];
+      if (debugZone) {
+        const ownerKey: SandboxPlayerKey = me && [
+          ...me.hand,
+          ...me.deck,
+          ...me.grave,
+          ...me.exile,
+          ...me.unitZone,
+          ...me.itemZone,
+          ...me.erosionFront,
+          ...me.erosionBack,
+          ...me.playZone
+        ].some(candidate => candidate?.gamecardId === card.gamecardId) ? 'player' : 'opponent';
+        openDebugTarget({ playerKey: ownerKey, zone: debugZone, index, card });
+      }
+      return;
+    }
+
     if (isSpectator) {
       setPreviewCard(card);
       return;
@@ -2092,6 +2315,10 @@ export const BattleField: React.FC = () => {
                       {displayedPreviewCard.description}
                     </div>
                   )}
+                  <CardEffectList
+                    card={displayedPreviewCard}
+                    className="max-h-[34vh] overflow-y-auto pr-1 custom-scrollbar"
+                  />
                 </div>
                 <button
                   onClick={() => setPreviewCard(null)}
@@ -2132,14 +2359,29 @@ export const BattleField: React.FC = () => {
               className="fixed inset-0 z-[2600] bg-black/95 backdrop-blur-md flex items-center justify-center p-4 cursor-pointer"
               onClick={() => setPreviewCard(null)}
             >
-              <img
-                src={getPreviewFullImage(previewCard)}
-                alt={displayedPreviewCard.fullName}
-                className="max-h-[92vh] max-w-[92vw] rounded-2xl bg-black/40 object-contain shadow-2xl"
-                draggable={false}
-                referrerPolicy="no-referrer"
-                onClick={e => e.stopPropagation()}
-              />
+              <div className="flex max-h-[90vh] w-full max-w-4xl flex-col gap-5 overflow-y-auto rounded-3xl border border-white/10 bg-zinc-950 p-4 shadow-2xl md:grid md:grid-cols-[320px_1fr] md:p-6" onClick={e => e.stopPropagation()}>
+                <img
+                  src={getPreviewFullImage(previewCard)}
+                  alt={displayedPreviewCard.fullName}
+                  className="aspect-[3/4] w-full rounded-2xl bg-black/40 object-contain"
+                  draggable={false}
+                  referrerPolicy="no-referrer"
+                />
+                <div className="flex min-h-0 flex-col gap-4 text-white">
+                  <div>
+                    <div className="text-[10px] font-black tracking-[0.2em] text-[#f27d26]">{displayedPreviewCard.id}</div>
+                    <div className="mt-1 text-2xl font-black italic tracking-tight">{displayedPreviewCard.fullName}</div>
+                    <div className="mt-2 text-[10px] font-bold tracking-widest text-white/45">
+                      {getCardTypeLabel(displayedPreviewCard.type)} / {getCardColorLabel(displayedPreviewCard.color)}
+                    </div>
+                  </div>
+                  <KeywordBadges card={previewCard} variant="detail" />
+                  <CardEffectList
+                    card={displayedPreviewCard}
+                    className="max-h-[48vh] overflow-y-auto pr-1 custom-scrollbar"
+                  />
+                </div>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -2163,12 +2405,276 @@ export const BattleField: React.FC = () => {
   const activePublicReveal = game.publicReveal && dismissedPublicRevealId !== game.publicReveal.id
     ? game.publicReveal
     : null;
+  const debugPlayers = [me, opponent].filter((player): player is PlayerState => !!player);
+  const debugTargetOwner = debugTarget ? getDebugPlayerByKey(debugTarget.playerKey) : null;
+  const debugCards = getDebugTargetCards(debugTarget);
 
   return (
     <div
       className="battle-field h-screen pt-0 md:pt-16 bg-[#050505] flex flex-col overflow-hidden select-none font-sans relative safe-area-inset pb-[calc(env(safe-area-inset-bottom)+8px)] md:pb-0"
       onClick={() => setCardMenu(null)}
     >
+      {canControlDebug && (
+        <button
+          type="button"
+          onClick={event => {
+            event.stopPropagation();
+            toggleDebugMode();
+          }}
+          disabled={!isDebugIdle}
+          className={cn(
+            "fixed right-3 top-3 z-[2200] flex items-center gap-1.5 rounded-full border px-3 py-2 text-[10px] font-black tracking-widest shadow-2xl backdrop-blur-xl transition-all disabled:cursor-not-allowed disabled:opacity-35 md:right-5 md:top-5 md:px-4 md:py-2.5",
+            isDebugEnabled
+              ? "border-cyan-300/60 bg-cyan-400/25 text-cyan-50 shadow-cyan-950/40 hover:bg-cyan-400/35"
+              : "border-white/10 bg-black/55 text-white/65 hover:bg-white/10 hover:text-white"
+          )}
+          title={isDebugIdle ? '切换调试模式' : '当前有待处理操作，暂不能切换调试'}
+        >
+          <Wrench className="h-3.5 w-3.5 md:h-4 md:w-4" />
+          调试{isDebugEnabled ? '开' : '关'}
+        </button>
+      )}
+
+      <AnimatePresence>
+        {isDebugEnabled && debugTarget && debugTargetOwner && (
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 24 }}
+            className="fixed inset-x-0 bottom-0 z-[2100] p-3 md:p-5"
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="mx-auto max-h-[82vh] max-w-6xl overflow-hidden rounded-2xl border border-cyan-400/25 bg-zinc-950/95 shadow-2xl shadow-cyan-950/30 backdrop-blur-xl">
+              <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 md:px-5">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-[10px] font-black tracking-widest text-cyan-200">
+                    <Wrench className="h-4 w-4" />
+                    调试模式
+                  </div>
+                  <div className="mt-1 truncate text-sm font-black text-white md:text-base">
+                    {debugTargetOwner.displayName} / {DEBUG_ZONE_LABELS[debugTarget.zone]} / {debugCards.length} 张卡
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDebugTarget(null);
+                    setDebugSelectedCard(null);
+                  }}
+                  className="rounded-lg border border-white/10 p-2 text-white/60 hover:bg-white/10 hover:text-white"
+                  title="关闭"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="grid max-h-[calc(82vh-4rem)] gap-4 overflow-y-auto p-4 custom-scrollbar md:grid-cols-[1fr_22rem] md:p-5">
+                <div className="min-w-0">
+                  <div className="mb-3 flex flex-wrap items-center gap-2">
+                    {debugTarget.zone === 'deck' && (
+                      <>
+                        <div className="flex items-center rounded-xl border border-white/10 bg-black/30 p-1">
+                          <input
+                            type="number"
+                            min={1}
+                            max={20}
+                            value={debugDrawCount}
+                            onChange={event => setDebugDrawCount(Math.max(1, Math.min(20, Number(event.target.value) || 1)))}
+                            className="h-8 w-16 rounded-lg border border-white/10 bg-black px-2 text-center text-xs font-black text-white outline-none focus:border-cyan-400"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => runDebugDraw(debugTargetOwner.uid)}
+                            className="ml-1 flex h-8 items-center gap-1.5 rounded-lg bg-cyan-500 px-3 text-xs font-black text-black hover:bg-cyan-400"
+                          >
+                            <PackagePlus className="h-3.5 w-3.5" />
+                            抽牌
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => runDebugShuffle(debugTargetOwner.uid)}
+                          className="flex h-10 items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 text-xs font-black text-white hover:bg-white/10"
+                        >
+                          <Shuffle className="h-3.5 w-3.5" />
+                          洗牌
+                        </button>
+                      </>
+                    )}
+                    {!isDebugIdle && (
+                      <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs font-black text-amber-100">
+                        当前有待处理操作，调试操作暂不可用。
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                    {debugCards.map(card => {
+                      const isSelected = debugSelectedCard?.gamecardId === card.gamecardId;
+                      return (
+                        <button
+                          key={card.gamecardId}
+                          type="button"
+                          onClick={() => {
+                            setDebugSelectedCard(card);
+                            setDebugMoveTargetPlayerUid(debugTargetOwner.uid);
+                            setDebugMoveTargetZone('HAND');
+                            setDebugMoveTargetIndex(0);
+                          }}
+                          className={cn(
+                            "rounded-xl border bg-black/30 p-2 text-left transition-all",
+                            isSelected ? "border-cyan-300 shadow-[0_0_20px_rgba(103,232,249,0.35)]" : "border-white/10 hover:border-white/30"
+                          )}
+                        >
+                          <CardComponent
+                            card={card}
+                            isBack={debugTarget.zone === 'erosionBack'}
+                            disableZoom
+                            cardBackUrl={cardBackUrl}
+                          />
+                          <div className="mt-2 truncate text-[10px] font-black text-white">{card.fullName}</div>
+                          <div className="mt-0.5 truncate text-[9px] font-bold text-white/40">{card.gamecardId}</div>
+                        </button>
+                      );
+                    })}
+                    {debugCards.length === 0 && (
+                      <div className="col-span-full rounded-xl border border-dashed border-white/10 p-8 text-center text-sm font-bold text-white/35">
+                        该区域没有卡牌。
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-black/30 p-4">
+                  {debugSelectedCard ? (
+                    <div className="space-y-4">
+                      <div>
+                        <div className="text-[10px] font-black tracking-widest text-cyan-200">已选卡牌</div>
+                        <div className="mt-1 text-sm font-black text-white">{debugSelectedCard.fullName}</div>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2">
+                        {([
+                          { key: 'power', label: '力量', value: debugSelectedCard.power ?? 0, step: 500 },
+                          { key: 'damage', label: '伤害', value: debugSelectedCard.damage ?? 0, step: 1 },
+                          { key: 'acValue', label: 'AC费用', value: debugSelectedCard.acValue ?? 0, step: 1 }
+                        ] as const).map(({ key, label, value, step }) => (
+                          <label key={key} className="block">
+                            <span className="text-[9px] font-black text-white/40">{label}</span>
+                            <input
+                              type="number"
+                              step={step}
+                              value={value}
+                              onChange={event => {
+                                const nextValue = Number(event.target.value) || 0;
+                                runDebugPatch({ [key]: key === 'power' ? Math.round(nextValue / 500) * 500 : nextValue });
+                              }}
+                              className="mt-1 w-full rounded-lg border border-white/10 bg-black px-2 py-2 text-center text-xs font-black text-white outline-none focus:border-cyan-400"
+                            />
+                          </label>
+                        ))}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        {([
+                          ['godMark', '神蚀', !!debugSelectedCard.godMark],
+                          ['canAttack', '可攻击', debugSelectedCard.canAttack !== false],
+                          ['canActivateEffect', '可发效', debugSelectedCard.canActivateEffect !== false],
+                          ['isrush', '速攻', !!debugSelectedCard.isrush],
+                          ['isAnnihilation', '歼灭', !!debugSelectedCard.isAnnihilation],
+                          ['isShenyi', '神依', !!debugSelectedCard.isShenyi],
+                          ['isHeroic', '英勇', !!debugSelectedCard.isHeroic]
+                        ] as const).map(([key, label, value]) => (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => runDebugPatch({ [key]: !value })}
+                            className={cn(
+                              "rounded-lg border px-3 py-2 text-xs font-black transition-all",
+                              value ? "border-cyan-300/50 bg-cyan-400/20 text-cyan-100" : "border-white/10 bg-white/5 text-white/45 hover:text-white"
+                            )}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => runDebugPatch({ isExhausted: true })}
+                          className="flex items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-black text-white hover:bg-white/10"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                          横置
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => runDebugPatch({ isExhausted: false })}
+                          className="flex items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-black text-white hover:bg-white/10"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                          重置
+                        </button>
+                      </div>
+
+                      <div className="border-t border-white/10 pt-4">
+                        <div className="mb-2 flex items-center gap-2 text-[10px] font-black tracking-widest text-white/45">
+                          <MoveRight className="h-3.5 w-3.5" />
+                          移动卡牌
+                        </div>
+                        <div className="grid gap-2">
+                          <select
+                            value={debugMoveTargetPlayerUid}
+                            onChange={event => setDebugMoveTargetPlayerUid(event.target.value)}
+                            className="rounded-lg border border-white/10 bg-black px-3 py-2 text-xs font-black text-white outline-none focus:border-cyan-400"
+                          >
+                            {debugPlayers.map(player => (
+                              <option key={player.uid} value={player.uid}>{player.displayName}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={debugMoveTargetZone}
+                            onChange={event => setDebugMoveTargetZone(event.target.value as TriggerLocation)}
+                            className="rounded-lg border border-white/10 bg-black px-3 py-2 text-xs font-black text-white outline-none focus:border-cyan-400"
+                          >
+                            {DEBUG_DESTINATIONS.map(destination => (
+                              <option key={destination.zone} value={destination.zone}>{destination.label}</option>
+                            ))}
+                          </select>
+                          {DEBUG_FIXED_SLOT_ZONES.has(debugMoveTargetZone) && (
+                            <input
+                              type="number"
+                              min={0}
+                              max={debugMoveTargetZone === 'EROSION_FRONT' || debugMoveTargetZone === 'EROSION_BACK' ? 9 : 5}
+                              value={debugMoveTargetIndex}
+                              onChange={event => setDebugMoveTargetIndex(Math.max(0, Number(event.target.value) || 0))}
+                              className="rounded-lg border border-white/10 bg-black px-3 py-2 text-xs font-black text-white outline-none focus:border-cyan-400"
+                              placeholder="目标槽位序号"
+                            />
+                          )}
+                          <button
+                            type="button"
+                            onClick={runDebugMove}
+                            className="rounded-lg bg-cyan-500 px-3 py-2 text-xs font-black text-black hover:bg-cyan-400"
+                          >
+                            移动
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex min-h-52 items-center justify-center rounded-xl border border-dashed border-white/10 p-6 text-center text-sm font-bold text-white/35">
+                      请选择该区域内的一张卡牌进行编辑或移动。
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {activePublicReveal && (
           <motion.div
@@ -2268,7 +2774,7 @@ export const BattleField: React.FC = () => {
             initial={{ opacity: 0, x: 16 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 16 }}
-            className="pointer-events-none fixed right-4 top-24 z-[1200] hidden w-[300px] rounded-2xl border border-white/10 bg-black/75 p-3 shadow-2xl backdrop-blur-md lg:block"
+            className="pointer-events-none fixed right-4 top-24 z-[1200] hidden max-h-[calc(100vh-7rem)] w-[520px] overflow-hidden rounded-2xl border border-white/10 bg-black/85 p-3 shadow-2xl backdrop-blur-md lg:grid lg:grid-cols-[155px_1fr] lg:gap-3"
           >
             <div className="overflow-hidden rounded-xl border border-white/10 bg-black/40">
               <img
@@ -2279,16 +2785,38 @@ export const BattleField: React.FC = () => {
                 referrerPolicy="no-referrer"
               />
             </div>
-            <div className="mt-3">
+            <div className="min-h-0 overflow-hidden">
               <div className="text-sm font-black text-white">{hoveredPopupCard.fullName}</div>
               <div className="mt-1 text-[10px] font-bold tracking-widest text-white/45">
                 {hoveredPopupCard.id} · {hoveredPopupCard.type} · {hoveredPopupCard.color}
               </div>
+              <div className="mt-2 grid grid-cols-3 gap-1.5">
+                <div className="rounded-lg border border-white/5 bg-white/5 px-2 py-1 text-center">
+                  <div className="text-[8px] font-black text-white/35">AC</div>
+                  <div className="text-xs font-black text-white">{hoveredPopupCard.acValue ?? '-'}</div>
+                </div>
+                <div className="rounded-lg border border-white/5 bg-white/5 px-2 py-1 text-center">
+                  <div className="text-[8px] font-black text-white/35">力量</div>
+                  <div className="text-xs font-black text-white">{hoveredPopupCard.type === 'UNIT' ? hoveredPopupCard.power : '-'}</div>
+                </div>
+                <div className="rounded-lg border border-white/5 bg-white/5 px-2 py-1 text-center">
+                  <div className="text-[8px] font-black text-white/35">伤害</div>
+                  <div className="text-xs font-black text-white">{hoveredPopupCard.type === 'UNIT' ? hoveredPopupCard.damage : '-'}</div>
+                </div>
+              </div>
+              <div className="mt-2">
+                <KeywordBadges card={hoveredPopupCard} variant="compact" />
+              </div>
               {hoveredPopupCard.description && (
-                <div className="mt-2 text-xs leading-relaxed text-white/70">
+                <div className="mt-2 rounded-xl border border-white/5 bg-white/5 p-2 text-[11px] leading-relaxed text-white/55">
                   {hoveredPopupCard.description}
                 </div>
               )}
+              <CardEffectList
+                card={hoveredPopupCard}
+                compact
+                className="mt-2 max-h-[270px] overflow-y-auto pr-1 custom-scrollbar"
+              />
             </div>
           </motion.div>
         )}
@@ -2576,6 +3104,8 @@ export const BattleField: React.FC = () => {
                   isPopupHidden={isPopupHidden}
                   onHidePopup={() => setIsPopupHidden(true)}
                   onExpand={() => setIsPopupHidden(false)}
+                  sandboxEditMode={isDebugEnabled}
+                  onSandboxZoneClick={openDebugTarget}
 
                   showPhaseMenu={showPhaseMenu}
                   isAnyPopupOpen={
@@ -4057,6 +4587,14 @@ export const BattleField: React.FC = () => {
                       关键词
                     </h3>
                     <KeywordBadges card={previewCard} variant="detail" />
+                  </div>
+
+                  <div className="space-y-4">
+                    <h3 className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.4em] text-white/60">
+                      <div className="h-1.5 w-1.5 rounded-full bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.8)]" />
+                      效果文本
+                    </h3>
+                    <CardEffectList card={displayedPreviewCard} />
                   </div>
 
                   {/* Influencing Effects Section (Renamed and Promoted) */}

@@ -585,7 +585,14 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
                       onClick={(e) => {
                         handleOptionClick(option, e);
                       }}
-                      onMouseEnter={() => onCardHover?.(card)}
+                      onMouseEnter={() => onCardHover?.(
+                        isFaceDown &&
+                        !String(meta.zoneLabel || '').includes('EROSION_BACK') &&
+                        !String(meta.zoneLabel || '').includes('侵蚀区背面') &&
+                        !String(meta.zoneLabel || '').includes('渚佃殌鍖鸿儗')
+                          ? null
+                          : card
+                      )}
                       onMouseLeave={() => onCardHover?.(null)}
                       className={cn(
                         "w-full aspect-[3/4] rounded-xl md:rounded-2xl overflow-hidden border-2 transition-all relative shrink-0",
