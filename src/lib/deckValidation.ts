@@ -1,4 +1,5 @@
 import { Card, Deck } from '../types/game';
+import { getCardAdjustmentGroupId, getCardAdjustmentVersionKey } from './cardAdjustments';
 import { getDeckCardIds } from './deckEntries';
 
 type CardResolver = (cardId?: string | null) => Card | undefined;
@@ -15,7 +16,7 @@ export const validateDeckForBattle = (deck?: Deck | null, resolveCard?: CardReso
   }
 
   if (deck.cards.length !== 50) {
-    return { valid: false, error: `卡组必须正好为 50 张卡牌 (当前: ${deck.cards.length})` };
+    return { valid: false, error: `卡组必须正好 50 张卡牌（当前: ${deck.cards.length}）` };
   }
 
   if (!resolveCard) {
@@ -29,16 +30,25 @@ export const validateDeckForBattle = (deck?: Deck | null, resolveCard?: CardReso
 
   const godMarkCount = cards.filter(card => card.godMark).length;
   if (godMarkCount > 10) {
-    return { valid: false, error: `卡组中带有神蚀标记的卡牌不能超过 10 张 (当前: ${godMarkCount})` };
+    return { valid: false, error: `卡组中带有神蚀标记的卡牌不能超过 10 张（当前: ${godMarkCount}）` };
   }
 
-  const nameCount = new Map<string, number>();
+  const groupCount = new Map<string, number>();
+  const groupVersions = new Map<string, string>();
   for (const card of cards) {
-    const nextCount = (nameCount.get(card.fullName) || 0) + 1;
+    const groupId = getCardAdjustmentGroupId(card);
+    const version = getCardAdjustmentVersionKey(card);
+    const existingVersion = groupVersions.get(groupId);
+    if (existingVersion && existingVersion !== version) {
+      return { valid: false, error: `卡牌 [${card.fullName}] 的调整前/后版本不能同时加入卡组` };
+    }
+    groupVersions.set(groupId, version);
+
+    const nextCount = (groupCount.get(groupId) || 0) + 1;
     if (nextCount > 4) {
       return { valid: false, error: `同名卡牌 [${card.fullName}] 在卡组中不能超过 4 张` };
     }
-    nameCount.set(card.fullName, nextCount);
+    groupCount.set(groupId, nextCount);
   }
 
   return { valid: true };

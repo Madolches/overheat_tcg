@@ -371,6 +371,11 @@ export interface Card {
   skinEnabled?: boolean;
   rarity?: Rarity;
   availableRarities?: Rarity[];
+  adjustmentGroupId?: string;
+  adjustmentVersion?: 'adjusted';
+  adjustmentLabel?: string;
+  adjustmentDescription?: string;
+  ownershipUniqueId?: string;
   cardPackage?: string;
   faction: Faction | string;
   baseFaction?: Faction | string;
@@ -575,6 +580,11 @@ export interface GameState {
   mode?: string;
   botDifficulty?: 'simple' | 'hard';
   botDeckProfiles?: Record<string, string>;
+  debugMode?: {
+    enabled: boolean;
+    controllerUid: string;
+    enabledAt: number;
+  };
   status?: string;
   roomCode?: string;
   participantIds?: string[];

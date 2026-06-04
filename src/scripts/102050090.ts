@@ -1,4 +1,5 @@
 import { Card, CardEffect, TriggerLocation } from '../types/game';
+import { createAdjustedCardVariant } from '../lib/cardAdjustments';
 import { addInfluence, addTempDamage, addTempPower, allUnitsOnField, canPutUnitOntoBattlefield, createSelectCardQuery, ensureData, erosionCost, getOpponentUid, moveCard, ownUnits } from './BaseUtil';
 
 const cardEffects: CardEffect[] = [{
@@ -134,5 +135,25 @@ const card: Card = {
   cardPackage: 'BT01',
   uniqueId: null as any,
 };
+
+const buildAdjustedEffects = (baseCard: Card): CardEffect[] =>
+  (baseCard.effects || []).map(effect => {
+    if (effect.id !== '102050090_goddess_entry') {
+      return { ...effect };
+    }
+
+    return {
+      ...effect,
+      triggerLocation: ['HAND', 'DECK'],
+      description: '10+：进入女神化时，可以从手牌或卡组放置到战场，选择最多2个单位伤害+1、力量+1000。'
+    };
+  });
+
+export const createAdjustedCards = (baseCard: Card): Card[] => [
+  createAdjustedCardVariant(baseCard, {
+    adjustmentDescription: '〖10+〗【诱】可以从手牌或卡组放置到战场上。',
+    effects: buildAdjustedEffects(baseCard)
+  })
+];
 
 export default card;

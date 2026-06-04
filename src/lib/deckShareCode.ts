@@ -1,3 +1,5 @@
+import { getOriginalCatalogRefs } from './cardAdjustments';
+
 const SHARE_CODE_VERSION = 1;
 const TOTAL_DECK_CARDS = 50;
 const MIN_UNIQUE_CARDS = 13;
@@ -380,7 +382,7 @@ export function encodeDeckShareCode(cardRefs: string[], catalogRefs: string[]) {
   return code;
 }
 
-export function decodeDeckShareCode(code: string, catalogRefs: string[]) {
+function decodeDeckShareCodeStrict(code: string, catalogRefs: string[]) {
   const trimmedCode = code.trim();
   if (!trimmedCode) {
     throw new Error('分享码不能为空');
@@ -444,4 +446,16 @@ export function decodeDeckShareCode(code: string, catalogRefs: string[]) {
   }
 
   return result;
+}
+
+export function decodeDeckShareCode(code: string, catalogRefs: string[]) {
+  try {
+    return decodeDeckShareCodeStrict(code, catalogRefs);
+  } catch (err) {
+    const legacyCatalogRefs = getOriginalCatalogRefs(catalogRefs);
+    if (legacyCatalogRefs.length === catalogRefs.length) {
+      throw err;
+    }
+    return decodeDeckShareCodeStrict(code, legacyCatalogRefs);
+  }
 }

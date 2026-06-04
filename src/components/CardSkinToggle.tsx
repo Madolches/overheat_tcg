@@ -43,7 +43,7 @@ export const CardSkinToggle: React.FC<CardSkinToggleProps> = ({
           aria-checked={enabled}
           onClick={handleChange}
           className={cn(
-            'relative h-7 w-12 shrink-0 rounded-full border transition-colors',
+            'relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors',
             enabled
               ? 'border-red-400/50 bg-red-600'
               : 'border-zinc-600 bg-zinc-900'
@@ -52,8 +52,8 @@ export const CardSkinToggle: React.FC<CardSkinToggleProps> = ({
         >
           <span
             className={cn(
-              'absolute top-1 h-5 w-5 rounded-full bg-white shadow-lg transition-transform',
-              enabled ? 'translate-x-5' : 'translate-x-1'
+              'absolute left-1 h-5 w-5 rounded-full bg-white shadow-lg transition-transform',
+              enabled ? 'translate-x-5' : 'translate-x-0'
             )}
           />
         </button>

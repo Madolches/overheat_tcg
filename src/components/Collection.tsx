@@ -17,6 +17,14 @@ import { getCardSkinUrl } from '../data/cardSkins';
 import { useCardSkinSettings } from '../hooks/useCardSkinSettings';
 import { CardSkinToggle } from './CardSkinToggle';
 import { getDeckCardIds } from '../lib/deckEntries';
+import { CardCommentsPanel } from './CardCommentsPanel';
+import {
+  buildAdjustedVariantLookup,
+  getCardAdjustmentVersionKey,
+  getCardOwnershipKey,
+  getCardVariantKey,
+  isAdjustedCard
+} from '../lib/cardAdjustments';
 
 const RARITY_BADGE: Record<string, string> = {
   C: 'bg-zinc-700 text-zinc-300', U: 'bg-emerald-900 text-emerald-300', R: 'bg-blue-900 text-blue-300',
@@ -45,6 +53,7 @@ export const Collection: React.FC = () => {
   const [showShareModal, setShowShareModal] = useState(false);
   const [publishingDeckId, setPublishingDeckId] = useState<string | null>(null);
   const [deckNotice, setDeckNotice] = useState('');
+  const [selectedAdjustmentVersions, setSelectedAdjustmentVersions] = useState<Record<string, 'original' | 'adjusted'>>({});
 
   // Card Filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -283,32 +292,63 @@ export const Collection: React.FC = () => {
   };
 
   const ownedCardCount = useMemo(() =>
-    cardLibrary.filter(card => (collection[card.uniqueId] || 0) > 0).length,
+    cardLibrary.filter(card => !isAdjustedCard(card) && (collection[getCardOwnershipKey(card)] || 0) > 0).length,
     [cardLibrary, collection]
   );
 
+  const adjustedVariantLookup = useMemo(
+    () => buildAdjustedVariantLookup(cardLibrary),
+    [cardLibrary]
+  );
+
+  const resolveSelectedCardVersion = (card: Card) => {
+    const entry = adjustedVariantLookup.get(getCardVariantKey(card));
+    if (!entry?.adjusted) return card;
+    const selectedVersion = selectedAdjustmentVersions[getCardVariantKey(card)] || getCardAdjustmentVersionKey(card);
+    return selectedVersion === 'adjusted' ? entry.adjusted : (entry.original || card);
+  };
+
+  const setCardVersionPreference = (card: Card, version: 'original' | 'adjusted') => {
+    const key = getCardVariantKey(card);
+    const entry = adjustedVariantLookup.get(key);
+    const targetCard = version === 'adjusted' ? entry?.adjusted : entry?.original;
+    if (!targetCard) return;
+
+    setSelectedAdjustmentVersions(prev => ({ ...prev, [key]: version }));
+    setSelectedCard(current => current && getCardVariantKey(current) === key ? targetCard : current);
+  };
+
   const filteredCards = useMemo(() => cardLibrary.filter(card => {
+    if (isAdjustedCard(card)) return false;
+    const displayCard = resolveSelectedCardVersion(card);
     if (deferredSearchTerm && !card.fullName.includes(deferredSearchTerm) && !(card.specialName && card.specialName.includes(deferredSearchTerm))) return false;
-    if (filterRarity && card.rarity !== filterRarity) return false;
-    if (filterColor && card.color !== filterColor) return false;
-    if (!matchesCardTypeFilter(card, filters.cardType)) return false;
-    if (filters.ac !== '' && card.acValue.toString() !== filters.ac) return false;
-    if (card.type === 'UNIT' && filters.damage !== '' && card.damage?.toString() !== filters.damage) return false;
-    if (card.type === 'UNIT' && filters.power !== '' && card.power?.toString() !== filters.power) return false;
-    if (!matchesCardPackageFilter(card.cardPackage, filters.cardPackage)) return false;
-    if (filters.faction !== 'ALL' && card.faction !== filters.faction) return false;
-    if (filters.godMark === 'GOD_MARK' && !card.godMark) return false;
-    if (filters.godMark === 'NON_GOD_MARK' && card.godMark) return false;
-    const isOwned = (collection[card.uniqueId] || 0) > 0;
+    if (filterRarity && displayCard.rarity !== filterRarity) return false;
+    if (filterColor && displayCard.color !== filterColor) return false;
+    if (!matchesCardTypeFilter(displayCard, filters.cardType)) return false;
+    if (filters.ac !== '' && displayCard.acValue.toString() !== filters.ac) return false;
+    if (displayCard.type === 'UNIT' && filters.damage !== '' && displayCard.damage?.toString() !== filters.damage) return false;
+    if (displayCard.type === 'UNIT' && filters.power !== '' && displayCard.power?.toString() !== filters.power) return false;
+    if (!matchesCardPackageFilter(displayCard.cardPackage, filters.cardPackage)) return false;
+    if (filters.faction !== 'ALL' && displayCard.faction !== filters.faction) return false;
+    if (filters.godMark === 'GOD_MARK' && !displayCard.godMark) return false;
+    if (filters.godMark === 'NON_GOD_MARK' && displayCard.godMark) return false;
+    const isOwned = (collection[getCardOwnershipKey(displayCard)] || 0) > 0;
     if (filters.ownership === 'OWNED' && !isOwned) return false;
     if (filters.ownership === 'NOT_OWNED' && isOwned) return false;
     return true;
-  }), [cardLibrary, collection, deferredSearchTerm, filterColor, filterRarity, filters]);
+  }), [cardLibrary, collection, deferredSearchTerm, filterColor, filterRarity, filters, selectedAdjustmentVersions, adjustedVariantLookup]);
 
   const visibleCards = useMemo(
     () => filteredCards.slice(0, visibleCardCount),
     [filteredCards, visibleCardCount]
   );
+  const selectedOwnershipKey = selectedCard ? getCardOwnershipKey(selectedCard) : '';
+  const selectedOwnedQty = selectedOwnershipKey ? (collection[selectedOwnershipKey] || 0) : 0;
+  const selectedVariantEntry = selectedCard
+    ? adjustedVariantLookup.get(getCardVariantKey(selectedCard))
+    : undefined;
+  const selectedHasAdjustedVersion = !!selectedVariantEntry?.adjusted;
+  const selectedVersion = selectedCard ? getCardAdjustmentVersionKey(selectedCard) : 'original';
 
   if (loading) {
     return (
@@ -533,7 +573,11 @@ export const Collection: React.FC = () => {
               {/* Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
                 {visibleCards.map((card, index) => {
-                  const qty = collection[card.uniqueId] || 0;
+                  const displayCard = resolveSelectedCardVersion(card);
+                  const variantEntry = adjustedVariantLookup.get(getCardVariantKey(card));
+                  const hasAdjustedVersion = !!variantEntry?.adjusted;
+                  const selectedVersion = getCardAdjustmentVersionKey(displayCard);
+                  const qty = collection[getCardOwnershipKey(displayCard)] || 0;
                   const isOwned = qty > 0;
                   return (
                     <motion.div
@@ -541,15 +585,20 @@ export const Collection: React.FC = () => {
                       layout
                       initial={{ opacity: 0, scale: 0.9 }}
                       animate={{ opacity: 1, scale: 1 }}
-                      onClick={() => setSelectedCard(card)}
+                      onClick={() => setSelectedCard(displayCard)}
                       style={{ contentVisibility: 'auto', containIntrinsicSize: '220px 320px' }}
                       className={cn("relative group transition-all duration-300 cursor-pointer", !isOwned && "opacity-40 grayscale-[0.8] hover:grayscale-0 hover:opacity-80")}
                     >
                       <CardComponent
-                        card={card}
+                        card={displayCard}
                         displayMode="deck"
                         cardBackUrl={favoriteBackUrl}
                       />
+                      {isAdjustedCard(displayCard) && (
+                        <div className="absolute left-2 top-2 z-10 rounded bg-cyan-500/90 px-2 py-1 text-[10px] font-black text-white shadow">
+                          调整后
+                        </div>
+                      )}
                       <div className="absolute -top-2 -right-2 z-10">
                         <div className={cn(
                           "px-2.5 py-1 rounded-lg border font-black italic text-xs shadow-xl min-w-[30px] text-center",
@@ -558,6 +607,26 @@ export const Collection: React.FC = () => {
                           x{qty}
                         </div>
                       </div>
+                      {hasAdjustedVersion && (
+                        <div
+                          className="absolute inset-x-2 bottom-2 z-10 flex rounded-xl border border-cyan-500/30 bg-black/75 p-1 backdrop-blur"
+                          onClick={event => event.stopPropagation()}
+                        >
+                          {(['original', 'adjusted'] as const).map(version => (
+                            <button
+                              key={version}
+                              type="button"
+                              onClick={() => setCardVersionPreference(displayCard, version)}
+                              className={cn(
+                                "flex-1 rounded-lg px-2 py-1 text-[10px] font-black transition-colors",
+                                selectedVersion === version ? "bg-cyan-600 text-white" : "text-zinc-400 hover:text-white"
+                              )}
+                            >
+                              {version === 'original' ? '原版' : '调整后'}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </motion.div>
                   );
                 })}
@@ -696,7 +765,7 @@ export const Collection: React.FC = () => {
                       }}
                     />
                     <div className="absolute bottom-4 -right-2 bg-red-600 px-3 py-1.5 rounded-xl border border-red-400 font-black italic shadow-2xl rotate-12 z-20">
-                      <span className="text-sm">x{collection[selectedCard.uniqueId] || 0}</span>
+                      <span className="text-sm">x{selectedOwnedQty}</span>
                     </div>
                   </div>
                 </div>
@@ -717,6 +786,35 @@ export const Collection: React.FC = () => {
                     <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.3em]">关键词</p>
                     <KeywordBadges card={selectedCard} variant="detail" />
                   </div>
+
+                  {selectedHasAdjustedVersion && (
+                    <div className="mt-4 rounded-2xl border border-cyan-500/20 bg-cyan-500/10 p-3">
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <span className="text-xs font-black text-cyan-100">卡牌版本</span>
+                        {isAdjustedCard(selectedCard) && (
+                          <span className="rounded bg-cyan-500/20 px-2 py-1 text-[10px] font-black text-cyan-200">调整后</span>
+                        )}
+                      </div>
+                      <div className="inline-flex rounded-xl border border-cyan-500/30 bg-black/40 p-1">
+                        {(['original', 'adjusted'] as const).map(version => (
+                          <button
+                            key={version}
+                            type="button"
+                            onClick={() => setCardVersionPreference(selectedCard, version)}
+                            className={cn(
+                              "rounded-lg px-4 py-2 text-xs font-black transition-colors",
+                              selectedVersion === version ? "bg-cyan-600 text-white" : "text-zinc-400 hover:text-white"
+                            )}
+                          >
+                            {version === 'original' ? '原版' : '调整后'}
+                          </button>
+                        ))}
+                      </div>
+                      {selectedCard.adjustmentDescription && (
+                        <p className="mt-2 text-xs font-bold leading-relaxed text-cyan-100/80">{selectedCard.adjustmentDescription}</p>
+                      )}
+                    </div>
+                  )}
 
                   <CardSkinToggle card={selectedCard} className="mt-4" />
 
@@ -740,11 +838,11 @@ export const Collection: React.FC = () => {
                           </div>
                         </div>
                         <button
-                          onClick={() => handleDecompose(selectedCard.uniqueId)}
-                          disabled={actionLoading || (collection[selectedCard.uniqueId] || 0) <= 0}
+                          onClick={() => handleDecompose(selectedOwnershipKey)}
+                          disabled={actionLoading || selectedOwnedQty <= 0}
                           className={cn(
                             "px-6 md:px-8 py-2 md:py-3 rounded-2xl font-black italic text-xs md:text-sm transition-all uppercase",
-                            (collection[selectedCard.uniqueId] || 0) > 0
+                            selectedOwnedQty > 0
                               ? "bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/20"
                               : "bg-zinc-700 text-zinc-500 cursor-not-allowed"
                           )}
@@ -764,7 +862,7 @@ export const Collection: React.FC = () => {
                           </div>
                         </div>
                         <button
-                          onClick={() => handleCraft(selectedCard.uniqueId)}
+                          onClick={() => handleCraft(selectedOwnershipKey)}
                           disabled={actionLoading || (profile?.cardCrystals || 0) < (CRYSTAL_VALUES[selectedCard.rarity]?.produce || 0)}
                           className={cn(
                             "px-6 md:px-8 py-2 md:py-3 rounded-2xl font-black italic text-xs md:text-sm transition-all uppercase",
@@ -777,6 +875,8 @@ export const Collection: React.FC = () => {
                         </button>
                       </div>
                     </div>
+
+                    <CardCommentsPanel cardId={selectedCard.id} />
                   </div>
 
                   <div className="mt-6 md:mt-8 pt-6 md:pt-8 border-t border-white/5 flex items-center justify-between">

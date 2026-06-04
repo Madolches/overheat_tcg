@@ -2,6 +2,7 @@ import { GameState, PlayerState, Card, Deck, TriggerLocation, CardEffect, StackI
 import { EventEngine } from '../src/services/EventEngine';
 import { AtomicEffectExecutor } from '../src/services/AtomicEffectExecutor';
 import { clearBattlefieldState, shouldClearBattlefieldStateOnMove } from '../src/lib/cardState';
+import { getCardAdjustmentGroupId, getCardAdjustmentVersionKey } from '../src/lib/cardAdjustments';
 import { getEntryRestrictionReason, satisfiesHighAlchemyEntryRestriction } from '../src/lib/highAlchemy';
 import { getCardIdentity } from '../src/lib/utils';
 import { addBattleLog, addCardAddedToHandBattleLog, cardToBattleLogRef, describeBattleLogTarget } from '../src/lib/battleLog';
@@ -455,8 +456,8 @@ export const ServerGameService = {
     const runtimeSpec = context.runtimeTargetSpec || (effect as any).__runtimeTargetSpec;
     if (!spec && !runtimeSpec) return false;
     const activeSpec = spec || runtimeSpec;
+    const player = gameState.players[playerUid];
     if (activeSpec.modeOptions?.length && !context.modeId) {
-      const player = gameState.players[playerUid];
       const options = activeSpec.modeOptions
         .filter(mode => !mode.condition || mode.condition(gameState, player, sourceCard))
         .filter(mode => {
@@ -492,6 +493,18 @@ export const ServerGameService = {
     const selectedMode = context.modeId
       ? activeSpec.modeOptions?.find((mode: any) => mode.id === context.modeId)
       : undefined;
+    if (selectedMode && !ServerGameService.isTargetModeCurrentlyValid(
+      gameState,
+      playerUid,
+      sourceCard,
+      effect,
+      selectedMode,
+      context.declaredTargets,
+      context.targetGroupIndex || 0,
+      false
+    )) {
+      return false;
+    }
     const modeTargetGroups = selectedMode?.targetGroups;
     const targetShape = selectedMode
       ? (modeTargetGroups?.[context.targetGroupIndex || 0] || selectedMode)
@@ -550,6 +563,28 @@ export const ServerGameService = {
       }
     };
     return true;
+  },
+
+  isTargetModeCurrentlyValid(
+    gameState: GameState,
+    playerUid: string,
+    sourceCard: Card,
+    effect: CardEffect,
+    mode: any,
+    declaredTargets?: DeclaredEffectTarget[],
+    targetGroupIndex = 0,
+    checkAllTargetGroups = true
+  ) {
+    const player = gameState.players[playerUid];
+    if (!player) return false;
+    if (mode.condition && !mode.condition(gameState, player, sourceCard)) return false;
+
+    const targetShapes = mode.targetGroups?.length ? mode.targetGroups : [mode];
+    const targetShapesToCheck = checkAllTargetGroups ? targetShapes : targetShapes.slice(targetGroupIndex, targetGroupIndex + 1);
+    return targetShapesToCheck.every((shape: any) => {
+      if ((shape.maxSelections ?? 0) === 0) return true;
+      return ServerGameService.getTargetCandidates(gameState, playerUid, sourceCard, effect, shape, declaredTargets).length >= shape.minSelections;
+    });
   },
 
   declareEffectTargets(
@@ -1272,11 +1307,19 @@ export const ServerGameService = {
       return { valid: false, error: `卡组中带有神蚀标记的卡牌不能超过 10 张 (当前: ${godMarkCount})` };
     }
 
-    // Check for max 4 of each card
+    // Check for max 4 of each card adjustment group and forbid mixing versions.
     const counts: { [id: string]: number } = {};
+    const versions: { [id: string]: string } = {};
     for (const card of cards) {
-      counts[card.id] = (counts[card.id] || 0) + 1;
-      if (counts[card.id] > 4) {
+      const groupId = getCardAdjustmentGroupId(card);
+      const version = getCardAdjustmentVersionKey(card);
+      if (versions[groupId] && versions[groupId] !== version) {
+        return { valid: false, error: `卡牌 [${card.fullName}] 的调整前/后版本不能同时加入卡组` };
+      }
+      versions[groupId] = version;
+
+      counts[groupId] = (counts[groupId] || 0) + 1;
+      if (counts[groupId] > 4) {
         return { valid: false, error: `同名卡牌 [${card.fullName}] 在卡组中不能超过 4 张` };
       }
     }
@@ -3836,13 +3879,25 @@ export const ServerGameService = {
         const selectedMode = query.context?.modeId
           ? spec.modeOptions?.find(mode => mode.id === query.context.modeId)
           : undefined;
+        const activationPlayerUid = query.context?.activationPlayerUid || playerUid;
+        if (selectedMode && !ServerGameService.isTargetModeCurrentlyValid(
+          gameState,
+          activationPlayerUid,
+          sourceCard,
+          effect,
+          selectedMode,
+          query.context?.declaredTargets,
+          query.context?.targetGroupIndex || 0,
+          false
+        )) {
+          throw new Error('指定对象失败：该模式当前无法发动');
+        }
         const modeTargetGroups = selectedMode?.targetGroups;
         const targetShape = selectedMode
           ? (modeTargetGroups?.[query.context?.targetGroupIndex || 0] || selectedMode)
           : spec.targetGroups?.[query.context?.targetGroupIndex || 0] || spec;
         if (!targetShape) throw new Error('指定对象失败：找不到目标声明');
 
-        const activationPlayerUid = query.context?.activationPlayerUid || playerUid;
         const previousDeclaredTargets = (query.context?.declaredTargets || []) as DeclaredEffectTarget[];
         const newlyDeclaredTargets = ServerGameService.declareEffectTargets(
           gameState,
@@ -3935,6 +3990,9 @@ export const ServerGameService = {
       const mode = effect.targetSpec.modeOptions.find(option => option.id === modeId);
       if (!mode) throw new Error('指定对象失败：选择的模式无效');
       const activationPlayerUid = query.context?.activationPlayerUid || playerUid;
+      if (!ServerGameService.isTargetModeCurrentlyValid(gameState, activationPlayerUid, sourceCard, effect, mode)) {
+        throw new Error('指定对象失败：该模式当前无法发动');
+      }
       const modeTargetShapes = mode.targetGroups?.length ? mode.targetGroups : [mode];
       const needsTargetSelection = modeTargetShapes.some(shape => (shape.maxSelections ?? shape.minSelections ?? 0) > 0);
       if (!needsTargetSelection) {

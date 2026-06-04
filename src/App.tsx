@@ -5,6 +5,7 @@ import { Eye, EyeOff, Mail, Lock, User, KeyRound, CheckCircle2, ShieldAlert, Spa
 import { socket, getAuthUser, setAuthUser, setAuthToken, getAuthToken, clearAuthSession } from './socket';
 import { TopBar } from './components/TopBar';
 import { OnlinePlayersSidebar } from './components/OnlinePlayersSidebar';
+import { FriendInviteModal } from './components/FriendInviteModal';
 import { Home } from './components/Home';
 import { prefetchCardCatalog } from './hooks/useCardCatalog';
 import { PageFallback } from './components/PageFallback';
@@ -840,6 +841,7 @@ export default function App() {
           onClose={closeOnlinePlayers}
           onCountChange={setOnlinePlayerCount}
         />
+        <FriendInviteModal />
 
         <main className="h-screen overflow-auto">
           <Suspense fallback={<PageFallback />}>

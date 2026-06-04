@@ -11,6 +11,7 @@ import { initServerCardLibrary, SERVER_CARD_LIBRARY } from './card_loader';
 import { getLiveCardVariations } from './card_inventory';
 import { isCardVisibleInCatalog } from '../src/lib/cardCatalogFilters';
 import { decodeDeckShareCode } from '../src/lib/deckShareCode';
+import { isAdjustedCard } from '../src/lib/cardAdjustments';
 import { AI_DECK_PROFILES } from './ai/deckProfiles';
 import { saveAiMatchSample } from './ai/liveMatchSamples';
 import {
@@ -26,9 +27,10 @@ import {
     validateUsername
 } from './registration';
 import { HARD_AI_DEFAULT_OPENING_CARD_IDS, ServerGameService } from './ServerGameService';
-import { PlayerState, Card, GAME_TIMEOUTS, GameState, BattleLogEntry, SandboxFile, SandboxPlayerKey, SandboxPlayerSetup, SandboxCardSetup, GamePhase } from '../src/types/game';
+import { PlayerState, Card, GAME_TIMEOUTS, GameState, BattleLogEntry, SandboxFile, SandboxPlayerKey, SandboxPlayerSetup, SandboxCardSetup, GamePhase, TriggerLocation } from '../src/types/game';
 import { EventEngine } from '../src/services/EventEngine';
 import { addBattleLog, battleLogText, normalizeBattleLogs } from '../src/lib/battleLog';
+import { clearBattlefieldState, shouldClearBattlefieldStateOnMove } from '../src/lib/cardState';
 import fs from 'fs';
 import path from 'path';
 import { expressStaticCompressed } from '../src/lib/staticCompression';
@@ -704,6 +706,345 @@ function resolveGameDisplayName(gameState: any, user: any) {
     return gameState.players?.[userIdStr]?.displayName ||
         gameState.participantNames?.[userIdStr] ||
         getUserDisplayLabel(user);
+}
+
+const DEBUG_ALLOWED_MODES = new Set(['practice', 'friend', 'sandbox']);
+const DEBUG_ZONES: TriggerLocation[] = ['HAND', 'UNIT', 'ITEM', 'GRAVE', 'EXILE', 'EROSION_FRONT', 'EROSION_BACK', 'PLAY', 'DECK'];
+const DEBUG_SLOT_ZONES = new Set<TriggerLocation>(['UNIT', 'ITEM', 'EROSION_FRONT', 'EROSION_BACK']);
+const DEBUG_ZONE_LABELS: Partial<Record<TriggerLocation, string>> = {
+    HAND: '手牌',
+    UNIT: '单位区',
+    ITEM: '道具区',
+    GRAVE: '墓地',
+    EXILE: '除外区',
+    EROSION_FRONT: '侵蚀区正面',
+    EROSION_BACK: '侵蚀区背面',
+    PLAY: '使用区',
+    DECK: '牌库'
+};
+const DEBUG_PATCH_LABELS: Record<string, string> = {
+    power: '力量',
+    damage: '伤害',
+    acValue: 'AC费用',
+    godMark: '神蚀',
+    canAttack: '可攻击',
+    canActivateEffect: '可发效',
+    isrush: '速攻',
+    isAnnihilation: '歼灭',
+    isShenyi: '神依',
+    isHeroic: '英勇',
+    isExhausted: '横置',
+    displayState: '显示状态'
+};
+const DEBUG_DISPLAY_STATE_LABELS: Partial<Record<Card['displayState'], string>> = {
+    FRONT_UPRIGHT: '正面竖置',
+    FRONT_HORIZONTAL: '正面横置',
+    FRONT_FACEDOWN: '正面背置',
+    BACK_UPRIGHT: '背面'
+};
+
+function normalizeDebugZone(value: unknown): TriggerLocation {
+    const zone = String(value || '').toUpperCase();
+    if (!DEBUG_ZONES.includes(zone as TriggerLocation)) {
+        throw new Error('无效的调试区域');
+    }
+    return zone as TriggerLocation;
+}
+
+function isDebugGameModeAllowed(gameState: GameState) {
+    return DEBUG_ALLOWED_MODES.has(String(gameState.mode || ''));
+}
+
+function getDebugControllerUid(gameState: GameState, userUid: string) {
+    const mode = String(gameState.mode || '');
+    if (mode === 'friend') return gameState.hostUid?.toString();
+    if (mode === 'sandbox') {
+        if (gameState.hostUid) return gameState.hostUid.toString();
+        return gameState.playerIds.find(uid => uid?.toString() !== 'BOT_PLAYER')?.toString();
+    }
+    if (mode === 'practice') {
+        return gameState.playerIds.find(uid => uid?.toString() !== 'BOT_PLAYER')?.toString() || userUid;
+    }
+    return undefined;
+}
+
+function ensureDebugController(gameState: GameState, userUid: string) {
+    if (!isDebugGameModeAllowed(gameState)) {
+        throw new Error('该对局不允许开启调试模式');
+    }
+    const controllerUid = getDebugControllerUid(gameState, userUid);
+    if (!controllerUid || controllerUid !== userUid) {
+        throw new Error('只有房主/本人可以操作调试模式');
+    }
+}
+
+function ensureDebugIdle(gameState: GameState) {
+    if (gameState.pendingQuery || gameState.isResolvingStack || gameState.currentProcessingItem) {
+        throw new Error('当前有待处理操作，调试操作只能在空闲状态执行');
+    }
+}
+
+function ensureDebugEnabled(gameState: GameState, userUid: string) {
+    ensureDebugController(gameState, userUid);
+    if (!gameState.debugMode?.enabled || gameState.debugMode.controllerUid !== userUid) {
+        throw new Error('请先开启调试模式');
+    }
+    ensureDebugIdle(gameState);
+}
+
+function getDebugZoneCards(player: PlayerState, zone: TriggerLocation): Array<Card | null> {
+    switch (zone) {
+        case 'HAND': return player.hand;
+        case 'UNIT': return player.unitZone;
+        case 'ITEM': return player.itemZone;
+        case 'GRAVE': return player.grave;
+        case 'EXILE': return player.exile;
+        case 'EROSION_FRONT': return player.erosionFront;
+        case 'EROSION_BACK': return player.erosionBack;
+        case 'PLAY': return player.playZone;
+        case 'DECK': return player.deck;
+        default: return [];
+    }
+}
+
+function findDebugCard(gameState: GameState, gamecardId: string) {
+    for (const [ownerUid, player] of Object.entries(gameState.players || {})) {
+        for (const zone of DEBUG_ZONES) {
+            const cards = getDebugZoneCards(player, zone);
+            const index = cards.findIndex(card => card?.gamecardId === gamecardId);
+            if (index >= 0) {
+                return { ownerUid, player, zone, cards, index, card: cards[index] as Card };
+            }
+        }
+    }
+    return undefined;
+}
+
+function getDebugPlayerName(gameState: GameState, uid: string) {
+    return gameState.players?.[uid]?.displayName || gameState.participantNames?.[uid] || uid;
+}
+
+function getDebugZoneLabel(zone: TriggerLocation) {
+    return DEBUG_ZONE_LABELS[zone] || zone;
+}
+
+function getDebugPatchLabel(key: string) {
+    return DEBUG_PATCH_LABELS[key] || key;
+}
+
+function formatDebugBoolean(value: boolean) {
+    return value ? '开启' : '关闭';
+}
+
+function addDebugBattleLog(gameState: GameState, actorUid: string, text: string, targets?: Card[]) {
+    addBattleLog(gameState, {
+        category: 'MOVED',
+        actorUid,
+        actorName: getDebugPlayerName(gameState, actorUid),
+        text,
+        targets: targets?.map(card => ({
+            gamecardId: card.gamecardId,
+            cardId: card.id,
+            name: card.fullName,
+            ownerUid: actorUid
+        })),
+        metadata: { debug: true }
+    });
+}
+
+function removeDebugCardFromZone(found: ReturnType<typeof findDebugCard>) {
+    if (!found) return;
+    if (DEBUG_SLOT_ZONES.has(found.zone)) {
+        found.cards[found.index] = null;
+    } else {
+        found.cards.splice(found.index, 1);
+    }
+}
+
+function normalizeDebugDisplayState(zone: TriggerLocation, value?: unknown): Card['displayState'] {
+    if (value === 'FRONT_UPRIGHT' || value === 'FRONT_HORIZONTAL' || value === 'FRONT_FACEDOWN' || value === 'BACK_UPRIGHT') {
+        return value;
+    }
+    if (zone === 'DECK' || zone === 'EROSION_BACK') return 'BACK_UPRIGHT';
+    return 'FRONT_UPRIGHT';
+}
+
+function placeDebugCard(targetPlayer: PlayerState, targetZone: TriggerLocation, card: Card, options: { targetIndex?: number; insertAtBottom?: boolean }) {
+    const targetCards = getDebugZoneCards(targetPlayer, targetZone);
+    if (DEBUG_SLOT_ZONES.has(targetZone)) {
+        const targetIndex = Number.isInteger(options.targetIndex) ? Number(options.targetIndex) : -1;
+        if (targetIndex >= 0) {
+            while (targetCards.length <= targetIndex) targetCards.push(null);
+            const existing = targetCards[targetIndex];
+            if (existing) throw new Error('目标槽位已有卡牌');
+            targetCards[targetIndex] = card;
+            return;
+        }
+        const emptyIndex = targetCards.findIndex(slot => slot === null);
+        if (emptyIndex >= 0) {
+            targetCards[emptyIndex] = card;
+            return;
+        }
+        targetCards.push(card);
+        return;
+    }
+
+    if (options.insertAtBottom) {
+        targetCards.unshift(card);
+    } else {
+        targetCards.push(card);
+    }
+}
+
+function debugSetMode(gameState: GameState, userUid: string, enabled: boolean) {
+    ensureDebugController(gameState, userUid);
+    ensureDebugIdle(gameState);
+    if (enabled) {
+        gameState.debugMode = { enabled: true, controllerUid: userUid, enabledAt: Date.now() };
+    } else {
+        gameState.debugMode = { enabled: false, controllerUid: userUid, enabledAt: gameState.debugMode?.enabledAt || Date.now() };
+    }
+    addDebugBattleLog(gameState, userUid, `[调试] ${getDebugPlayerName(gameState, userUid)} ${enabled ? '开启' : '关闭'}了调试模式。`);
+}
+
+function debugDraw(gameState: GameState, actorUid: string, targetPlayerUid: string, countInput: unknown) {
+    ensureDebugEnabled(gameState, actorUid);
+    const targetPlayer = gameState.players[targetPlayerUid];
+    if (!targetPlayer) throw new Error('未找到目标玩家');
+    const count = Math.max(1, Math.min(20, Number(countInput) || 1));
+    const drawn: Card[] = [];
+    for (let i = 0; i < count; i++) {
+        const card = targetPlayer.deck.pop();
+        if (!card) break;
+        card.cardlocation = 'HAND';
+        card.displayState = 'FRONT_UPRIGHT';
+        card.isExhausted = false;
+        targetPlayer.hand.push(card);
+        drawn.push(card);
+    }
+    addDebugBattleLog(
+        gameState,
+        actorUid,
+        `[调试] ${getDebugPlayerName(gameState, actorUid)} 让 ${targetPlayer.displayName} 抽牌 ${drawn.length}/${count} 张。`,
+        drawn
+    );
+}
+
+function debugShuffle(gameState: GameState, actorUid: string, targetPlayerUid: string) {
+    ensureDebugEnabled(gameState, actorUid);
+    const targetPlayer = gameState.players[targetPlayerUid];
+    if (!targetPlayer) throw new Error('未找到目标玩家');
+    ServerGameService.shuffle(targetPlayer.deck);
+    addDebugBattleLog(gameState, actorUid, `[调试] ${getDebugPlayerName(gameState, actorUid)} 洗切了 ${targetPlayer.displayName} 的牌库。`);
+}
+
+function debugMoveCard(gameState: GameState, actorUid: string, payload: any) {
+    ensureDebugEnabled(gameState, actorUid);
+    const cardId = String(payload?.cardId || payload?.gamecardId || '');
+    if (!cardId) throw new Error('缺少卡牌 ID');
+    const found = findDebugCard(gameState, cardId);
+    if (!found) throw new Error('未找到要移动的卡牌');
+
+    const targetPlayerUid = String(payload?.targetPlayerUid || payload?.toPlayerId || found.ownerUid);
+    const targetPlayer = gameState.players[targetPlayerUid];
+    if (!targetPlayer) throw new Error('未找到目标玩家');
+    const targetZone = normalizeDebugZone(payload?.targetZone || payload?.toZone);
+    const fromZone = found.zone;
+    const fromOwnerUid = found.ownerUid;
+    const card = found.card;
+
+    removeDebugCardFromZone(found);
+    if (shouldClearBattlefieldStateOnMove(fromZone, targetZone)) {
+        clearBattlefieldState(card);
+    }
+    if ((targetZone === 'HAND' || targetZone === 'DECK') && fromZone !== 'HAND' && fromZone !== 'DECK') {
+        ServerGameService.refreshCardAsNewInstance(card);
+    }
+
+    card.cardlocation = targetZone;
+    card.displayState = normalizeDebugDisplayState(targetZone, payload?.displayState);
+    card.isExhausted = payload?.isExhausted !== undefined
+        ? !!payload.isExhausted
+        : card.displayState === 'FRONT_HORIZONTAL';
+    if (targetZone === 'GRAVE' || targetZone === 'EXILE' || targetZone === 'HAND' || targetZone === 'DECK' || targetZone === 'EROSION_FRONT' || targetZone === 'EROSION_BACK') {
+        card.isExhausted = false;
+    }
+    if (targetZone === 'UNIT' || targetZone === 'ITEM') {
+        if (payload?.isExhausted === undefined) card.isExhausted = false;
+        card.displayState = card.isExhausted ? 'FRONT_HORIZONTAL' : normalizeDebugDisplayState(targetZone, payload?.displayState);
+    }
+
+    placeDebugCard(targetPlayer, targetZone, card, {
+        targetIndex: Number.isInteger(payload?.targetIndex) ? Number(payload.targetIndex) : undefined,
+        insertAtBottom: !!payload?.insertAtBottom
+    });
+
+    addDebugBattleLog(
+        gameState,
+        actorUid,
+        `[调试] ${getDebugPlayerName(gameState, actorUid)} 将 [${card.fullName}] 从 ${getDebugPlayerName(gameState, fromOwnerUid)}的${getDebugZoneLabel(fromZone)}移动到 ${targetPlayer.displayName}的${getDebugZoneLabel(targetZone)}。`,
+        [card]
+    );
+}
+
+function debugPatchCard(gameState: GameState, actorUid: string, payload: any) {
+    ensureDebugEnabled(gameState, actorUid);
+    const cardId = String(payload?.cardId || payload?.gamecardId || '');
+    if (!cardId) throw new Error('缺少卡牌 ID');
+    const found = findDebugCard(gameState, cardId);
+    if (!found) throw new Error('未找到要修改的卡牌');
+    const card = found.card;
+    const patch = payload?.patch || {};
+    const changes: string[] = [];
+
+    const setNumber = (key: 'power' | 'damage' | 'acValue', baseKey: 'basePower' | 'baseDamage' | 'baseAcValue') => {
+        if (patch[key] === undefined) return;
+        const rawValue = Math.max(-99999, Math.min(99999, Number(patch[key]) || 0));
+        const value = key === 'power' ? Math.round(rawValue / 500) * 500 : rawValue;
+        (card as any)[key] = value;
+        (card as any)[baseKey] = value;
+        changes.push(`${getDebugPatchLabel(key)}=${value}`);
+    };
+    const setBoolean = (
+        key: 'godMark' | 'canAttack' | 'canActivateEffect' | 'isrush' | 'isAnnihilation' | 'isShenyi' | 'isHeroic',
+        baseKey: 'baseGodMark' | 'baseCanAttack' | 'baseCanActivateEffect' | 'baseIsrush' | 'baseAnnihilation' | 'baseShenyi' | 'baseHeroic'
+    ) => {
+        if (patch[key] === undefined) return;
+        const value = !!patch[key];
+        (card as any)[key] = value;
+        (card as any)[baseKey] = value;
+        changes.push(`${getDebugPatchLabel(key)}=${formatDebugBoolean(value)}`);
+    };
+
+    setNumber('power', 'basePower');
+    setNumber('damage', 'baseDamage');
+    setNumber('acValue', 'baseAcValue');
+    setBoolean('godMark', 'baseGodMark');
+    setBoolean('canAttack', 'baseCanAttack');
+    setBoolean('canActivateEffect', 'baseCanActivateEffect');
+    setBoolean('isrush', 'baseIsrush');
+    setBoolean('isAnnihilation', 'baseAnnihilation');
+    setBoolean('isShenyi', 'baseShenyi');
+    setBoolean('isHeroic', 'baseHeroic');
+
+    if (patch.isExhausted !== undefined) {
+        card.isExhausted = !!patch.isExhausted;
+        card.displayState = card.isExhausted ? 'FRONT_HORIZONTAL' : 'FRONT_UPRIGHT';
+        changes.push(`${getDebugPatchLabel('isExhausted')}=${formatDebugBoolean(card.isExhausted)}`);
+    }
+    if (patch.displayState !== undefined) {
+        card.displayState = normalizeDebugDisplayState(found.zone, patch.displayState);
+        card.isExhausted = card.displayState === 'FRONT_HORIZONTAL';
+        changes.push(`${getDebugPatchLabel('displayState')}=${DEBUG_DISPLAY_STATE_LABELS[card.displayState] || card.displayState}`);
+    }
+
+    if (!changes.length) throw new Error('没有可修改的调试字段');
+    addDebugBattleLog(
+        gameState,
+        actorUid,
+        `[调试] ${getDebugPlayerName(gameState, actorUid)} 修改了 [${card.fullName}]：${changes.join(', ')}。`,
+        [card]
+    );
 }
 
 function isFriendGameStarted(gameState: any) {
@@ -2331,6 +2672,20 @@ const matchmakingQueue: { userId: string; socketId?: string; timestamp: number; 
 const matchmakingResults = new Map<string, string>();
 const authenticatedSockets = new Map<string, Set<string>>();
 const onlineSockets = new Map<string, { userId: string; username?: string; displayName?: string }>();
+type FriendInviteRecord = {
+    inviteId: string;
+    gameId: string;
+    roomCode: string;
+    hostUid: string;
+    hostName: string;
+    targetUid: string;
+    targetName: string;
+    turnTimerLimit?: number;
+    createdAt: number;
+    expiresAt: number;
+};
+const FRIEND_INVITE_TTL_MS = 60_000;
+const friendInvites = new Map<string, FriendInviteRecord>();
 
 function getAuthenticatedSocketIds(userId: string) {
     return Array.from(authenticatedSockets.get(userId) || []);
@@ -2393,6 +2748,55 @@ function getOnlinePlayers() {
         });
     }
     return Array.from(users.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
+}
+
+function getOnlinePlayerByUid(userId: string) {
+    return getOnlinePlayers().find(player => player.uid === userId);
+}
+
+function emitToAuthenticatedUser(userId: string, event: string, payload: any) {
+    for (const socketId of getAuthenticatedSocketIds(userId)) {
+        io.to(socketId).emit(event, payload);
+    }
+}
+
+function removeFriendInvite(inviteId: string) {
+    friendInvites.delete(inviteId);
+}
+
+function expireFriendInvite(inviteId: string) {
+    const invite = friendInvites.get(inviteId);
+    if (!invite || invite.expiresAt > Date.now()) return;
+    friendInvites.delete(inviteId);
+    emitToAuthenticatedUser(invite.hostUid, 'friendInvite:expired', {
+        inviteId,
+        targetUid: invite.targetUid,
+        targetName: invite.targetName,
+        gameId: invite.gameId,
+        roomCode: invite.roomCode
+    });
+}
+
+function pruneExpiredFriendInvites() {
+    for (const [inviteId, invite] of friendInvites.entries()) {
+        if (invite.expiresAt <= Date.now()) expireFriendInvite(inviteId);
+    }
+}
+
+async function getFriendInviteLobby(gameId: string) {
+    if (!gameId || !gameId.startsWith('friend_')) {
+        throw new Error('无效的好友房间');
+    }
+    const rows = await pool.query('SELECT state FROM games WHERE id = ?', [gameId]);
+    if (rows.length === 0) {
+        throw new Error('好友房间不存在');
+    }
+    const gameState = typeof rows[0].state === 'string' ? JSON.parse(rows[0].state) : rows[0].state;
+    if (!gameState || gameState.mode !== 'friend') {
+        throw new Error('无效的好友房间');
+    }
+    normalizeFriendRoomState(gameState);
+    return gameState;
 }
 
 function emitOnlinePlayers() {
@@ -3906,7 +4310,7 @@ function syncStoreFromLibrary() {
     const newPool: string[] = [];
     const newRarities: Record<string, string> = {};
 
-    for (const card of getLiveCardVariations().filter(isCardVisibleInCatalog)) {
+    for (const card of getLiveCardVariations().filter(card => !isAdjustedCard(card)).filter(isCardVisibleInCatalog)) {
         newPool.push(card.uniqueId);
         newRarities[card.uniqueId] = card.rarity;
     }
@@ -3937,7 +4341,7 @@ function resolveInventoryCard(cardReference: string): Card | undefined {
     }
 
     const card = (SERVER_CARD_LIBRARY as any)[cardReference] as Card | undefined;
-    if (!card?.uniqueId || card.uniqueId !== cardReference || !card?.rarity) {
+    if (!card?.uniqueId || card.uniqueId !== cardReference || !card?.rarity || isAdjustedCard(card)) {
         return undefined;
     }
 
@@ -3975,6 +4379,11 @@ function serializeCatalogCard(card: Card, includeEffects: boolean): Card {
         fullImageUrl: card.fullImageUrl,
         rarity: card.rarity,
         availableRarities: card.availableRarities,
+        adjustmentGroupId: card.adjustmentGroupId,
+        adjustmentVersion: card.adjustmentVersion,
+        adjustmentLabel: card.adjustmentLabel,
+        adjustmentDescription: card.adjustmentDescription,
+        ownershipUniqueId: card.ownershipUniqueId,
         cardPackage: card.cardPackage,
         faction: card.faction,
         isrush: !!card.isrush,
@@ -3990,6 +4399,30 @@ function getClientCardCatalog(includeEffects: boolean) {
         .map(card => serializeCatalogCard(card, includeEffects));
 }
 
+function normalizeCommentCardId(value: any) {
+    return String(value || '').trim();
+}
+
+function isCommentCardIdValid(cardId: string) {
+    return getLiveCardVariations()
+        .filter(isCardVisibleInCatalog)
+        .some(card => card.id === cardId);
+}
+
+function buildCardComment(row: any, user: any) {
+    const userId = user?.userId?.toString();
+    return {
+        id: row.id,
+        cardId: row.card_id,
+        userId: row.user_id,
+        authorName: row.author_name,
+        content: row.content,
+        createdAt: Number(row.created_at || 0),
+        updatedAt: Number(row.updated_at || 0),
+        canDelete: row.user_id?.toString() === userId || isAdminUser(user)
+    };
+}
+
 app.get('/api/cards/meta', async (req, res): Promise<void> => {
     try {
         const includeEffects = req.query.includeEffects === '1';
@@ -3998,6 +4431,91 @@ app.get('/api/cards/meta', async (req, res): Promise<void> => {
     } catch (err) {
         console.error('[CardsMeta] Failed to build card catalog:', err);
         res.status(500).json({ error: 'Failed to load card catalog' });
+    }
+});
+
+app.get('/api/cards/:cardId/comments', async (req, res): Promise<void> => {
+    const user = await getAuthenticatedUserFromHeader(req, res);
+    if (!user) { return; }
+
+    const cardId = normalizeCommentCardId(req.params.cardId);
+    if (!isCommentCardIdValid(cardId)) {
+        res.status(404).json({ error: '未找到该卡牌' });
+        return;
+    }
+
+    try {
+        const rows = await pool.query(
+            'SELECT * FROM card_comments WHERE card_id = ? ORDER BY created_at DESC LIMIT 100',
+            [cardId]
+        );
+        res.json({ comments: rows.map((row: any) => buildCardComment(row, user)) });
+    } catch (err) {
+        console.error('Card comments list error:', err);
+        res.status(500).json({ error: 'DB Error' });
+    }
+});
+
+app.post('/api/cards/:cardId/comments', async (req, res): Promise<void> => {
+    const user = await getAuthenticatedUserFromHeader(req, res);
+    if (!user) { return; }
+
+    const cardId = normalizeCommentCardId(req.params.cardId);
+    const content = String(req.body?.content || '').trim();
+    if (!isCommentCardIdValid(cardId)) {
+        res.status(404).json({ error: '未找到该卡牌' });
+        return;
+    }
+    if (!content) {
+        res.status(400).json({ error: '评论内容不能为空' });
+        return;
+    }
+    if (content.length > 500) {
+        res.status(400).json({ error: '评论不能超过 500 字' });
+        return;
+    }
+
+    try {
+        const now = Date.now();
+        const commentId = `card_comment_${now.toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+        await pool.query(
+            'INSERT INTO card_comments (id, card_id, user_id, author_name, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [commentId, cardId, user.userId.toString(), getUserUsernameLabel(user), content, now, now]
+        );
+        const rows = await pool.query('SELECT * FROM card_comments WHERE id = ?', [commentId]);
+        res.json({ comment: buildCardComment(rows[0], user) });
+    } catch (err) {
+        console.error('Card comment create error:', err);
+        res.status(500).json({ error: 'DB Error' });
+    }
+});
+
+app.delete('/api/cards/comments/:commentId', async (req, res): Promise<void> => {
+    const user = await getAuthenticatedUserFromHeader(req, res);
+    if (!user) { return; }
+
+    const commentId = String(req.params.commentId || '').trim();
+    if (!commentId) {
+        res.status(400).json({ error: '评论 ID 无效' });
+        return;
+    }
+
+    try {
+        const rows = await pool.query('SELECT * FROM card_comments WHERE id = ?', [commentId]);
+        if (rows.length === 0) {
+            res.status(404).json({ error: '评论不存在' });
+            return;
+        }
+        const comment = rows[0];
+        if (comment.user_id?.toString() !== user.userId.toString() && !isAdminUser(user)) {
+            res.status(403).json({ error: '无权删除该评论' });
+            return;
+        }
+        await pool.query('DELETE FROM card_comments WHERE id = ?', [commentId]);
+        res.json({ ok: true, id: commentId });
+    } catch (err) {
+        console.error('Card comment delete error:', err);
+        res.status(500).json({ error: 'DB Error' });
     }
 });
 
@@ -4024,7 +4542,7 @@ app.post('/api/store/buy-pack', async (req, res): Promise<void> => {
             return;
         }
 
-        const allCards = getLiveCardVariations().filter(isCardVisibleInCatalog);
+        const allCards = getLiveCardVariations().filter(card => !isAdjustedCard(card)).filter(isCardVisibleInCatalog);
         const drawnCards: Card[] = [];
 
         if (isPrizePack) {
@@ -4343,6 +4861,167 @@ io.on('connection', (socket) => {
         });
     });
 
+    socket.on('friendInvite:send', async (payload: { gameId?: string; targetUid?: string }) => {
+        const user = (socket as any).user;
+        if (!user) {
+            socket.emit('friendInvite:error', { message: '请先登录后再邀请玩家。' });
+            return;
+        }
+
+        pruneExpiredFriendInvites();
+        const gameId = String(payload?.gameId || '');
+        const targetUid = String(payload?.targetUid || '');
+        const hostUid = user.userId.toString();
+        if (!gameId || !targetUid) {
+            socket.emit('friendInvite:error', { message: '邀请信息不完整。' });
+            return;
+        }
+        if (targetUid === hostUid) {
+            socket.emit('friendInvite:error', { targetUid, message: '不能邀请自己。' });
+            return;
+        }
+
+        try {
+            const gameState = await getFriendInviteLobby(gameId);
+            if (isFriendGameStarted(gameState)) {
+                socket.emit('friendInvite:error', { targetUid, message: '房间已开始，不能继续邀请。' });
+                return;
+            }
+            if (gameState.hostUid?.toString() !== hostUid) {
+                socket.emit('friendInvite:error', { targetUid, message: '只有房主可以邀请在线玩家。' });
+                return;
+            }
+            if ((gameState.participantIds || []).map((uid: any) => uid?.toString()).includes(targetUid)) {
+                socket.emit('friendInvite:error', { targetUid, message: '该玩家已经在房间内。' });
+                return;
+            }
+
+            const targetPlayer = getOnlinePlayerByUid(targetUid);
+            if (!targetPlayer || getAuthenticatedSocketIds(targetUid).length === 0) {
+                socket.emit('friendInvite:error', { targetUid, message: '该玩家当前不在线。' });
+                return;
+            }
+
+            const existingInvite = [...friendInvites.values()].find(invite =>
+                invite.gameId === gameId &&
+                invite.hostUid === hostUid &&
+                invite.targetUid === targetUid &&
+                invite.expiresAt > Date.now()
+            );
+            const inviteId = existingInvite?.inviteId || `friend_invite_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+            const hostName = getUserUsernameLabel(user);
+            const invite: FriendInviteRecord = {
+                inviteId,
+                gameId,
+                roomCode: gameState.roomCode,
+                hostUid,
+                hostName,
+                targetUid,
+                targetName: targetPlayer.displayName || targetPlayer.username || targetUid,
+                turnTimerLimit: gameState.turnTimerLimit,
+                createdAt: Date.now(),
+                expiresAt: Date.now() + FRIEND_INVITE_TTL_MS
+            };
+            friendInvites.set(inviteId, invite);
+            setTimeout(() => expireFriendInvite(inviteId), Math.max(0, invite.expiresAt - Date.now() + 50));
+
+            const invitePayload = {
+                inviteId: invite.inviteId,
+                gameId: invite.gameId,
+                roomCode: invite.roomCode,
+                hostUid: invite.hostUid,
+                hostName: invite.hostName,
+                targetUid: invite.targetUid,
+                turnTimerLimit: invite.turnTimerLimit,
+                expiresAt: invite.expiresAt
+            };
+            emitToAuthenticatedUser(targetUid, 'friendInvite:received', invitePayload);
+            socket.emit('friendInvite:sent', {
+                inviteId,
+                targetUid,
+                targetName: invite.targetName,
+                gameId,
+                roomCode: invite.roomCode,
+                expiresAt: invite.expiresAt
+            });
+        } catch (err: any) {
+            socket.emit('friendInvite:error', { targetUid, message: err.message || '发送邀请失败。' });
+        }
+    });
+
+    socket.on('friendInvite:declined', (payload: { inviteId?: string; reason?: string }) => {
+        const user = (socket as any).user;
+        if (!user) return;
+        pruneExpiredFriendInvites();
+        const inviteId = String(payload?.inviteId || '');
+        const invite = friendInvites.get(inviteId);
+        if (!invite || invite.targetUid !== user.userId.toString()) return;
+
+        removeFriendInvite(inviteId);
+        emitToAuthenticatedUser(invite.hostUid, 'friendInvite:declined', {
+            inviteId,
+            targetUid: invite.targetUid,
+            targetName: invite.targetName,
+            gameId: invite.gameId,
+            roomCode: invite.roomCode,
+            reason: payload?.reason || '对方拒绝了邀请。'
+        });
+    });
+
+    socket.on('friendInvite:accepted', async (payload: { inviteId?: string }) => {
+        const user = (socket as any).user;
+        if (!user) {
+            socket.emit('friendInvite:error', { message: '请先登录后再接受邀请。' });
+            return;
+        }
+
+        pruneExpiredFriendInvites();
+        const inviteId = String(payload?.inviteId || '');
+        const invite = friendInvites.get(inviteId);
+        if (!invite || invite.targetUid !== user.userId.toString()) {
+            socket.emit('friendInvite:error', { inviteId, message: '邀请已失效。' });
+            return;
+        }
+
+        try {
+            const gameState = await getFriendInviteLobby(invite.gameId);
+            if ((gameState.participantIds || []).map((uid: any) => uid?.toString()).includes(invite.targetUid)) {
+                removeFriendInvite(inviteId);
+                socket.emit('friendInvite:accepted', {
+                    inviteId,
+                    gameId: invite.gameId,
+                    roomCode: invite.roomCode
+                });
+                return;
+            }
+
+            removeFriendInvite(inviteId);
+            emitToAuthenticatedUser(invite.hostUid, 'friendInvite:accepted', {
+                inviteId,
+                targetUid: invite.targetUid,
+                targetName: invite.targetName,
+                gameId: invite.gameId,
+                roomCode: invite.roomCode
+            });
+            socket.emit('friendInvite:accepted', {
+                inviteId,
+                gameId: invite.gameId,
+                roomCode: invite.roomCode
+            });
+        } catch (err: any) {
+            removeFriendInvite(inviteId);
+            socket.emit('friendInvite:error', { inviteId, message: err.message || '接受邀请失败。' });
+            emitToAuthenticatedUser(invite.hostUid, 'friendInvite:declined', {
+                inviteId,
+                targetUid: invite.targetUid,
+                targetName: invite.targetName,
+                gameId: invite.gameId,
+                roomCode: invite.roomCode,
+                reason: '邀请已失效。'
+            });
+        }
+    });
+
     socket.on('joinGame', async (data: { gameId: string, deckId?: string, seat?: 'player' | 'spectator' }) => {
         const user = (socket as any).user;
         if (!user) {
@@ -4561,6 +5240,38 @@ io.on('connection', (socket) => {
                     return;
                 }
 
+                const executeStart = process.hrtime.bigint();
+                if (action === 'DEBUG_SET_MODE') {
+                    debugSetMode(gameState, myUid, !!payload?.enabled);
+                    actionTimings.executeActionMs = elapsedMs(executeStart);
+                    await syncAndSaveState(gameId, gameState, { source: action });
+                    return;
+                }
+                if (action === 'DEBUG_DRAW') {
+                    debugDraw(gameState, myUid, String(payload?.playerUid || myUid), payload?.count);
+                    actionTimings.executeActionMs = elapsedMs(executeStart);
+                    await syncAndSaveState(gameId, gameState, { source: action });
+                    return;
+                }
+                if (action === 'DEBUG_SHUFFLE') {
+                    debugShuffle(gameState, myUid, String(payload?.playerUid || myUid));
+                    actionTimings.executeActionMs = elapsedMs(executeStart);
+                    await syncAndSaveState(gameId, gameState, { source: action });
+                    return;
+                }
+                if (action === 'DEBUG_MOVE_CARD') {
+                    debugMoveCard(gameState, myUid, payload);
+                    actionTimings.executeActionMs = elapsedMs(executeStart);
+                    await syncAndSaveState(gameId, gameState, { source: action });
+                    return;
+                }
+                if (action === 'DEBUG_PATCH_CARD') {
+                    debugPatchCard(gameState, myUid, payload);
+                    actionTimings.executeActionMs = elapsedMs(executeStart);
+                    await syncAndSaveState(gameId, gameState, { source: action });
+                    return;
+                }
+
                 const player = gameState.players[myUid];
                 if (!player) {
                     // console.log(`[Socket] Action ${action} rejected: Player ${myUid} not found in game ${gameId}`);
@@ -4571,7 +5282,6 @@ io.on('connection', (socket) => {
                     await syncGameStateForCallback(gameId, state, `${action}:callback`);
                 };
 
-                const executeStart = process.hrtime.bigint();
                 if (action === 'RPS_CHOICE') {
                     submitRpsChoice(gameState, myUid, payload?.choice);
                 } else if (action === 'CHOOSE_FIRST_PLAYER') {

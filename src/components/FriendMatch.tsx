@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, LogIn, Loader2, Copy, Check, Eye, Swords, ChevronDown, UserRound, UsersRound, Clock3, RefreshCw } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { ArrowLeft, Plus, LogIn, Loader2, Copy, Check, Eye, Swords, ChevronDown, UserRound, UsersRound, Clock3, RefreshCw, Send } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { validateDeckForBattle } from '../lib/deckValidation';
-import { getAuthToken, getAuthUser } from '../socket';
+import { getAuthToken, getAuthUser, socket } from '../socket';
 import { Deck } from '../types/game';
 import { useCardCatalog } from '../hooks/useCardCatalog';
 
@@ -43,8 +43,20 @@ interface FriendLobbySummary {
   mySeat: LobbySeat | null;
 }
 
+interface OnlinePlayer {
+  uid: string;
+  username?: string;
+  displayName: string;
+}
+
+type InviteStatus = {
+  status: 'sending' | 'sent' | 'accepted' | 'declined' | 'expired' | 'error';
+  message?: string;
+};
+
 export const FriendMatch: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [mode, setMode] = useState<'select' | 'join' | 'lobby'>('select');
   const [myDecks, setMyDecks] = useState<Deck[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,6 +74,8 @@ export const FriendMatch: React.FC = () => {
   const [deckDropdownOpen, setDeckDropdownOpen] = useState(false);
   const [timerPopoverOpen, setTimerPopoverOpen] = useState(false);
   const [savingTimer, setSavingTimer] = useState(false);
+  const [onlinePlayers, setOnlinePlayers] = useState<OnlinePlayer[]>([]);
+  const [inviteStatuses, setInviteStatuses] = useState<Record<string, InviteStatus>>({});
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const roomPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -81,6 +95,20 @@ export const FriendMatch: React.FC = () => {
   const isPlayerSeat = mySeat === 'player1' || mySeat === 'player2';
   const isReady = !!(myUid && lobby?.friendReady?.[myUid]);
   const isHost = !!(myUid && lobby?.hostUid?.toString() === myUid);
+  const invitedRoomCode = (location.state as { invitedRoomCode?: string } | null)?.invitedRoomCode;
+  const inviteablePlayers = useMemo(() => {
+    if (!lobby || !myUid) return [];
+    const roomUserIds = new Set([
+      ...(lobby.participantIds || []),
+      ...(lobby.playerIds || []).filter((uid): uid is string => !!uid),
+      ...(lobby.spectatorIds || [])
+    ].map(uid => uid.toString()));
+
+    return onlinePlayers.filter(player =>
+      player.uid !== myUid &&
+      !roomUserIds.has(player.uid)
+    );
+  }, [lobby, myUid, onlinePlayers]);
   const displayNameFor = (uid?: string | null) => {
     if (!uid) return '空位';
     return lobby?.participantNames?.[uid] || uid;
@@ -143,6 +171,101 @@ export const FriendMatch: React.FC = () => {
       clearRoomPoll();
     };
   }, [BACKEND_URL, token]);
+
+  useEffect(() => {
+    if (!invitedRoomCode || !token) return;
+    const joinInvitedRoom = async () => {
+      setJoining(true);
+      setError('');
+      try {
+        await requestLobby(`${BACKEND_URL}/api/games/friend/join`, { roomCode: invitedRoomCode });
+        navigate('/friend-match', { replace: true, state: {} });
+      } catch (e: any) {
+        setMode('join');
+        setRoomCode(invitedRoomCode);
+        setError(e.message || '加入邀请房间失败');
+      } finally {
+        setJoining(false);
+      }
+    };
+    joinInvitedRoom();
+  }, [invitedRoomCode, token, BACKEND_URL]);
+
+  useEffect(() => {
+    const handleOnlinePlayers = (payload: { players?: OnlinePlayer[] }) => {
+      setOnlinePlayers(payload.players || []);
+    };
+    const handleInviteSent = (payload: { targetUid?: string; targetName?: string; expiresAt?: number }) => {
+      if (!payload.targetUid) return;
+      setInviteStatuses(current => ({
+        ...current,
+        [payload.targetUid!]: {
+          status: 'sent',
+          message: `已邀请 ${payload.targetName || '玩家'}`
+        }
+      }));
+    };
+    const handleInviteAccepted = (payload: { targetUid?: string; targetName?: string }) => {
+      if (!payload.targetUid) return;
+      setInviteStatuses(current => ({
+        ...current,
+        [payload.targetUid!]: {
+          status: 'accepted',
+          message: `${payload.targetName || '玩家'} 已接受邀请`
+        }
+      }));
+    };
+    const handleInviteDeclined = (payload: { targetUid?: string; targetName?: string; reason?: string }) => {
+      if (!payload.targetUid) return;
+      setInviteStatuses(current => ({
+        ...current,
+        [payload.targetUid!]: {
+          status: 'declined',
+          message: payload.reason || `${payload.targetName || '玩家'} 拒绝了邀请`
+        }
+      }));
+    };
+    const handleInviteExpired = (payload: { targetUid?: string; targetName?: string }) => {
+      if (!payload.targetUid) return;
+      setInviteStatuses(current => ({
+        ...current,
+        [payload.targetUid!]: {
+          status: 'expired',
+          message: `${payload.targetName || '玩家'} 的邀请已超时`
+        }
+      }));
+    };
+    const handleInviteError = (payload: { targetUid?: string; message?: string }) => {
+      if (payload.targetUid) {
+        setInviteStatuses(current => ({
+          ...current,
+          [payload.targetUid!]: {
+            status: 'error',
+            message: payload.message || '邀请失败'
+          }
+        }));
+      } else if (payload.message) {
+        setError(payload.message);
+      }
+    };
+
+    socket.on('onlinePlayers', handleOnlinePlayers);
+    socket.on('friendInvite:sent', handleInviteSent);
+    socket.on('friendInvite:accepted', handleInviteAccepted);
+    socket.on('friendInvite:declined', handleInviteDeclined);
+    socket.on('friendInvite:expired', handleInviteExpired);
+    socket.on('friendInvite:error', handleInviteError);
+    socket.emit('requestOnlinePlayers');
+
+    return () => {
+      socket.off('onlinePlayers', handleOnlinePlayers);
+      socket.off('friendInvite:sent', handleInviteSent);
+      socket.off('friendInvite:accepted', handleInviteAccepted);
+      socket.off('friendInvite:declined', handleInviteDeclined);
+      socket.off('friendInvite:expired', handleInviteExpired);
+      socket.off('friendInvite:error', handleInviteError);
+    };
+  }, []);
 
   const loadPublicRooms = async (showSpinner = false) => {
     if (!token) return;
@@ -319,6 +442,88 @@ export const FriendMatch: React.FC = () => {
       setIsPublicRoom(!!lobby.isPublic);
       setError(e.message || '修改公开状态失败');
     }
+  };
+
+  const sendInvite = (target: OnlinePlayer) => {
+    if (!lobby || !isHost || lobby.started) return;
+    setInviteStatuses(current => ({
+      ...current,
+      [target.uid]: {
+        status: 'sending',
+        message: '发送中...'
+      }
+    }));
+    socket.emit('friendInvite:send', {
+      gameId: lobby.gameId,
+      targetUid: target.uid
+    });
+  };
+
+  const renderInvitePanel = () => {
+    if (!lobby || !isHost || lobby.started) return null;
+
+    return (
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-5">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-black italic tracking-tighter md:text-xl">邀请在线玩家</h2>
+            <p className="mt-1 text-[10px] font-bold tracking-widest text-zinc-500">仅房主可邀请，接受后优先加入玩家2</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => socket.emit('requestOnlinePlayers')}
+            className="flex shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-black text-white transition-colors hover:bg-white/10"
+          >
+            <RefreshCw className="h-4 w-4" />
+            刷新
+          </button>
+        </div>
+
+        {inviteablePlayers.length === 0 ? (
+          <div className="rounded-xl bg-black/30 px-4 py-6 text-center text-sm font-bold text-zinc-500">
+            暂无可邀请的在线玩家
+          </div>
+        ) : (
+          <div className="grid gap-2 md:grid-cols-2">
+            {inviteablePlayers.map(player => {
+              const inviteStatus = inviteStatuses[player.uid];
+              const busy = inviteStatus?.status === 'sending';
+              const accepted = inviteStatus?.status === 'accepted';
+              const statusTone = inviteStatus?.status === 'accepted'
+                ? 'text-emerald-300'
+                : inviteStatus?.status === 'sent'
+                  ? 'text-amber-300'
+                  : inviteStatus?.status === 'declined' || inviteStatus?.status === 'expired' || inviteStatus?.status === 'error'
+                    ? 'text-red-300'
+                    : 'text-zinc-500';
+
+              return (
+                <div key={player.uid} className="flex min-w-0 items-center gap-3 rounded-xl border border-white/10 bg-black/25 px-4 py-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-xs font-black text-zinc-100">
+                    {(player.displayName || player.username || '?').slice(0, 1).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-black text-white">{player.displayName || player.username || player.uid}</div>
+                    <div className={cn('mt-1 truncate text-[10px] font-bold', statusTone)}>
+                      {inviteStatus?.message || '在线'}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => sendInvite(player)}
+                    disabled={busy || accepted}
+                    className="flex shrink-0 items-center gap-1.5 rounded-xl bg-red-600 px-3 py-2 text-xs font-black text-white transition-colors hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : accepted ? <Check className="h-3.5 w-3.5" /> : <Send className="h-3.5 w-3.5" />}
+                    {accepted ? '已加入' : busy ? '发送中' : '邀请'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
   };
 
   const copyCode = () => {
@@ -729,6 +934,8 @@ export const FriendMatch: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            {renderInvitePanel()}
 
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               {renderSeatCard('player1', '玩家1', lobby.playerIds[0])}

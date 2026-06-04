@@ -29,7 +29,27 @@ const greenDiscardCandidates = (playerState: any, instance: Card) =>
 const discardCandidatesForMode = (playerState: any, instance: Card, mode: string) =>
   mode === MODE_BOOST ? greenDiscardCandidates(playerState, instance) : anyDiscardCandidates(playerState, instance);
 
+const canUseMode = (gameState: any, playerState: any, instance: Card, mode: string) => {
+  if (mode === MODE_PROTECT) return anyDiscardCandidates(playerState, instance).length > 0;
+  if (mode === MODE_BOOST) {
+    return greenDiscardCandidates(playerState, instance).length > 0 && allUnitsOnField(gameState).length > 0;
+  }
+  return false;
+};
+
+const availableModeOptions = (gameState: any, playerState: any, instance: Card) => {
+  const options = [];
+  if (canUseMode(gameState, playerState, instance, MODE_PROTECT)) {
+    options.push({ id: MODE_PROTECT, label: '防止效果破坏并抽卡' });
+  }
+  if (canUseMode(gameState, playerState, instance, MODE_BOOST)) {
+    options.push({ id: MODE_BOOST, label: '力量+500并获得歼灭' });
+  }
+  return options;
+};
+
 const openDiscardCostQuery = (gameState: any, playerState: any, instance: Card, mode: string) => {
+  if (!canUseMode(gameState, playerState, instance, mode)) return false;
   const candidates = discardCandidatesForMode(playerState, instance, mode);
   if (candidates.length === 0) return false;
   createSelectCardQuery(
@@ -53,13 +73,7 @@ const openDiscardCostQuery = (gameState: any, playerState: any, instance: Card, 
 };
 
 const cardEffects: CardEffect[] = [story('203000116_conveyed_thoughts', '选择1项：舍弃1张手牌，本回合中你的单位将被对手的卡的效果破坏时防止那次破坏，然后你可以抽2张卡；或选择战场上的1个单位，舍弃1张绿色手牌，那个单位本回合力量+500并获得歼灭。', async (instance, gameState, playerState) => {
-  const options = [];
-  if (anyDiscardCandidates(playerState, instance).length > 0) {
-    options.push({ id: 'PROTECT_DESTROY_DRAW', label: '防止效果破坏并抽卡' });
-  }
-  if (greenDiscardCandidates(playerState, instance).length > 0 && allUnitsOnField(gameState).length > 0) {
-    options.push({ id: 'BOOST_GREEN', label: '力量+500并获得歼灭' });
-  }
+  const options = availableModeOptions(gameState, playerState, instance);
   if (options.length === 0) return;
   createChoiceQuery(
     gameState,
@@ -71,8 +85,7 @@ const cardEffects: CardEffect[] = [story('203000116_conveyed_thoughts', '选择1
   );
 }, {
   condition: (gameState, playerState, instance) =>
-    anyDiscardCandidates(playerState, instance).length > 0 ||
-    (greenDiscardCandidates(playerState, instance).length > 0 && allUnitsOnField(gameState).length > 0),
+    availableModeOptions(gameState, playerState, instance).length > 0,
   targetSpec: {
     modeTitle: '选择效果',
     modeDescription: '选择1项效果并指定对象。',
@@ -85,7 +98,7 @@ const cardEffects: CardEffect[] = [story('203000116_conveyed_thoughts', '选择1
       maxSelections: 0,
       zones: [],
       step: 'PROTECT_DESTROY_DRAW',
-      condition: (_gameState, playerState, instance) => anyDiscardCandidates(playerState, instance).length > 0,
+      condition: (gameState, playerState, instance) => canUseMode(gameState, playerState, instance, MODE_PROTECT),
       getCandidates: () => [] as any[]
     }, {
       id: MODE_BOOST,
@@ -97,9 +110,7 @@ const cardEffects: CardEffect[] = [story('203000116_conveyed_thoughts', '选择1
       zones: ['UNIT'],
       controller: 'ANY',
       step: 'TARGET',
-      condition: (gameState, playerState, instance) =>
-        greenDiscardCandidates(playerState, instance).length > 0 &&
-        allUnitsOnField(gameState).length > 0,
+      condition: (gameState, playerState, instance) => canUseMode(gameState, playerState, instance, MODE_BOOST),
       getCandidates: gameState =>
         allUnitsOnField(gameState).map(card => ({ card, source: 'UNIT' as any }))
     }]

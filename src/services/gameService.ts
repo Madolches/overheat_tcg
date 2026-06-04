@@ -332,6 +332,47 @@ export const GameService = {
     socket.emit('gameAction', { gameId, action: 'SUBMIT_QUERY_CHOICE', payload: { queryId, selections } });
   },
 
+  async setDebugMode(gameId: string, enabled: boolean) {
+    socket.emit('gameAction', { gameId, action: 'DEBUG_SET_MODE', payload: { enabled } });
+  },
+
+  async debugDraw(gameId: string, playerUid: string, count: number) {
+    socket.emit('gameAction', { gameId, action: 'DEBUG_DRAW', payload: { playerUid, count } });
+  },
+
+  async debugShuffle(gameId: string, playerUid: string) {
+    socket.emit('gameAction', { gameId, action: 'DEBUG_SHUFFLE', payload: { playerUid } });
+  },
+
+  async debugMoveCard(gameId: string, payload: {
+    cardId: string;
+    targetPlayerUid: string;
+    targetZone: TriggerLocation;
+    targetIndex?: number;
+    insertAtBottom?: boolean;
+    displayState?: Card['displayState'];
+    isExhausted?: boolean;
+  }) {
+    socket.emit('gameAction', { gameId, action: 'DEBUG_MOVE_CARD', payload });
+  },
+
+  async debugPatchCard(gameId: string, gamecardId: string, patch: Partial<Pick<Card,
+    'power' |
+    'damage' |
+    'acValue' |
+    'godMark' |
+    'canAttack' |
+    'canActivateEffect' |
+    'isrush' |
+    'isAnnihilation' |
+    'isShenyi' |
+    'isHeroic' |
+    'isExhausted' |
+    'displayState'
+  >>) {
+    socket.emit('gameAction', { gameId, action: 'DEBUG_PATCH_CARD', payload: { cardId: gamecardId, patch } });
+  },
+
   moveCard(gameOrId: GameState | string, playerId: string, fromZone: TriggerLocation, toPlayerId: string, toZone: TriggerLocation, cardId: string): boolean {
     if (typeof gameOrId === 'string') {
       socket.emit('gameAction', { gameId: gameOrId, action: 'MOVE_CARD', payload: { fromZone, toPlayerId, toZone, cardId } });

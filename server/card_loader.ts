@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { Card } from '../src/types/game';
 import { bundledCardModules } from './generated/card_manifest';
+import { CardAdjustmentFactory, expandAdjustedCardVariants } from '../src/lib/cardAdjustments';
 
 const SCRIPTS_DIR = path.join(process.cwd(), 'src', 'scripts');
 
@@ -10,27 +11,34 @@ const isCardModule = (cardModule: any): cardModule is { default: Card } =>
   typeof cardModule.default === 'object' &&
   typeof cardModule.default.id === 'string';
 
+const getAdjustmentFactory = (cardModule: any): CardAdjustmentFactory | undefined =>
+  typeof cardModule?.createAdjustedCards === 'function' ? cardModule.createAdjustedCards : undefined;
+
+const expandCardModuleVariations = (cardModule: any): Card[] => {
+  if (!isCardModule(cardModule)) {
+    return [];
+  }
+
+  const baseCard = cardModule.default;
+  const cards = baseCard.availableRarities && baseCard.availableRarities.length > 0
+    ? baseCard.availableRarities.map((r: any) => ({
+        ...baseCard,
+        rarity: r,
+        uniqueId: `${baseCard.id}:${r}`
+      }))
+    : [{
+        ...baseCard,
+        uniqueId: `${baseCard.id}:${baseCard.rarity}`
+      }];
+
+  return expandAdjustedCardVariants(cards, getAdjustmentFactory(cardModule));
+};
+
 export async function loadServerCards(): Promise<Card[]> {
   const cards: Card[] = [];
   if (bundledCardModules.length > 0) {
     for (const cardModule of bundledCardModules) {
-      if (isCardModule(cardModule)) {
-        const baseCard = cardModule.default;
-        if (baseCard.availableRarities && baseCard.availableRarities.length > 0) {
-          baseCard.availableRarities.forEach((r: any) => {
-            cards.push({
-              ...baseCard,
-              rarity: r,
-              uniqueId: `${baseCard.id}:${r}`
-            });
-          });
-        } else {
-          cards.push({
-            ...baseCard,
-            uniqueId: `${baseCard.id}:${baseCard.rarity}`
-          });
-        }
-      }
+      cards.push(...expandCardModuleVariations(cardModule));
     }
     return cards;
   }
@@ -40,23 +48,7 @@ export async function loadServerCards(): Promise<Card[]> {
   for (const file of files) {
     if (file.endsWith('.ts')) {
       const cardModule = await import(`../src/scripts/${file}`);
-      if (isCardModule(cardModule)) {
-        const baseCard = cardModule.default;
-        if (baseCard.availableRarities && baseCard.availableRarities.length > 0) {
-          baseCard.availableRarities.forEach((r: any) => {
-            cards.push({
-              ...baseCard,
-              rarity: r,
-              uniqueId: `${baseCard.id}:${r}`
-            });
-          });
-        } else {
-          cards.push({
-            ...baseCard,
-            uniqueId: `${baseCard.id}:${baseCard.rarity}`
-          });
-        }
-      }
+      cards.push(...expandCardModuleVariations(cardModule));
     }
   }
   return cards;
