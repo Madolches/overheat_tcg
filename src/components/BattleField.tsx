@@ -191,6 +191,58 @@ const DEBUG_DESTINATIONS: Array<{ zone: TriggerLocation; label: string }> = [
 
 const DEBUG_FIXED_SLOT_ZONES = new Set<TriggerLocation>(['UNIT', 'ITEM', 'EROSION_FRONT', 'EROSION_BACK']);
 const DEBUG_BOOLEAN_PATCH_KEYS = ['godMark', 'canAttack', 'canActivateEffect', 'isrush', 'isAnnihilation', 'isShenyi', 'isHeroic'] as const;
+const PRE_ANIMATING_CARD_TIMEOUT_MS = 2000;
+const PRE_ANIMATING_TARGET_ZONES = new Set(['UNIT', 'ITEM', 'PLAY']);
+
+const getBattleAnimationCardLocations = (state?: GameState | null): Record<string, { zone: string; ownerUid: string }> => {
+  const locations: Record<string, { zone: string; ownerUid: string }> = {};
+  if (!state?.players) return locations;
+
+  Object.entries(state.players).forEach(([ownerUid, player]) => {
+    const zones: Array<[string, Array<Card | null | undefined> | undefined]> = [
+      ['HAND', player.hand],
+      ['DECK', player.deck],
+      ['GRAVE', player.grave],
+      ['EXILE', player.exile],
+      ['PLAY', player.playZone],
+      ['UNIT', player.unitZone],
+      ['ITEM', player.itemZone],
+      ['EROSION_FRONT', player.erosionFront],
+      ['EROSION_BACK', player.erosionBack]
+    ];
+
+    zones.forEach(([zone, cards]) => {
+      cards?.forEach(card => {
+        if (card?.gamecardId) {
+          locations[card.gamecardId] = { zone, ownerUid };
+        }
+      });
+    });
+  });
+
+  return locations;
+};
+
+const getIncomingBattleAnimationCardIds = (previousState: GameState | null, nextState: GameState): Set<string> => {
+  const ids = new Set<string>();
+  if (!previousState?.players || !nextState?.players) return ids;
+
+  const previousLocations = getBattleAnimationCardLocations(previousState);
+  const nextLocations = getBattleAnimationCardLocations(nextState);
+
+  Object.entries(nextLocations).forEach(([gamecardId, nextLocation]) => {
+    const previousLocation = previousLocations[gamecardId];
+    if (
+      previousLocation &&
+      previousLocation.zone !== nextLocation.zone &&
+      PRE_ANIMATING_TARGET_ZONES.has(nextLocation.zone)
+    ) {
+      ids.add(gamecardId);
+    }
+  });
+
+  return ids;
+};
 
 const applyLocalDebugPatch = (card: Card, patch: any): Card => {
   const next = { ...card };
@@ -291,6 +343,8 @@ export const BattleField: React.FC = () => {
   const [queryHandoff, setQueryHandoff] = useState<{ query: EffectQuery; clearAt: number } | null>(null);
   const [dismissedPublicRevealId, setDismissedPublicRevealId] = useState<string | null>(null);
   const [hoverPreviewCard, setHoverPreviewCard] = useState<Card | null>(null);
+  const [preAnimatingCardIds, setPreAnimatingCardIds] = useState<Set<string>>(new Set());
+  const preAnimatingCardTimeoutsRef = useRef<Record<string, ReturnType<typeof window.setTimeout>>>({});
   const lastStrategyUpdateRef = useRef<number>(0);
   const lastJoinEmitRef = useRef<number>(0);
   const [pregameNow, setPregameNow] = useState(Date.now());
@@ -351,6 +405,14 @@ export const BattleField: React.FC = () => {
   useEffect(() => {
     battleAnimationsRef.current = battleAnimations;
   }, [battleAnimations]);
+  useEffect(() => {
+    return () => {
+      Object.keys(preAnimatingCardTimeoutsRef.current).forEach(id => {
+        window.clearTimeout(preAnimatingCardTimeoutsRef.current[id]);
+      });
+      preAnimatingCardTimeoutsRef.current = {};
+    };
+  }, []);
 
   const lastEmittedAnimationTimeRef = useRef<string | null>(null);
   const stateBufferRef = useRef<any[]>([]);
@@ -360,6 +422,42 @@ export const BattleField: React.FC = () => {
   const lastAppliedGameRef = useRef<GameState | null>(null);
   const [serverAnimationHoldUntil, setServerAnimationHoldUntil] = useState(0);
   const applyGameStateRef = useRef<((state: any) => void) | null>(null);
+  const clearPreAnimatingCardIds = useCallback((ids: Iterable<string>) => {
+    const idList = Array.from(ids);
+    if (!idList.length) return;
+    idList.forEach(id => {
+      const timeoutId = preAnimatingCardTimeoutsRef.current[id];
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+        delete preAnimatingCardTimeoutsRef.current[id];
+      }
+    });
+    setPreAnimatingCardIds(current => {
+      let changed = false;
+      const next = new Set(current);
+      idList.forEach(id => {
+        if (next.delete(id)) changed = true;
+      });
+      return changed ? next : current;
+    });
+  }, []);
+  const schedulePreAnimatingCardIds = useCallback((previousState: GameState | null, nextState: GameState) => {
+    if (!battleAnimationsEnabled) return;
+    const ids = getIncomingBattleAnimationCardIds(previousState, nextState);
+    if (!ids.size) return;
+    setPreAnimatingCardIds(current => {
+      const next = new Set(current);
+      ids.forEach(id => next.add(id));
+      return next;
+    });
+    ids.forEach(id => {
+      const existingTimeoutId = preAnimatingCardTimeoutsRef.current[id];
+      if (existingTimeoutId) window.clearTimeout(existingTimeoutId);
+      preAnimatingCardTimeoutsRef.current[id] = window.setTimeout(() => {
+        clearPreAnimatingCardIds([id]);
+      }, PRE_ANIMATING_CARD_TIMEOUT_MS);
+    });
+  }, [battleAnimationsEnabled, clearPreAnimatingCardIds]);
   const hasNewPlayZoneCard = useCallback((previousState: GameState | null, nextState: GameState) => {
     if (!previousState?.players || !nextState?.players) return false;
     return Object.entries(nextState.players).some(([uid, nextPlayer]) => {
@@ -395,12 +493,13 @@ export const BattleField: React.FC = () => {
       setServerAnimationHoldUntil(0);
     }
     setVisualGame(nextState.animationHint ? nextState : null);
+    schedulePreAnimatingCardIds(lastAppliedGameRef.current, nextState);
     if (applyGameStateRef.current) {
       applyGameStateRef.current(nextState);
     }
     lastAppliedGameRef.current = nextState;
     bufferReplayCooldownUntilRef.current = Date.now() + 80;
-  }, [battleAnimationsEnabled]);
+  }, [battleAnimationsEnabled, schedulePreAnimatingCardIds]);
   const activeBlockingAnimationEvents = useMemo(() => {
     if (!battleAnimationsEnabled) return [];
     return getBattleAnimationPlaybackGroup(battleAnimations.events);
@@ -486,8 +585,20 @@ export const BattleField: React.FC = () => {
     socket.emit('gameAction', { gameId, action: 'ADD_ANIMATION_TIME', payload: { duration } });
   }, [activeBlockingAnimationEvents, battleAnimationsEnabled, socket, gameId]);
 
+  useEffect(() => {
+    if (battleAnimationsEnabled) return;
+    clearPreAnimatingCardIds(preAnimatingCardIds);
+  }, [battleAnimationsEnabled, clearPreAnimatingCardIds, preAnimatingCardIds]);
+
+  useEffect(() => {
+    const eventCardIds = battleAnimations.events
+      .filter(event => event.sourceCardId && event.type === 'card-played')
+      .map(event => event.sourceCardId as string);
+    clearPreAnimatingCardIds(eventCardIds);
+  }, [battleAnimations.events, clearPreAnimatingCardIds]);
+
   const animatingCardIds = useMemo(() => {
-    const ids = new Set<string>();
+    const ids = new Set<string>(preAnimatingCardIds);
     battleAnimations.events.forEach(event => {
       if (
         event.sourceCardId &&
@@ -497,7 +608,7 @@ export const BattleField: React.FC = () => {
       }
     });
     return ids;
-  }, [battleAnimations.events]);
+  }, [battleAnimations.events, preAnimatingCardIds]);
   const activeMulliganReveal = !isSpectator && game?.phase === 'MULLIGAN' ? me?.mulliganReveal : undefined;
   const debugControllerUid = useMemo(() => {
     if (!game || !myUid) return undefined;
@@ -996,6 +1107,7 @@ export const BattleField: React.FC = () => {
           interruptedLocalAnimation: localAnimationPlaying,
           interruptedServerHold: existingServerHold
         });
+        schedulePreAnimatingCardIds(lastAppliedGameRef.current, newState);
         applyGameState(newState);
         lastAppliedGameRef.current = newState;
         return;
@@ -1014,6 +1126,7 @@ export const BattleField: React.FC = () => {
           interruptedServerHold: existingServerHold
         });
         setVisualGame(newState);
+        schedulePreAnimatingCardIds(lastAppliedGameRef.current, newState);
         applyGameState(newState);
         lastAppliedGameRef.current = newState;
         return;
@@ -1054,6 +1167,7 @@ export const BattleField: React.FC = () => {
         }
       }
       
+      schedulePreAnimatingCardIds(lastAppliedGameRef.current, newState);
       applyGameState(newState);
       lastAppliedGameRef.current = newState;
     };
@@ -1095,7 +1209,7 @@ export const BattleField: React.FC = () => {
       socket.off('gameTimerUpdate', onGameTimerUpdate);
       socket.off('error', onSocketError);
     };
-  }, [battleAnimationsEnabled, gameId, hasNewPlayZoneCard, hasPhaseChanged]);
+  }, [battleAnimationsEnabled, gameId, hasNewPlayZoneCard, hasPhaseChanged, schedulePreAnimatingCardIds]);
 
   // Monitor logs for battle interruption
   useEffect(() => {

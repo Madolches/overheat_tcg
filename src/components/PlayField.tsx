@@ -129,7 +129,7 @@ const CardSlot: React.FC<{
           isHighlighted ? "z-20 !border-yellow-400 ring-2 ring-yellow-400 shadow-[0_0_20px_rgba(250,204,21,0.95)]" : "",
           isSelectedForQuery ? "z-30 !border-[#f27d26] ring-4 ring-[#f27d26] shadow-[0_0_28px_rgba(242,125,38,0.95)]" : "",
           (isAttacking || isDefending) ? "z-10" : "",
-          isAnimating && "opacity-0 pointer-events-none",
+          isAnimating && "!transition-none invisible pointer-events-none",
           className
         )}
         onClick={(e) => {
