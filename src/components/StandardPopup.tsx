@@ -55,6 +55,16 @@ type VisualOptionMeta = {
   glow: string;
 };
 
+type PopupCardMeta = {
+  ownerName?: string;
+  slotLabel?: string;
+  zoneLabel?: string;
+  isMine?: boolean;
+  isFaceDown?: boolean;
+  effectiveAcValue?: number;
+  ignoreSkin?: boolean;
+};
+
 const STANDARD_CHOICE_VISUALS: Record<string, Partial<VisualOptionMeta>> = {
   '105110112_option_A': {
     detail: '抽取新的手牌资源',
@@ -135,7 +145,9 @@ interface StandardPopupProps {
   
   // Card Selection & Display props
   cards?: Card[];
-  cardMeta?: Record<string, { ownerName?: string; slotLabel?: string; zoneLabel?: string; isMine?: boolean; isFaceDown?: boolean; effectiveAcValue?: number; ignoreSkin?: boolean }>;
+  cardMeta?: Record<string, PopupCardMeta>;
+  featuredCard?: Card;
+  featuredCardMeta?: PopupCardMeta;
   options?: PopupOption[];
   selectedIds?: string[];
   highlightedIds?: string[];
@@ -399,6 +411,8 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
   confirmDisabled = false,
   cards = [],
   cardMeta = {},
+  featuredCard,
+  featuredCardMeta = {} as PopupCardMeta,
   options,
   selectedIds = [],
   highlightedIds = [],
@@ -485,6 +499,20 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
                 </button>
               )}
             </div>
+            {featuredCard && (
+              <div className="flex justify-center border-b border-white/5 bg-black/20 px-3 py-3">
+                <div className="pointer-events-none w-24 overflow-hidden rounded-lg border border-white/10 shadow-lg md:w-28">
+                  <CardComponent
+                    card={featuredCard}
+                    isBack={!!featuredCardMeta.isFaceDown}
+                    disableZoom
+                    cardBackUrl={cardBackUrl}
+                    effectiveAcValue={featuredCardMeta.effectiveAcValue}
+                    ignoreSkin={!!featuredCardMeta.ignoreSkin}
+                  />
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-2 p-2">
               <button
                 onClick={onConfirm}
@@ -659,6 +687,18 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
             {children}
             {mode === 'double_selection' ? (
               <div className={cn("flex flex-col items-center", isDuelBottom ? "gap-3" : "gap-6")}>
+                {featuredCard && (
+                  <div className="pointer-events-none w-28 overflow-hidden rounded-xl border border-white/10 shadow-xl md:w-32">
+                    <CardComponent
+                      card={featuredCard}
+                      isBack={!!featuredCardMeta.isFaceDown}
+                      disableZoom
+                      cardBackUrl={cardBackUrl}
+                      effectiveAcValue={featuredCardMeta.effectiveAcValue}
+                      ignoreSkin={!!featuredCardMeta.ignoreSkin}
+                    />
+                  </div>
+                )}
                 <div className={cn("flex gap-3 w-full", isDuelBottom ? "max-w-2xl" : "gap-4")}>
                   <button
                     onClick={onConfirm}
@@ -761,7 +801,7 @@ export const StandardPopup: React.FC<StandardPopupProps> = ({
                       )}
                       
                       {/* Selection Order Badge */}
-                      {isSelected && (mode === 'card_selection' || mode === 'choice_selection') && (
+                      {isSelected && (mode === 'card_selection' || mode === 'choice_selection' || mode === 'card_display') && (
                         <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center pointer-events-none">
                           <div className="w-12 h-12 rounded-full bg-[#f27d26] text-black flex items-center justify-center shadow-2xl relative">
                             <span className="text-2xl font-black italic leading-none">{selectionOrder}</span>

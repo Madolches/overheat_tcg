@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { BattleLogEntry, Card, GameState, StackItem } from '../types/game';
 import { battleLogText, normalizeBattleLogEntry } from '../lib/battleLog';
 import { getCardImageUrl } from '../lib/utils';
@@ -108,7 +108,7 @@ export function useBattleAnimations(game: GameState | null, perspectiveUid?: str
     setEvents(current => current.filter(event => event.id !== eventId));
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!game) {
       setEvents([]);
       seenLogIdsRef.current.clear();

@@ -33,6 +33,12 @@ const EFFECT_TYPE_LABELS: Record<string, string> = {
 };
 
 const EROSION_NO_CARD_ID = '__NO_EROSION_CARD__';
+const DIRECT_TARGET_ZONES = new Set(['UNIT', 'ITEM', 'EROSION_FRONT', 'EROSION_BACK', 'GRAVE', 'EXILE']);
+
+const isDirectTargetZoneOption = (option?: { source?: TriggerLocation; card?: Card }) => {
+  const zone = String(option?.source || option?.card?.cardlocation || '').toUpperCase();
+  return DIRECT_TARGET_ZONES.has(zone);
+};
 
 const getEffectTypeLabel = (type?: string | null) => {
   if (!type) return '效果';
@@ -185,6 +191,58 @@ const DEBUG_DESTINATIONS: Array<{ zone: TriggerLocation; label: string }> = [
 
 const DEBUG_FIXED_SLOT_ZONES = new Set<TriggerLocation>(['UNIT', 'ITEM', 'EROSION_FRONT', 'EROSION_BACK']);
 const DEBUG_BOOLEAN_PATCH_KEYS = ['godMark', 'canAttack', 'canActivateEffect', 'isrush', 'isAnnihilation', 'isShenyi', 'isHeroic'] as const;
+const PRE_ANIMATING_CARD_TIMEOUT_MS = 2000;
+const PRE_ANIMATING_TARGET_ZONES = new Set(['UNIT', 'ITEM', 'PLAY']);
+
+const getBattleAnimationCardLocations = (state?: GameState | null): Record<string, { zone: string; ownerUid: string }> => {
+  const locations: Record<string, { zone: string; ownerUid: string }> = {};
+  if (!state?.players) return locations;
+
+  Object.entries(state.players).forEach(([ownerUid, player]) => {
+    const zones: Array<[string, Array<Card | null | undefined> | undefined]> = [
+      ['HAND', player.hand],
+      ['DECK', player.deck],
+      ['GRAVE', player.grave],
+      ['EXILE', player.exile],
+      ['PLAY', player.playZone],
+      ['UNIT', player.unitZone],
+      ['ITEM', player.itemZone],
+      ['EROSION_FRONT', player.erosionFront],
+      ['EROSION_BACK', player.erosionBack]
+    ];
+
+    zones.forEach(([zone, cards]) => {
+      cards?.forEach(card => {
+        if (card?.gamecardId) {
+          locations[card.gamecardId] = { zone, ownerUid };
+        }
+      });
+    });
+  });
+
+  return locations;
+};
+
+const getIncomingBattleAnimationCardIds = (previousState: GameState | null, nextState: GameState): Set<string> => {
+  const ids = new Set<string>();
+  if (!previousState?.players || !nextState?.players) return ids;
+
+  const previousLocations = getBattleAnimationCardLocations(previousState);
+  const nextLocations = getBattleAnimationCardLocations(nextState);
+
+  Object.entries(nextLocations).forEach(([gamecardId, nextLocation]) => {
+    const previousLocation = previousLocations[gamecardId];
+    if (
+      previousLocation &&
+      previousLocation.zone !== nextLocation.zone &&
+      PRE_ANIMATING_TARGET_ZONES.has(nextLocation.zone)
+    ) {
+      ids.add(gamecardId);
+    }
+  });
+
+  return ids;
+};
 
 const applyLocalDebugPatch = (card: Card, patch: any): Card => {
   const next = { ...card };
@@ -280,10 +338,13 @@ export const BattleField: React.FC = () => {
   const [interruptionNotice, setInterruptionNotice] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [isPopupHidden, setIsPopupHidden] = useState(false);
+  const [expandedDirectTargetQueryId, setExpandedDirectTargetQueryId] = useState<string | null>(null);
   const [confrontationPromptBlockedUntil, setConfrontationPromptBlockedUntil] = useState(0);
   const [queryHandoff, setQueryHandoff] = useState<{ query: EffectQuery; clearAt: number } | null>(null);
   const [dismissedPublicRevealId, setDismissedPublicRevealId] = useState<string | null>(null);
   const [hoverPreviewCard, setHoverPreviewCard] = useState<Card | null>(null);
+  const [preAnimatingCardIds, setPreAnimatingCardIds] = useState<Set<string>>(new Set());
+  const preAnimatingCardTimeoutsRef = useRef<Record<string, ReturnType<typeof window.setTimeout>>>({});
   const lastStrategyUpdateRef = useRef<number>(0);
   const lastJoinEmitRef = useRef<number>(0);
   const [pregameNow, setPregameNow] = useState(Date.now());
@@ -344,6 +405,14 @@ export const BattleField: React.FC = () => {
   useEffect(() => {
     battleAnimationsRef.current = battleAnimations;
   }, [battleAnimations]);
+  useEffect(() => {
+    return () => {
+      Object.keys(preAnimatingCardTimeoutsRef.current).forEach(id => {
+        window.clearTimeout(preAnimatingCardTimeoutsRef.current[id]);
+      });
+      preAnimatingCardTimeoutsRef.current = {};
+    };
+  }, []);
 
   const lastEmittedAnimationTimeRef = useRef<string | null>(null);
   const stateBufferRef = useRef<any[]>([]);
@@ -353,6 +422,42 @@ export const BattleField: React.FC = () => {
   const lastAppliedGameRef = useRef<GameState | null>(null);
   const [serverAnimationHoldUntil, setServerAnimationHoldUntil] = useState(0);
   const applyGameStateRef = useRef<((state: any) => void) | null>(null);
+  const clearPreAnimatingCardIds = useCallback((ids: Iterable<string>) => {
+    const idList = Array.from(ids);
+    if (!idList.length) return;
+    idList.forEach(id => {
+      const timeoutId = preAnimatingCardTimeoutsRef.current[id];
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+        delete preAnimatingCardTimeoutsRef.current[id];
+      }
+    });
+    setPreAnimatingCardIds(current => {
+      let changed = false;
+      const next = new Set(current);
+      idList.forEach(id => {
+        if (next.delete(id)) changed = true;
+      });
+      return changed ? next : current;
+    });
+  }, []);
+  const schedulePreAnimatingCardIds = useCallback((previousState: GameState | null, nextState: GameState) => {
+    if (!battleAnimationsEnabled) return;
+    const ids = getIncomingBattleAnimationCardIds(previousState, nextState);
+    if (!ids.size) return;
+    setPreAnimatingCardIds(current => {
+      const next = new Set(current);
+      ids.forEach(id => next.add(id));
+      return next;
+    });
+    ids.forEach(id => {
+      const existingTimeoutId = preAnimatingCardTimeoutsRef.current[id];
+      if (existingTimeoutId) window.clearTimeout(existingTimeoutId);
+      preAnimatingCardTimeoutsRef.current[id] = window.setTimeout(() => {
+        clearPreAnimatingCardIds([id]);
+      }, PRE_ANIMATING_CARD_TIMEOUT_MS);
+    });
+  }, [battleAnimationsEnabled, clearPreAnimatingCardIds]);
   const hasNewPlayZoneCard = useCallback((previousState: GameState | null, nextState: GameState) => {
     if (!previousState?.players || !nextState?.players) return false;
     return Object.entries(nextState.players).some(([uid, nextPlayer]) => {
@@ -388,12 +493,13 @@ export const BattleField: React.FC = () => {
       setServerAnimationHoldUntil(0);
     }
     setVisualGame(nextState.animationHint ? nextState : null);
+    schedulePreAnimatingCardIds(lastAppliedGameRef.current, nextState);
     if (applyGameStateRef.current) {
       applyGameStateRef.current(nextState);
     }
     lastAppliedGameRef.current = nextState;
     bufferReplayCooldownUntilRef.current = Date.now() + 80;
-  }, [battleAnimationsEnabled]);
+  }, [battleAnimationsEnabled, schedulePreAnimatingCardIds]);
   const activeBlockingAnimationEvents = useMemo(() => {
     if (!battleAnimationsEnabled) return [];
     return getBattleAnimationPlaybackGroup(battleAnimations.events);
@@ -479,8 +585,20 @@ export const BattleField: React.FC = () => {
     socket.emit('gameAction', { gameId, action: 'ADD_ANIMATION_TIME', payload: { duration } });
   }, [activeBlockingAnimationEvents, battleAnimationsEnabled, socket, gameId]);
 
+  useEffect(() => {
+    if (battleAnimationsEnabled) return;
+    clearPreAnimatingCardIds(preAnimatingCardIds);
+  }, [battleAnimationsEnabled, clearPreAnimatingCardIds, preAnimatingCardIds]);
+
+  useEffect(() => {
+    const eventCardIds = battleAnimations.events
+      .filter(event => event.sourceCardId && event.type === 'card-played')
+      .map(event => event.sourceCardId as string);
+    clearPreAnimatingCardIds(eventCardIds);
+  }, [battleAnimations.events, clearPreAnimatingCardIds]);
+
   const animatingCardIds = useMemo(() => {
-    const ids = new Set<string>();
+    const ids = new Set<string>(preAnimatingCardIds);
     battleAnimations.events.forEach(event => {
       if (
         event.sourceCardId &&
@@ -490,7 +608,7 @@ export const BattleField: React.FC = () => {
       }
     });
     return ids;
-  }, [battleAnimations.events]);
+  }, [battleAnimations.events, preAnimatingCardIds]);
   const activeMulliganReveal = !isSpectator && game?.phase === 'MULLIGAN' ? me?.mulliganReveal : undefined;
   const debugControllerUid = useMemo(() => {
     if (!game || !myUid) return undefined;
@@ -989,6 +1107,7 @@ export const BattleField: React.FC = () => {
           interruptedLocalAnimation: localAnimationPlaying,
           interruptedServerHold: existingServerHold
         });
+        schedulePreAnimatingCardIds(lastAppliedGameRef.current, newState);
         applyGameState(newState);
         lastAppliedGameRef.current = newState;
         return;
@@ -1007,6 +1126,7 @@ export const BattleField: React.FC = () => {
           interruptedServerHold: existingServerHold
         });
         setVisualGame(newState);
+        schedulePreAnimatingCardIds(lastAppliedGameRef.current, newState);
         applyGameState(newState);
         lastAppliedGameRef.current = newState;
         return;
@@ -1047,6 +1167,7 @@ export const BattleField: React.FC = () => {
         }
       }
       
+      schedulePreAnimatingCardIds(lastAppliedGameRef.current, newState);
       applyGameState(newState);
       lastAppliedGameRef.current = newState;
     };
@@ -1088,7 +1209,7 @@ export const BattleField: React.FC = () => {
       socket.off('gameTimerUpdate', onGameTimerUpdate);
       socket.off('error', onSocketError);
     };
-  }, [battleAnimationsEnabled, gameId, hasNewPlayZoneCard, hasPhaseChanged]);
+  }, [battleAnimationsEnabled, gameId, hasNewPlayZoneCard, hasPhaseChanged, schedulePreAnimatingCardIds]);
 
   // Monitor logs for battle interruption
   useEffect(() => {
@@ -1568,6 +1689,61 @@ export const BattleField: React.FC = () => {
       .map(option => option.card?.gamecardId || option.card?.id)
       .filter((id): id is string => !!id)
   ), [selectablePendingQueryOptions]);
+  const isDeclareEffectTargetQuery =
+    isSelectCardPendingQuery &&
+    displayedPendingQuery?.callbackKey === 'DECLARE_EFFECT_TARGETS' &&
+    displayedPendingQuery?.playerUid === myUid;
+  const selectedDirectTargetIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!isDeclareEffectTargetQuery) return ids;
+
+    selectedQueryIds.forEach(selectedId => {
+      ids.add(selectedId);
+      const option = selectablePendingQueryOptions.find(candidate =>
+        getPendingOptionId(candidate) === selectedId ||
+        candidate.card?.gamecardId === selectedId ||
+        candidate.card?.id === selectedId
+      );
+      if (option?.card?.gamecardId) ids.add(option.card.gamecardId);
+      if (option?.card?.id) ids.add(option.card.id);
+    });
+
+    return ids;
+  }, [isDeclareEffectTargetQuery, selectablePendingQueryOptions, selectedQueryIds]);
+  const selectedDirectTargetCardIds = useMemo(() => {
+    if (!isDeclareEffectTargetQuery) return [];
+
+    return selectedQueryIds.map(selectedId => {
+      const option = selectablePendingQueryOptions.find(candidate =>
+        getPendingOptionId(candidate) === selectedId ||
+        candidate.card?.gamecardId === selectedId ||
+        candidate.card?.id === selectedId
+      );
+      return option?.card?.gamecardId || option?.card?.id || selectedId;
+    });
+  }, [isDeclareEffectTargetQuery, selectablePendingQueryOptions, selectedQueryIds]);
+  const visibleSelectedTargetIds = isDeclareEffectTargetQuery ? selectedDirectTargetIds : undefined;
+  const visibleSelectedTargetCardIds = isDeclareEffectTargetQuery ? selectedDirectTargetCardIds : undefined;
+  const hasDirectTargetOptions = selectablePendingQueryOptions.some(isDirectTargetZoneOption);
+  const isDirectTargetSelectionActive =
+    canShowPendingInteraction &&
+    !isSpectator &&
+    !isQueryHandoffWaiting &&
+    !!displayedPendingQuery &&
+    isDeclareEffectTargetQuery &&
+    hasDirectTargetOptions;
+  const shouldPreferDirectTargetSelection =
+    isDirectTargetSelectionActive &&
+    selectablePendingQueryOptions.every(isDirectTargetZoneOption) &&
+    expandedDirectTargetQueryId !== displayedPendingQuery?.id;
+  const isDirectTargetPopupHidden = shouldPreferDirectTargetSelection && !isPopupHidden;
+  const isInteractionHidden = isPopupHidden || isDirectTargetPopupHidden;
+  const directTargetMinSelections = displayedPendingQuery?.minSelections ?? 0;
+  const directTargetMaxSelections = displayedPendingQuery?.maxSelections ?? 0;
+  const canConfirmDirectTargetSelection =
+    isDirectTargetSelectionActive &&
+    selectedQueryIds.length >= directTargetMinSelections &&
+    (directTargetMaxSelections <= 0 || selectedQueryIds.length <= directTargetMaxSelections);
   const isInspectOnlyPendingQuery = isSelectCardPendingQuery &&
     (pendingQuery?.minSelections ?? 0) === 0 &&
     selectablePendingQueryOptions.length === 0;
@@ -1582,11 +1758,23 @@ export const BattleField: React.FC = () => {
         displayedPendingQuery?.context?.sourceCardId
       )
     : undefined;
+  const pendingTriggerSourceCard = normalizedPendingQueryType === 'ASK_TRIGGER'
+    ? (
+        findCardInGame(displayedPendingQuery?.context?.sourceCardId) ||
+        displayedPendingQuery?.context?.sourceCardSnapshot
+      ) as Card | undefined
+    : undefined;
+  const pendingTriggerSourceCardMeta = pendingTriggerSourceCard
+    ? {
+        ignoreSkin: shouldIgnoreSkinForCard(pendingTriggerSourceCard, { ownerUid: displayedPendingQuery?.playerUid })
+      }
+    : undefined;
   const isEffectPaymentQuery =
     normalizedPendingQueryType === 'SELECT_PAYMENT' &&
     displayedPendingQuery?.callbackKey !== 'PLAY_CARD_PAYMENT';
   const pendingQueryTitle = (() => {
     if (isQueryHandoffWaiting) return '处理中...';
+    if (normalizedPendingQueryType === 'ASK_TRIGGER') return '请选择是否发动效果';
     if (normalizedPendingQueryType === 'SELECT_PAYMENT' && pendingPaymentSourceCard) {
       return `支付${pendingPaymentSourceCard.fullName}费用`;
     }
@@ -1602,6 +1790,11 @@ export const BattleField: React.FC = () => {
     normalizedPendingQueryType === 'ASK_TRIGGER' ? 'center' : 'duel-bottom';
   const pendingQuerySelectionStatusPlacement =
     normalizedPendingQueryType === 'SELECT_CARD' ? 'header-center' : 'default';
+
+  useEffect(() => {
+    if (!shouldPreferDirectTargetSelection || !displayedPendingQuery?.id) return;
+    setCardMenu(null);
+  }, [shouldPreferDirectTargetSelection, displayedPendingQuery?.id]);
 
   const highlightedCardIds = useMemo(() => {
     const ids = new Set<string>();
@@ -1878,6 +2071,90 @@ export const BattleField: React.FC = () => {
     }
   };
 
+  const submitPendingQuerySelections = async (overrideSelections?: string[]) => {
+    if (!gameId || !displayedPendingQuery || isQueryHandoffWaiting) return;
+    const submittingQuery = displayedPendingQuery;
+    const chosenSelections = overrideSelections || selectedQueryIds;
+    setQueryHandoff({ query: submittingQuery, clearAt: Date.now() + 650 });
+    setIsPopupHidden(false);
+
+    if (import.meta.env.ENABLE_PERF_LOGS === '1') {
+      console.log(`[Query] Submitting choice for ${submittingQuery.type}:`, {
+        id: submittingQuery.id,
+        selectedIds: chosenSelections,
+        payment: paymentSelection
+      });
+    }
+
+    try {
+      let selections = [...chosenSelections];
+      // Normalize type check to handle potential variations
+      const queryType = submittingQuery.type?.replace(/-/g, '_').toUpperCase();
+
+      if (queryType === 'SELECT_PAYMENT') {
+        const mappedPayment = {
+          feijingCardId: paymentSelection.useFeijing[0],
+          exhaustUnitIds: paymentSelection.exhaustIds,
+          erosionFrontIds: paymentSelection.erosionFrontIds
+        };
+        selections = [JSON.stringify(mappedPayment)];
+      }
+
+      await GameService.submitQueryChoice(gameId, submittingQuery.id, selections);
+      setSelectedQueryIds([]);
+    } catch (error: any) {
+      console.error('[Query] Submission error:', error);
+      setLastError(error.message);
+    }
+  };
+
+  const getDirectTargetOptionForCard = (card: Card) => {
+    if (!isDirectTargetSelectionActive) return undefined;
+    return selectablePendingQueryOptions.find(option => {
+      if (option.disabled || !option.card) return false;
+      if (!isDirectTargetZoneOption(option)) return false;
+      const optionId = getPendingOptionId(option);
+      return optionId === card.gamecardId ||
+        optionId === card.id ||
+        option.card.id === card.id ||
+        option.card.gamecardId === card.gamecardId;
+    });
+  };
+
+  const getPendingSelectableOptionForCard = (card: Card) => {
+    return selectablePendingQueryOptions.find(option => {
+      if (option.disabled || !option.card) return false;
+      const optionId = getPendingOptionId(option);
+      return optionId === card.gamecardId ||
+        optionId === card.id ||
+        option.card.gamecardId === card.gamecardId ||
+        option.card.id === card.id;
+    });
+  };
+
+  const selectDirectTargetCard = (card: Card, zone: string) => {
+    const option = getDirectTargetOptionForCard(card);
+    if (!option) return false;
+    const selectedOptionId = getPendingOptionId(option);
+    if (!selectedOptionId) return false;
+    const maxSelections = displayedPendingQuery?.maxSelections ?? 1;
+
+    setCardMenu(null);
+    if (maxSelections <= 1) {
+      setSelectedQueryIds([selectedOptionId]);
+      closeViewingZoneForCardAction(zone);
+      submitPendingQuerySelections([selectedOptionId]);
+      return true;
+    }
+
+    setSelectedQueryIds(prev => {
+      if (prev.includes(selectedOptionId)) return prev.filter(id => id !== selectedOptionId);
+      if (prev.length >= maxSelections) return prev;
+      return [...prev, selectedOptionId];
+    });
+    return true;
+  };
+
 
 
   const handleCardClick = (card: Card, zone: string, index?: number, e?: React.MouseEvent) => {
@@ -1917,7 +2194,11 @@ export const BattleField: React.FC = () => {
       return;
     }
 
-    if (isPopupHidden) {
+    if (selectDirectTargetCard(card, zone)) {
+      return;
+    }
+
+    if (isInteractionHidden) {
       const rect = e?.currentTarget?.getBoundingClientRect();
       setCardMenu({
         card,
@@ -2202,39 +2483,7 @@ export const BattleField: React.FC = () => {
   };
 
   const handleQuerySubmit = async () => {
-    if (!gameId || !displayedPendingQuery || isQueryHandoffWaiting) return;
-    const submittingQuery = displayedPendingQuery;
-    setQueryHandoff({ query: submittingQuery, clearAt: Date.now() + 650 });
-    setIsPopupHidden(false);
-
-    if (import.meta.env.ENABLE_PERF_LOGS === '1') {
-      console.log(`[Query] Submitting choice for ${submittingQuery.type}:`, {
-        id: submittingQuery.id,
-        selectedIds: selectedQueryIds,
-        payment: paymentSelection
-      });
-    }
-
-    try {
-      let selections = selectedQueryIds;
-      // Normalize type check to handle potential variations
-      const queryType = submittingQuery.type?.replace(/-/g, '_').toUpperCase();
-
-      if (queryType === 'SELECT_PAYMENT') {
-        const mappedPayment = {
-          feijingCardId: paymentSelection.useFeijing[0],
-          exhaustUnitIds: paymentSelection.exhaustIds,
-          erosionFrontIds: paymentSelection.erosionFrontIds
-        };
-        selections = [JSON.stringify(mappedPayment)];
-      }
-
-      await GameService.submitQueryChoice(gameId, submittingQuery.id, selections);
-      setSelectedQueryIds([]);
-    } catch (error: any) {
-      console.error('[Query] Submission error:', error);
-      setLastError(error.message);
-    }
+    await submitPendingQuerySelections();
   };
 
   const togglePaymentExhaust = (gamecardId: string) => {
@@ -3192,6 +3441,8 @@ export const BattleField: React.FC = () => {
                   viewingZone={viewingZone}
                   setViewingZone={setViewingZone}
                   highlightedCardIds={highlightedCardIds}
+                  selectedTargetIds={visibleSelectedTargetIds}
+                  selectedTargetCardIds={visibleSelectedTargetCardIds}
                   animatingCardIds={animatingCardIds}
                   onShowLogs={handleToggleLogs}
                   onOpenRulebook={() => setIsRulebookOpen(true)}
@@ -3259,7 +3510,7 @@ export const BattleField: React.FC = () => {
                     }
                   }}
                   onDeclineDefense={() => handleDeclareDefense(undefined)}
-                  isPopupHidden={isPopupHidden}
+                  isPopupHidden={isInteractionHidden}
                   onHidePopup={() => setIsPopupHidden(true)}
                   onExpand={() => setIsPopupHidden(false)}
                   ignoreOpponentCardSkins={!showOpponentCardSkins}
@@ -3437,9 +3688,10 @@ export const BattleField: React.FC = () => {
             >
               <div className="md:hidden w-12 h-1 bg-white/20 rounded-full mb-2 shrink-0" />
               <div className="md:hidden text-[10px] font-black text-white/40 tracking-[0.2em] mb-2 shrink-0">操作</div>
-              {canShowPendingInteraction && isPopupHidden && isSelectCardPendingQuery && game.pendingQuery?.playerUid === myUid && (() => {
-                const optionId = cardMenu.card.gamecardId || cardMenu.card.id;
-                if (!selectablePendingQueryCardIds.has(optionId)) return null;
+              {canShowPendingInteraction && isInteractionHidden && isSelectCardPendingQuery && game.pendingQuery?.playerUid === myUid && (() => {
+                const option = getPendingSelectableOptionForCard(cardMenu.card);
+                const optionId = option ? getPendingOptionId(option) : '';
+                if (!optionId) return null;
                 const isSelected = selectedQueryIds.includes(optionId);
                 return (
                   <motion.button
@@ -3464,11 +3716,12 @@ export const BattleField: React.FC = () => {
                   </motion.button>
                 );
               })()}
-              {canShowPendingInteraction && isPopupHidden && game.pendingQuery?.playerUid === myUid && (
+              {canShowPendingInteraction && isInteractionHidden && game.pendingQuery?.playerUid === myUid && (
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   className="px-4 py-3 md:py-1.5 text-[12px] md:text-[10px] font-bold text-black bg-[#f27d26] rounded-full shadow-lg border border-white/20 flex items-center justify-center w-full"
                   onClick={() => {
+                    setExpandedDirectTargetQueryId(displayedPendingQuery?.id || null);
                     setIsPopupHidden(false);
                     setCardMenu(null);
                   }}
@@ -3476,7 +3729,7 @@ export const BattleField: React.FC = () => {
                   展开窗口
                 </motion.button>
               )}
-              {canShowPendingInteraction && isPopupHidden && isSelectCardPendingQuery && game.pendingQuery?.playerUid === myUid && selectedQueryIds.length >= (game.pendingQuery?.minSelections || 0) && (
+              {canShowPendingInteraction && isInteractionHidden && isSelectCardPendingQuery && game.pendingQuery?.playerUid === myUid && selectedQueryIds.length >= (game.pendingQuery?.minSelections || 0) && (
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   className="px-4 py-3 md:py-1.5 text-[12px] md:text-[10px] font-bold text-white bg-[#22c55e] rounded-full shadow-lg border border-white/20 flex items-center justify-center w-full"
@@ -3489,7 +3742,7 @@ export const BattleField: React.FC = () => {
                 </motion.button>
               )}
               {/* Action: Play (Yellow) */}
-              {!isPopupHidden && (() => {
+              {!isInteractionHidden && (() => {
                 const isCounteringTurn = game.phase === 'COUNTERING' && game.priorityPlayerId === myUid;
                 const isMainTurn = me.isTurn && game.phase === 'MAIN';
                 const isBattleFreeTurn = me.isTurn && game.phase === 'BATTLE_FREE' && cardMenu.card.type === 'STORY';
@@ -3517,7 +3770,7 @@ export const BattleField: React.FC = () => {
               })()}
 
               {/* Action: Activate Effect (Green) */}
-              {!isPopupHidden && (() => {
+              {!isInteractionHidden && (() => {
                 const isCounteringTurn = game.phase === 'COUNTERING' && game.priorityPlayerId === myUid;
                 const isOwnSharedPhase =
                   me.isTurn &&
@@ -3598,7 +3851,7 @@ export const BattleField: React.FC = () => {
               })()}
 
               {/* Action: Attack (Red) */}
-              {!isSpectator && !isPopupHidden && ['MAIN', 'BATTLE_DECLARATION'].includes(game.phase) && me.isTurn && game.turnCount !== 1 && cardMenu.zone === 'unit' && (
+              {!isSpectator && !isInteractionHidden && ['MAIN', 'BATTLE_DECLARATION'].includes(game.phase) && me.isTurn && game.turnCount !== 1 && cardMenu.zone === 'unit' && (
                 (() => {
                   const latestUnit = me.unitZone.find(c => c?.gamecardId === cardMenu.card.gamecardId);
                   if (latestUnit && canUnitAttackNow(latestUnit)) {
@@ -3638,7 +3891,7 @@ export const BattleField: React.FC = () => {
               )}
 
               {/* Action: Defend (Blue) */}
-              {!isSpectator && !isPopupHidden && game.phase === 'DEFENSE_DECLARATION' && opponent?.isTurn && cardMenu.zone === 'unit' && (
+              {!isSpectator && !isInteractionHidden && game.phase === 'DEFENSE_DECLARATION' && opponent?.isTurn && cardMenu.zone === 'unit' && (
                 (() => {
                   const isMyCard = me.unitZone.some(c => c?.gamecardId === cardMenu.card.gamecardId);
                   if (isMyCard && canUnitDefend(cardMenu.card)) {
@@ -3661,7 +3914,7 @@ export const BattleField: React.FC = () => {
               )}
 
               {/* Action: Discard (Special Phase) */}
-              {!isSpectator && !isPopupHidden && game.phase === 'DISCARD' && cardMenu.zone === 'hand' && me.isTurn && (
+              {!isSpectator && !isInteractionHidden && game.phase === 'DISCARD' && cardMenu.zone === 'hand' && me.isTurn && (
                 <motion.button
                   whileHover={{ scale: 1.1, x: -3 }}
                   className="px-3 py-1 text-[9px] font-black tracking-tighter text-red-50 bg-red-600 rounded-full shadow-[0_0_15px_rgba(220,38,38,0.4)] flex items-center gap-2 border border-red-400/50"
@@ -3929,6 +4182,56 @@ export const BattleField: React.FC = () => {
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {isDirectTargetSelectionActive && isInteractionHidden && displayedPendingQuery?.playerUid === myUid && (
+          <motion.div
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 18 }}
+            className="pointer-events-none fixed inset-x-0 bottom-24 z-[720] flex justify-center px-4"
+          >
+            <div className="pointer-events-auto flex w-full max-w-2xl flex-col gap-2 rounded-xl border border-[#f27d26]/35 bg-zinc-950/95 px-4 py-3 shadow-[0_18px_48px_rgba(0,0,0,0.55)] backdrop-blur-xl md:flex-row md:items-center md:justify-between">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-black text-white">{pendingQueryTitle || '请选择对象'}</div>
+                <div className="mt-0.5 text-[10px] font-bold tracking-widest text-white/45">
+                  已选 {selectedQueryIds.length}/{directTargetMaxSelections || selectablePendingQueryOptions.length}
+                  {directTargetMinSelections > 0 ? `，至少 ${directTargetMinSelections}` : ''}
+                </div>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                {selectedQueryIds.length > 0 && directTargetMaxSelections > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedQueryIds([])}
+                    className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs font-black text-white/65 transition-colors hover:bg-white/10 hover:text-white"
+                  >
+                    清空
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExpandedDirectTargetQueryId(displayedPendingQuery?.id || null);
+                    setIsPopupHidden(false);
+                  }}
+                  className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs font-black text-white transition-colors hover:bg-white/10"
+                >
+                  展开窗口
+                </button>
+                <button
+                  type="button"
+                  disabled={!canConfirmDirectTargetSelection}
+                  onClick={() => submitPendingQuerySelections()}
+                  className="rounded-md bg-[#d7b45a] px-4 py-2 text-xs font-black text-black transition-all hover:bg-[#e7c76b] disabled:cursor-not-allowed disabled:opacity-35"
+                >
+                  确认选择
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Standardized My Pending Query Popup */}
       <StandardPopup
         key={`${displayedPendingQuery?.id || 'no-query'}-${pendingQueryPopupMode}`}
@@ -3973,6 +4276,8 @@ export const BattleField: React.FC = () => {
         selectedIds={selectedQueryIds}
         minSelections={displayedPendingQuery?.minSelections}
         maxSelections={displayedPendingQuery?.maxSelections}
+        featuredCard={pendingTriggerSourceCard}
+        featuredCardMeta={pendingTriggerSourceCardMeta}
         onCardClick={(card) => {
           const optionId = card.gamecardId || card.id;
           const option = pendingQueryOptions.find(o =>
@@ -4020,7 +4325,7 @@ export const BattleField: React.FC = () => {
         }}
         cardBackUrl={cardBackUrl}
         onHide={() => setIsPopupHidden(true)}
-        isHidden={isPopupHidden}
+        isHidden={isInteractionHidden}
         instant
       >
         {normalizedPendingQueryType === 'SELECT_PAYMENT' && !isQueryHandoffWaiting && displayedPendingQuery && (

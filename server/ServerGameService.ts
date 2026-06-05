@@ -9563,7 +9563,7 @@ export const ServerGameService = {
         if (selections.length === 0) selections = ['YES'];
         ServerGameService.recordAiDecision(gameState, playerUid, {
           action: 'TRIGGER_CHOICE',
-          subject: query.title || '发动提示',
+          subject: query.title || '请选择是否发动效果',
           reason: selections[0] === 'NO'
             ? 'Deck-specific hard AI declined this optional trigger.'
             : 'Deck-specific hard AI accepted this trigger when it advances the current plan.',

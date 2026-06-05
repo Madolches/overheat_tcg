@@ -32,6 +32,8 @@ interface PlayFieldProps {
   viewingZone?: { title: string, type: string, isOpponentZone?: boolean } | null;
   setViewingZone?: (zone: { title: string, type: string, isOpponentZone?: boolean } | null) => void;
   highlightedCardIds?: Set<string>;
+  selectedTargetIds?: Set<string>;
+  selectedTargetCardIds?: string[];
   onShowLogs?: () => void;
   onOpenRulebook?: () => void;
   onSurrender?: () => void;
@@ -91,10 +93,12 @@ const CardSlot: React.FC<{
   slotLabel?: string;
   cardBackUrl?: string;
   isHighlighted?: boolean;
+  isSelectedForQuery?: boolean;
+  querySelectionOrder?: number;
   allowFaceDownHover?: boolean;
   ignoreSkin?: boolean;
   animationAnchor?: string;
-}> = ({ card, label, onClick, onPreview, onHover, className, isFaceUp = true, isExhausted, isSelectedForPayment, isDeck, count = 0, showCount = true, isAttacking, isDefending, isOpponent, isAllianceInitiator, displayMode, slotLabel, cardBackUrl, isHighlighted, allowFaceDownHover = false, ignoreSkin = false, animationAnchor }) => {
+}> = ({ card, label, onClick, onPreview, onHover, className, isFaceUp = true, isExhausted, isSelectedForPayment, isDeck, count = 0, showCount = true, isAttacking, isDefending, isOpponent, isAllianceInitiator, displayMode, slotLabel, cardBackUrl, isHighlighted, isSelectedForQuery, querySelectionOrder, allowFaceDownHover = false, ignoreSkin = false, animationAnchor }) => {
   const animatingCardIds = useContext(AnimatingCardsContext);
   const isAnimating = !!(card && animatingCardIds?.has(card.gamecardId));
 
@@ -123,8 +127,9 @@ const CardSlot: React.FC<{
           isSelectedForPayment ? "z-10 shadow-[0_0_20px_rgba(168,85,247,0.8)] ring-1 ring-purple-400" : "",
           isAllianceInitiator ? "z-10 shadow-[0_0_20px_rgba(220,38,38,0.8)] ring-2 ring-red-600" : "",
           isHighlighted ? "z-20 !border-yellow-400 ring-2 ring-yellow-400 shadow-[0_0_20px_rgba(250,204,21,0.95)]" : "",
+          isSelectedForQuery ? "z-30 !border-[#f27d26] ring-4 ring-[#f27d26] shadow-[0_0_28px_rgba(242,125,38,0.95)]" : "",
           (isAttacking || isDefending) ? "z-10" : "",
-          isAnimating && "opacity-0 pointer-events-none",
+          isAnimating && "!transition-none invisible pointer-events-none",
           className
         )}
         onClick={(e) => {
@@ -166,7 +171,7 @@ const CardSlot: React.FC<{
           </div>
         )}
 
-        {(isAttacking || isDefending || isDeclaredEffectTarget) && (
+        {(isAttacking || isDefending || isDeclaredEffectTarget || isSelectedForQuery) && (
           <div
             className={cn(
               "pointer-events-none absolute inset-0 z-30 flex items-center justify-center",
@@ -174,6 +179,11 @@ const CardSlot: React.FC<{
             )}
           >
             <div className="flex items-center justify-center gap-1 md:gap-1.5">
+              {isSelectedForQuery && (
+                <div className="relative flex h-9 w-9 items-center justify-center rounded-full border border-orange-100/80 bg-gradient-to-br from-[#d7b45a] via-[#f27d26] to-zinc-950 text-xs font-black text-black shadow-[0_12px_24px_rgba(242,125,38,0.65),inset_0_2px_6px_rgba(255,255,255,0.35)] md:h-11 md:w-11 md:text-sm">
+                  {querySelectionOrder || '选'}
+                </div>
+              )}
               {(isAttacking || isDefending) && (
                 <div
                   className={cn(
@@ -438,12 +448,14 @@ const PlayerHalf: React.FC<{
   viewingZone?: { title: string, type: string, isOpponentZone?: boolean } | null;
   setViewingZone?: (zone: { title: string, type: string, isOpponentZone?: boolean } | null) => void;
   highlightedCardIds?: Set<string>;
+  selectedTargetIds?: Set<string>;
+  selectedTargetCardIds?: string[];
   isSpectator?: boolean;
   sandboxEditMode?: boolean;
   onSandboxZoneClick?: (target: { playerKey: SandboxPlayerKey; zone: SandboxEditableZone; index?: number; card?: Card | null }) => void;
   ignoreCardSkins?: boolean;
   handEffectsEnabled?: boolean;
-}> = ({ player, isOpponent, wealthValue = 0, ongoingEffects = [], onOpenOngoingEffects, onCardClick, onPreviewCard, onHoverCard, onPlayCard, paymentSelection, pendingPlayCard, selectedAttackers, selectedDefender, game, allianceInitiator, cardBackUrl, viewingZone, setViewingZone, highlightedCardIds, isSpectator, sandboxEditMode, onSandboxZoneClick, ignoreCardSkins = false, handEffectsEnabled = true }) => {
+}> = ({ player, isOpponent, wealthValue = 0, ongoingEffects = [], onOpenOngoingEffects, onCardClick, onPreviewCard, onHoverCard, onPlayCard, paymentSelection, pendingPlayCard, selectedAttackers, selectedDefender, game, allianceInitiator, cardBackUrl, viewingZone, setViewingZone, highlightedCardIds, selectedTargetIds, selectedTargetCardIds, isSpectator, sandboxEditMode, onSandboxZoneClick, ignoreCardSkins = false, handEffectsEnabled = true }) => {
   const [hoveredHandCardId, setHoveredHandCardId] = useState<string | null>(null);
   const [draggingHandCard, setDraggingHandCard] = useState<HandDragState | null>(null);
   const suppressHandClickUntilRef = useRef(0);
@@ -464,6 +476,14 @@ const PlayerHalf: React.FC<{
     const totalCount = frontCount + backCount;
     return totalCount > 0 ? `${totalCount}(${backCount})` : 0;
   };
+  const isSelectedTargetCard = (card?: Card | null) => !!card && !!selectedTargetIds?.has(card.gamecardId);
+  const getTargetSelectionOrder = (card?: Card | null) => {
+    if (!card || !selectedTargetCardIds) return undefined;
+    const index = selectedTargetCardIds.findIndex(id => id === card.gamecardId || id === card.id);
+    return index === -1 ? undefined : index + 1;
+  };
+  const hasHighlightedCardInZone = (cards?: (Card | null)[]) =>
+    !!highlightedCardIds && !!cards?.some(card => !!card && highlightedCardIds.has(card.gamecardId));
   const erosionSlotLabels = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'];
   const shouldUseHandSlot = (player.hand?.length || 0) > 9;
   const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1280;
@@ -559,6 +579,9 @@ const PlayerHalf: React.FC<{
               onClick={() => clickSandboxZone('grave', Math.max(0, (player.grave?.length || 1) - 1), player.grave?.[player.grave.length - 1] || null) || setViewingZone?.({ title: '墓地', type: 'grave', isOpponentZone: !!isOpponent })}
               onHover={onHoverCard}
               isFaceUp={true} isOpponent={isOpponent} displayMode="erosion_item" ignoreSkin={ignoreCardSkins}
+              isHighlighted={hasHighlightedCardInZone(player.grave)}
+              isSelectedForQuery={isSelectedTargetCard(player.grave?.[player.grave.length - 1])}
+              querySelectionOrder={getTargetSelectionOrder(player.grave?.[player.grave.length - 1])}
               animationAnchor={animationZoneAnchor(player.uid, 'grave')}
             />
             <CardSlot
@@ -571,6 +594,9 @@ const PlayerHalf: React.FC<{
               isOpponent={isOpponent}
               displayMode="erosion_item"
               ignoreSkin={ignoreCardSkins}
+              isHighlighted={hasHighlightedCardInZone(player.exile)}
+              isSelectedForQuery={isSelectedTargetCard(player.exile?.[player.exile.length - 1])}
+              querySelectionOrder={getTargetSelectionOrder(player.exile?.[player.exile.length - 1])}
               animationAnchor={animationZoneAnchor(player.uid, 'exile')}
             />
           </>
@@ -585,7 +611,9 @@ const PlayerHalf: React.FC<{
               onHover={onHoverCard}
               isFaceUp={true}
               isExhausted={!!(player.itemZone?.filter(Boolean).slice(-1)[0] as Card | undefined)?.isExhausted}
-              isHighlighted={highlightedCardIds?.has((player.itemZone?.filter(Boolean).slice(-1)[0] as Card | undefined)?.gamecardId || '')}
+              isHighlighted={hasHighlightedCardInZone(player.itemZone)}
+              isSelectedForQuery={isSelectedTargetCard(player.itemZone?.filter(Boolean).slice(-1)[0] as Card | undefined)}
+              querySelectionOrder={getTargetSelectionOrder(player.itemZone?.filter(Boolean).slice(-1)[0] as Card | undefined)}
               displayMode="erosion_item"
               animationAnchor={animationZoneAnchor(player.uid, 'item')}
             />
@@ -611,6 +639,8 @@ const PlayerHalf: React.FC<{
               }}
               isFaceUp={player.erosionFront?.some(c => c !== null)}
               isHighlighted={highlightedCardIds?.has((player.erosionFront?.filter(Boolean).slice(-1)[0] || null)?.gamecardId || '')}
+              isSelectedForQuery={isSelectedTargetCard(player.erosionFront?.filter(Boolean).slice(-1)[0] || player.erosionBack?.filter(Boolean).slice(-1)[0] || null)}
+              querySelectionOrder={getTargetSelectionOrder(player.erosionFront?.filter(Boolean).slice(-1)[0] || player.erosionBack?.filter(Boolean).slice(-1)[0] || null)}
               displayMode="erosion_item"
               animationAnchor={animationZoneAnchor(player.uid, 'erosion')}
             />
@@ -708,6 +738,8 @@ const PlayerHalf: React.FC<{
                             isSelectedForPayment={displayCard.isFaceUp && paymentSelection?.erosionFrontIds?.includes(displayCard.gamecardId)}
                             className={displayCard.isFaceUp ? "border-red-600" : "border-red-900/50"}
                             isHighlighted={displayCard.isFaceUp && highlightedCardIds?.has(displayCard.gamecardId)}
+                            isSelectedForQuery={isSelectedTargetCard(displayCard)}
+                            querySelectionOrder={getTargetSelectionOrder(displayCard)}
                             showCount={false} isOpponent={isOpponent} displayMode="erosion_item" slotLabel={num} cardBackUrl={cardBackUrl} ignoreSkin={ignoreCardSkins}
                           />
                         ) : (
@@ -737,6 +769,8 @@ const PlayerHalf: React.FC<{
                     isAttacking={unit ? (selectedAttackers?.includes(unit.gamecardId) || game?.battleState?.attackers.includes(unit.gamecardId)) : false}
                     isDefending={unit ? (selectedDefender === unit.gamecardId || game?.battleState?.defender === unit.gamecardId || game?.battleState?.unitTargetId === unit.gamecardId) : false}
                     isHighlighted={unit ? highlightedCardIds?.has(unit.gamecardId) : false}
+                    isSelectedForQuery={isSelectedTargetCard(unit)}
+                    querySelectionOrder={getTargetSelectionOrder(unit)}
                     showCount={false} isOpponent={isOpponent} displayMode="unit" slotLabel={`${6 - i}`} cardBackUrl={cardBackUrl} ignoreSkin={ignoreCardSkins}
                     animationAnchor={animationUnitAnchor(player.uid, i)}
                   />
@@ -762,6 +796,8 @@ const PlayerHalf: React.FC<{
                     isDefending={unit ? (selectedDefender === unit.gamecardId || game?.battleState?.defender === unit.gamecardId || game?.battleState?.unitTargetId === unit.gamecardId) : false}
                     isAllianceInitiator={unit && allianceInitiator === unit.gamecardId}
                     isHighlighted={unit ? highlightedCardIds?.has(unit.gamecardId) : false}
+                    isSelectedForQuery={isSelectedTargetCard(unit)}
+                    querySelectionOrder={getTargetSelectionOrder(unit)}
                     showCount={false} displayMode="unit" slotLabel={`${i + 1}`} cardBackUrl={cardBackUrl}
                     animationAnchor={animationUnitAnchor(player.uid, i)}
                   />
@@ -795,6 +831,8 @@ const PlayerHalf: React.FC<{
                             isSelectedForPayment={displayCard.isFaceUp && paymentSelection?.erosionFrontIds?.includes(displayCard.gamecardId)}
                             className={displayCard.isFaceUp ? "border-red-600" : "border-red-900/50"}
                             isHighlighted={displayCard.isFaceUp && highlightedCardIds?.has(displayCard.gamecardId)}
+                            isSelectedForQuery={isSelectedTargetCard(displayCard)}
+                            querySelectionOrder={getTargetSelectionOrder(displayCard)}
                             showCount={false}
                             displayMode="erosion_item"
                             slotLabel={num}
@@ -971,6 +1009,8 @@ const PlayerHalf: React.FC<{
               isOpponent={isOpponent}
               ignoreSkin={ignoreCardSkins}
               displayMode="erosion_item"
+              isSelectedForQuery={isSelectedTargetCard(player.erosionFront?.filter(Boolean).slice(-1)[0] || player.erosionBack?.filter(Boolean).slice(-1)[0] || null)}
+              querySelectionOrder={getTargetSelectionOrder(player.erosionFront?.filter(Boolean).slice(-1)[0] || player.erosionBack?.filter(Boolean).slice(-1)[0] || null)}
               animationAnchor={animationZoneAnchor(player.uid, 'erosion')}
             />
             <CardSlot
@@ -981,9 +1021,11 @@ const PlayerHalf: React.FC<{
               onHover={onHoverCard}
               isFaceUp={true}
               isExhausted={!!(player.itemZone?.filter(Boolean).slice(-1)[0] as Card | undefined)?.isExhausted}
-              isHighlighted={highlightedCardIds?.has((player.itemZone?.filter(Boolean).slice(-1)[0] as Card | undefined)?.gamecardId || '')}
+              isHighlighted={hasHighlightedCardInZone(player.itemZone)}
               isOpponent={isOpponent}
               ignoreSkin={ignoreCardSkins}
+              isSelectedForQuery={isSelectedTargetCard(player.itemZone?.filter(Boolean).slice(-1)[0] as Card | undefined)}
+              querySelectionOrder={getTargetSelectionOrder(player.itemZone?.filter(Boolean).slice(-1)[0] as Card | undefined)}
               displayMode="erosion_item"
               animationAnchor={animationZoneAnchor(player.uid, 'item')}
             />
@@ -1006,6 +1048,9 @@ const PlayerHalf: React.FC<{
               onClick={() => clickSandboxZone('exile', Math.max(0, (player.exile?.length || 1) - 1), player.exile?.[player.exile.length - 1] || null) || setViewingZone?.({ title: '放逐区', type: 'exile', isOpponentZone: !!isOpponent })}
               onHover={onHoverCard}
               isFaceUp={player.exile?.length > 0 ? player.exile[player.exile.length - 1]?.displayState !== 'FRONT_FACEDOWN' : true}
+              isHighlighted={hasHighlightedCardInZone(player.exile)}
+              isSelectedForQuery={isSelectedTargetCard(player.exile?.[player.exile.length - 1])}
+              querySelectionOrder={getTargetSelectionOrder(player.exile?.[player.exile.length - 1])}
               displayMode="erosion_item"
               animationAnchor={animationZoneAnchor(player.uid, 'exile')}
             />
@@ -1016,6 +1061,9 @@ const PlayerHalf: React.FC<{
               onClick={() => clickSandboxZone('grave', Math.max(0, (player.grave?.length || 1) - 1), player.grave?.[player.grave.length - 1] || null) || setViewingZone?.({ title: '墓地', type: 'grave', isOpponentZone: !!isOpponent })}
               onHover={onHoverCard}
               isFaceUp={true} displayMode="erosion_item"
+              isHighlighted={hasHighlightedCardInZone(player.grave)}
+              isSelectedForQuery={isSelectedTargetCard(player.grave?.[player.grave.length - 1])}
+              querySelectionOrder={getTargetSelectionOrder(player.grave?.[player.grave.length - 1])}
               animationAnchor={animationZoneAnchor(player.uid, 'grave')}
             />
             <CardSlot
@@ -1035,7 +1083,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
   player, opponent, game, onCardClick, onPreviewCard, onPlayCard,
   paymentSelection, pendingPlayCard, myUid, selectedAttackers,
   selectedDefender, allianceInitiator, timer, cardBackUrl, viewingZone,
-  setViewingZone, highlightedCardIds, onShowLogs, onOpenRulebook,
+  setViewingZone, highlightedCardIds, selectedTargetIds, selectedTargetCardIds, onShowLogs, onOpenRulebook,
   onSurrender, onPhaseClick, confrontationStrategy, onUpdateStrategy,
   canConfront, isConfrontPromptActive, isCounteringPromptActive, isDefensePromptActive, isCounteringPromptWaiting, onStartConfront, onDeclineConfront, onDeclineDefense,
   showPhaseMenu, isAnyPopupOpen, isPopupHidden, onHidePopup, onExpand, isSpectator,
@@ -1154,6 +1202,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
         }}
         onCardHover={setHoveredCard}
         cardBackUrl={cardBackUrl}
+        selectedIds={selectedTargetCardIds || Array.from(selectedTargetIds || [])}
         highlightedIds={Array.from(highlightedCardIds || [])}
       />
       <AnimatePresence>
@@ -1273,6 +1322,8 @@ export const PlayField: React.FC<PlayFieldProps> = ({
           viewingZone={viewingZone}
           setViewingZone={setViewingZone}
           highlightedCardIds={highlightedCardIds}
+          selectedTargetIds={selectedTargetIds}
+          selectedTargetCardIds={selectedTargetCardIds}
           isSpectator={isSpectator}
           sandboxEditMode={sandboxEditMode}
           onSandboxZoneClick={onSandboxZoneClick}
@@ -1464,6 +1515,8 @@ export const PlayField: React.FC<PlayFieldProps> = ({
           viewingZone={viewingZone}
           setViewingZone={setViewingZone}
           highlightedCardIds={highlightedCardIds}
+          selectedTargetIds={selectedTargetIds}
+          selectedTargetCardIds={selectedTargetCardIds}
           isSpectator={isSpectator}
           sandboxEditMode={sandboxEditMode}
           onSandboxZoneClick={onSandboxZoneClick}
