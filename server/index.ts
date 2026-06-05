@@ -1201,6 +1201,22 @@ setInterval(async () => {
                         triggerBotIfNeeded(gameState, gameId);
                         return;
                     }
+                } else if (
+                    gameState.phase === 'COUNTERING' &&
+                    !gameState.pendingQuery &&
+                    !gameState.isResolvingStack &&
+                    !gameState.currentProcessingItem &&
+                    gameState.animationHint?.type === 'CONFRONTATION_CHAIN' &&
+                    Number(gameState.animationUntil || 0) > 0 &&
+                    now >= Number(gameState.animationUntil || 0)
+                ) {
+                    delete gameState.animationUntil;
+                    await ServerGameService.applyConfrontationStrategy(gameState, async (state) => {
+                        await syncGameStateForCallback(gameId, state, 'timer:confrontationAnimationComplete');
+                    });
+                    await syncAndSaveState(gameId, gameState, { source: 'confrontationAnimationComplete' });
+                    triggerBotIfNeeded(gameState, gameId);
+                    return;
                 } else {
                     activePlayerUid = getActiveTimerPlayerUid(gameState);
                 }

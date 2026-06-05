@@ -86,14 +86,10 @@ export function useBattleAnimations(game: GameState | null, perspectiveUid?: str
   const previousGoddessRef = useRef<Record<string, boolean>>({});
   const previousWinnerRef = useRef<string | undefined>();
   const previousPlayZoneTopRef = useRef<Record<string, string | undefined>>({});
-  const previousProcessingKeyRef = useRef<string | undefined>();
-  const previousCounterLengthRef = useRef(0);
-  const previousResolvingStackRef = useRef(false);
   const previousCardLocationsRef = useRef<Record<string, { zone: string; ownerUid: string; card: Card; slotIndex?: number }>>({});
   const seenAnimationHintsRef = useRef<Set<string>>(new Set());
   const hintedDrawCardsRef = useRef<Set<string>>(new Set());
   const initializedRef = useRef(false);
-  const maxChainLengthRef = useRef(0);
 
   const playersByName = useMemo(() => {
     const map = new Map<string, string>();
@@ -118,13 +114,10 @@ export function useBattleAnimations(game: GameState | null, perspectiveUid?: str
       seenLogIdsRef.current.clear();
       previousGoddessRef.current = {};
       previousWinnerRef.current = undefined;
-      previousCounterLengthRef.current = 0;
-      previousResolvingStackRef.current = false;
       previousCardLocationsRef.current = {};
       seenAnimationHintsRef.current.clear();
       hintedDrawCardsRef.current.clear();
       initializedRef.current = false;
-      maxChainLengthRef.current = 0;
       return;
     }
 
@@ -141,11 +134,7 @@ export function useBattleAnimations(game: GameState | null, perspectiveUid?: str
       );
       previousCardLocationsRef.current = getCardLocations(game);
       previousWinnerRef.current = game.winnerId;
-      previousProcessingKeyRef.current = processingItemKey(game);
-      previousCounterLengthRef.current = game.counterStack?.length || 0;
-      previousResolvingStackRef.current = !!game.isResolvingStack;
       initializedRef.current = true;
-      maxChainLengthRef.current = game.counterStack?.length || 0;
       if (game.animationHint?.id) {
         seenAnimationHintsRef.current.add(game.animationHint.id);
         if (game.animationHint.type === 'DRAW_CARD' && game.animationHint.cardId) {
@@ -398,52 +387,6 @@ export function useBattleAnimations(game: GameState | null, perspectiveUid?: str
       previousGoddessRef.current[player.uid] = isGoddess;
     });
 
-    // Track maximum chain length for current confrontation
-    const counterLength = game.counterStack?.length || 0;
-    if (counterLength > 0) {
-      maxChainLengthRef.current = Math.max(maxChainLengthRef.current, counterLength);
-    } else if (!game.currentProcessingItem) {
-      maxChainLengthRef.current = 0;
-    }
-
-    const currentProcessingKey = processingItemKey(game);
-    if (currentProcessingKey && currentProcessingKey !== previousProcessingKeyRef.current) {
-      const item = game.currentProcessingItem;
-      if (maxChainLengthRef.current === 1 && item && !(item as any).chainAnimationShown) {
-        nextEvents.push({
-          id: `confrontation_chain_1_${item.timestamp || Date.now()}_resolve`,
-          type: 'confrontation',
-          side: 'neutral',
-          title: '对抗链',
-          chainLength: 1,
-          chainItems: [stackItemToChainAnimationItem(item, 1, game, perspectiveUid)],
-          durationMs: 1500
-        });
-      }
-    }
-    previousProcessingKeyRef.current = currentProcessingKey;
-
-    // Play confrontation animation whenever a new chain link is added.
-    const hasConfrontationHint = game.animationHint?.type === 'CONFRONTATION_CHAIN';
-    const startedLongChain = !hasConfrontationHint && counterLength > previousCounterLengthRef.current && counterLength >= 2;
-    if (startedLongChain) {
-      const chainStartIndex = Math.max(0, counterLength - 3);
-      const latestChainItems = (game.counterStack || []).slice(chainStartIndex).map((item, offset) =>
-        stackItemToChainAnimationItem(item, chainStartIndex + offset + 1, game, perspectiveUid)
-      );
-      nextEvents.push({
-        id: `confrontation_chain_${counterLength}_${game.counterStack?.[counterLength - 1]?.timestamp || Date.now()}_build`,
-        type: 'confrontation',
-        side: 'neutral',
-        title: '对抗链',
-        chainLength: counterLength,
-        chainItems: lastChainItems(latestChainItems),
-        durationMs: 3000
-      });
-    }
-    previousCounterLengthRef.current = counterLength;
-    previousResolvingStackRef.current = !!game.isResolvingStack;
-
     if (!previousWinnerRef.current && game.winnerId) {
       const winnerName = game.players[game.winnerId]?.displayName || '胜者';
       const isMine = perspectiveUid && game.winnerId === perspectiveUid;
@@ -587,19 +530,6 @@ function findCardByLogRef(game: GameState, gamecardId?: string, cardId?: string,
 function findCardByGamecardId(game: GameState, gamecardId?: string) {
   if (!gamecardId) return undefined;
   return findCardByLogRef(game, gamecardId);
-}
-
-function processingItemKey(game: GameState) {
-  const item = game.currentProcessingItem;
-  if (!item) return undefined;
-  return [
-    item.timestamp,
-    item.type,
-    item.ownerUid,
-    item.card?.gamecardId,
-    item.effectIndex,
-    item.attackerIds?.join(',')
-  ].filter(value => value !== undefined && value !== null).join('_');
 }
 
 function stackItemToChainAnimationItem(

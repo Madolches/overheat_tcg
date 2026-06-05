@@ -278,14 +278,17 @@ export const BattleField: React.FC = () => {
     return getBattleAnimationPlaybackGroup(battleAnimations.events);
   }, [battleAnimations.events, battleAnimationsEnabled]);
   const serverAnimationHoldingUi = battleAnimationsEnabled && serverAnimationHoldUntil > Date.now();
-  const isBattleAnimationBlockingUi = activeBlockingAnimationEvents.length > 0 || serverAnimationHoldingUi;
+  const isBattleAnimationBlockingUi = activeBlockingAnimationEvents.length > 0;
   const confrontationAnimationPlaying = activeBlockingAnimationEvents.some(event => event.type === 'confrontation');
+  const confrontationServerHintUntil = game?.animationHint?.type === 'CONFRONTATION_CHAIN' && !game.isResolvingStack
+    ? Number(game.animationUntil || 0)
+    : 0;
   const confrontationHintUntil = game?.animationHint?.type === 'CONFRONTATION_CHAIN' && !game.isResolvingStack
     ? Number(game.animationHint.createdAt || Date.now()) + Math.max(900, Number(game.animationHint.durationMs || 1100))
     : 0;
   const confrontationPromptWaiting =
     (!game?.isResolvingStack && confrontationAnimationPlaying) ||
-    (!game?.isResolvingStack && battleAnimationsEnabled && game?.animationHint?.type === 'CONFRONTATION_CHAIN' && Date.now() < Math.max(confrontationPromptBlockedUntil, confrontationHintUntil));
+    (!game?.isResolvingStack && battleAnimationsEnabled && game?.animationHint?.type === 'CONFRONTATION_CHAIN' && Date.now() < Math.max(confrontationPromptBlockedUntil, confrontationHintUntil, confrontationServerHintUntil));
 
   useEffect(() => {
     if (!battleAnimationsEnabled || game?.animationHint?.type !== 'CONFRONTATION_CHAIN' || game.isResolvingStack) return;
@@ -401,7 +404,6 @@ export const BattleField: React.FC = () => {
 
   const canConfront = useMemo(() => {
     if (isSpectator || !game || !me || !myUid) return false;
-    if (isBattleAnimationBlockingUi) return false;
     if (game.pendingQuery || game.isResolvingStack || game.currentProcessingItem) return false;
 
     const isCounteringTurn = game.phase === 'COUNTERING' && game.priorityPlayerId === myUid;
@@ -443,7 +445,7 @@ export const BattleField: React.FC = () => {
     return activationZones.some(({ cards, location }) =>
       cards.some(card => canActivateCardEffect(card, location))
     );
-  }, [game, me, myUid, isSpectator, isBattleAnimationBlockingUi]);
+  }, [game, me, myUid, isSpectator]);
 
 
 
@@ -707,6 +709,8 @@ export const BattleField: React.FC = () => {
           animationUntil: newState.animationUntil
         });
         setVisualGame(newState);
+      } else {
+        setVisualGame(null);
       }
       
       const hintDuration = newState.isResolvingStack ? 0 : Number(newState.animationHint?.durationMs || 0);
@@ -2665,9 +2669,6 @@ export const BattleField: React.FC = () => {
                 onEventComplete={battleAnimations.dismiss}
                 hoverPreview={hoverPreviewCard}
               />
-              {isBattleAnimationBlockingUi && (
-                <div className="absolute inset-0 z-[210] pointer-events-auto bg-transparent cursor-wait" />
-              )}
             </div>
           </div>
         </div>
@@ -2692,7 +2693,7 @@ export const BattleField: React.FC = () => {
               <div className="bg-zinc-900/90 border border-red-500/50 px-8 py-4 rounded-full shadow-[0_0_30px_rgba(239,68,68,0.3)] backdrop-blur-sm flex items-center gap-4">
                 <Loader2 className="w-5 h-5 text-red-500 animate-spin" />
                 <span className="text-white font-black italic uppercase tracking-widest text-sm">
-                  {game.isResolvingStack ? "正在结算连锁..." : `等待 ${game.players[game.priorityPlayerId!]?.displayName || '对手'} 响应...`}
+                  {game.isResolvingStack ? "正在结算对抗..." : `等待 ${game.players[game.priorityPlayerId!]?.displayName || '对手'} 对抗...`}
                 </span>
               </div>
             </motion.div>

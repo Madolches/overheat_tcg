@@ -888,7 +888,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
     });
   };
   const phaseLabel =
-    game.phase === 'COUNTERING' ? '响应' :
+    game.phase === 'COUNTERING' ? '对抗' :
       game.phase === 'MAIN' ? '主要' :
         game.phase === 'BATTLE_DECLARATION' ? '战斗宣言' :
           game.phase === 'DEFENSE_DECLARATION' ? '防御宣言' :
@@ -1118,7 +1118,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
                 >
                   {isDefensePromptActive ? <Shield className="h-4 w-4" /> : <Zap className="h-4 w-4" />}
                   <span className="text-xs font-black italic tracking-widest md:text-sm">
-                    {isCounteringChainPromptWaiting ? '对抗链' : isDefensePromptActive ? '放弃防御' : '忽略对抗'}
+                    {isCounteringChainPromptWaiting ? '对抗链' : isDefensePromptActive ? '放弃防御' : '放弃对抗'}
                   </span>
                 </button>
               ) : (

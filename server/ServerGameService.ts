@@ -77,16 +77,30 @@ export const ServerGameService = {
   markConfrontationChainAnimation(gameState: GameState, durationMs = 1100, reason: 'build' | 'resolve' = 'build') {
     if (!gameState.counterStack?.length) return;
     if (ServerGameService.shouldSkipVisualDelay(gameState)) return;
+    const now = Date.now();
+    const resolvedDurationMs = Math.max(0, Number(durationMs) || 0);
     const topItem = gameState.counterStack[gameState.counterStack.length - 1];
-    const chainKey = `${reason}-${topItem.timestamp || Date.now()}-${gameState.counterStack.length}-${Date.now()}`;
+    const chainKey = `${reason}-${topItem.timestamp || now}-${gameState.counterStack.length}-${now}`;
     (topItem as any).chainAnimationShown = true;
     gameState.animationHint = {
       id: `confrontation-${chainKey}`,
       type: 'CONFRONTATION_CHAIN',
       playerUid: gameState.priorityPlayerId || topItem.ownerUid,
-      durationMs,
-      createdAt: Date.now()
+      durationMs: resolvedDurationMs,
+      createdAt: now
     };
+    gameState.animationUntil = now + resolvedDurationMs;
+  },
+
+  isConfrontationAnimationPending(gameState: GameState) {
+    if (ServerGameService.shouldSkipVisualDelay(gameState)) return false;
+    return gameState.animationHint?.type === 'CONFRONTATION_CHAIN' &&
+      Number(gameState.animationUntil || 0) > Date.now();
+  },
+
+  assertConfrontationAnimationComplete(gameState: GameState) {
+    if (!ServerGameService.isConfrontationAnimationPending(gameState)) return;
+    throw new Error('对抗链动画播放中，请稍候。');
   },
 
   clearAllianceAttackMarkers(gameState: GameState, attackerIds?: string[]) {
@@ -2177,6 +2191,7 @@ export const ServerGameService = {
 
     const strategy = player.confrontationStrategy || 'AUTO';
     if (strategy === 'ON') return gameState;
+    if (ServerGameService.isConfrontationAnimationPending(gameState)) return gameState;
 
     const hasAction = strategy === 'AUTO'
       ? ServerGameService.playerHasAvailableConfrontationAction(gameState, player.uid)
@@ -2544,6 +2559,9 @@ export const ServerGameService = {
     if (!options?.resumeFromQuery && (gameState.pendingQuery || gameState.isResolvingStack || gameState.currentProcessingItem)) {
       throw new Error('当前有未结算步骤，请等待处理完毕。');
     }
+    if (!options?.resumeFromQuery) {
+      ServerGameService.assertConfrontationAnimationComplete(gameState);
+    }
     const player = gameState.players[playerId];
     let card = player.hand.find(c => c.gamecardId === cardId);
     let sourceZone: TriggerLocation = 'HAND';
@@ -2698,6 +2716,9 @@ export const ServerGameService = {
   async activateEffect(gameState: GameState, playerId: string, cardId: string, effectIndex: number, declaredTargets?: DeclaredEffectTarget[], options?: { resumeFromQuery?: boolean }) {
     if (!options?.resumeFromQuery && (gameState.pendingQuery || gameState.isResolvingStack || gameState.currentProcessingItem)) {
       throw new Error('当前有未结算步骤，请等待处理完毕。');
+    }
+    if (!options?.resumeFromQuery) {
+      ServerGameService.assertConfrontationAnimationComplete(gameState);
     }
     // Find card in hand or on field
     const player = gameState.players[playerId];
@@ -2869,13 +2890,14 @@ export const ServerGameService = {
 
   async passConfrontation(gameState: GameState, playerId: string, onUpdate?: (state: GameState) => Promise<void>) {
     if (gameState.phase !== 'COUNTERING') return;
+    ServerGameService.assertConfrontationAnimationComplete(gameState);
     if (gameState.pendingQuery) {
       if (gameState.pendingQuery.playerUid === playerId) {
         throw new Error('请先完成当前选择，再继续对抗。');
       }
       return gameState;
     }
-    if (gameState.priorityPlayerId !== playerId) throw new Error('尚未轮到你进行响应');
+    if (gameState.priorityPlayerId !== playerId) throw new Error('尚未轮到你进行对抗');
 
     const player = gameState.players[playerId];
     const topItem = gameState.counterStack[gameState.counterStack.length - 1];
