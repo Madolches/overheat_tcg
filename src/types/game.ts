@@ -448,6 +448,7 @@ export interface StackItem {
   declaredTargets?: DeclaredEffectTarget[];
   declaredModeId?: string;
   timestamp: number;
+  confrontationChainId?: string;
   isNegated?: boolean;
   isInterrupted?: boolean;
   autoSingleChainShown?: boolean;
@@ -567,6 +568,7 @@ export interface GameState {
   turnCount: number; // Starts at 1
   isCountering: 0 | 1; // 1 if countering
   counterStack: StackItem[]; // LIFO
+  currentConfrontationChainId?: string;
   priorityPlayerId?: string; // Player who currently has the option to respond
   isResolvingStack?: boolean; // True when chain is resolving
   currentProcessingItem?: StackItem | null; // Currently resolving item for visual feedback

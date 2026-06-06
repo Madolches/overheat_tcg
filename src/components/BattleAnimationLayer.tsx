@@ -1,6 +1,6 @@
 import React, { RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Flame, Play, RefreshCw, Shield, Sparkles, Swords, Trophy, Zap } from 'lucide-react';
+import { Flame, Shield, Sparkles, Swords, Trophy, Zap } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { CardType, Rarity } from '../types/game';
 
@@ -8,7 +8,6 @@ export type BattleAnimationType =
   | 'card-played'
   | 'damage'
   | 'attack'
-  | 'confrontation'
   | 'goddess'
   | 'defeat'
   | 'erosion-flip'
@@ -29,23 +28,10 @@ export interface BattleAnimationEvent {
   sourceAnchor?: string;
   targetAnchor?: string;
   playerUid?: string;
-  chainLength?: number;
   targetZone?: string;
   revealTo?: 'owner' | 'all' | 'hidden';
   cardBackUrl?: string;
-  chainItems?: BattleAnimationChainItem[];
   durationMs?: number;
-}
-
-export interface BattleAnimationChainItem {
-  linkNumber: number;
-  side: 'player' | 'opponent' | 'neutral';
-  type: 'PLAY' | 'EFFECT' | 'ATTACK' | 'PHASE_END';
-  title: string;
-  subtitle?: string;
-  cardName?: string;
-  cardImageUrl?: string;
-  sourceCardId?: string;
 }
 
 interface BattleAnimationLayerProps {
@@ -58,7 +44,6 @@ const DISPLAY_MS: Record<BattleAnimationType, number> = {
   'card-played': 1100,
   damage: 950,
   attack: 1000,
-  confrontation: 3000,
   goddess: 1800,
   defeat: 1700,
   'erosion-flip': 1500,
@@ -70,7 +55,6 @@ const UI_BLOCKING_ANIMATION_TYPES = new Set<BattleAnimationType>([
   'card-played',
   'damage',
   'attack',
-  'confrontation',
   'goddess',
   'defeat',
   'erosion-flip',
@@ -107,7 +91,6 @@ const EVENT_TONE: Record<BattleAnimationType, string> = {
   'card-played': 'from-[#f27d26] via-amber-300 to-white',
   damage: 'from-red-600 via-rose-300 to-white',
   attack: 'from-red-500 via-orange-300 to-white',
-  confrontation: 'from-sky-400 via-white to-red-400',
   goddess: 'from-amber-200 via-[#f27d26] to-red-600',
   defeat: 'from-zinc-500 via-white to-red-500',
   'erosion-flip': 'from-zinc-800 via-purple-500 to-black',
@@ -203,7 +186,6 @@ const AnimationScene: React.FC<{
   if (event.type === 'damage') return <DamageAnimation event={event} layerRef={layerRef} />;
   if (event.type === 'goddess') return <GoddessAnimation event={event} />;
   if (event.type === 'defeat') return <DefeatAnimation event={event} />;
-  if (event.type === 'confrontation') return <ConfrontationAnimation event={event} />;
   if (event.type === 'attack') return <AttackAnimation event={event} />;
   if (event.type === 'erosion-flip') return <ErosionFlipAnimation event={event} layerRef={layerRef} index={index} total={total} />;
   if (event.type === 'card-draw') return <CardDrawAnimation event={event} layerRef={layerRef} index={index} total={total} />;
@@ -670,122 +652,6 @@ const AttackAnimation: React.FC<{ event: BattleAnimationEvent }> = ({ event }) =
     <ImpactRing tone={EVENT_TONE[event.type]} />
   </motion.div>
 );
-
-const ConfrontationAnimation: React.FC<{ event: BattleAnimationEvent }> = ({ event }) => {
-  const durationSeconds = (event.durationMs || DISPLAY_MS.confrontation) / 1000;
-  const items = event.chainItems?.length
-    ? event.chainItems
-    : [{
-        linkNumber: event.chainLength || 1,
-        side: 'neutral' as const,
-        type: 'EFFECT' as const,
-        title: event.title || '对抗链',
-        subtitle: event.subtitle,
-        cardName: event.cardName,
-        cardImageUrl: event.cardImageUrl,
-        sourceCardId: event.sourceCardId
-      }];
-
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: [0, 1, 1, 0] }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: durationSeconds, times: [0, 0.08, 0.88, 1], ease: 'easeOut' }}
-      className="absolute inset-0 flex items-end justify-center bg-black/5 px-3 pb-[18vh] md:pb-[13vh]"
-    >
-      <motion.div
-        initial={{ y: 42, scale: 0.98 }}
-        animate={{ y: [42, 0, 8], scale: [0.98, 1, 0.99] }}
-        transition={{ duration: durationSeconds, times: [0, 0.2, 1], ease: 'easeOut' }}
-        className="relative w-full max-w-[min(96vw,980px)] overflow-hidden rounded-lg border border-white/12 bg-zinc-950/90 px-3 py-3 shadow-[0_0_38px_rgba(0,0,0,0.55)] backdrop-blur-md md:px-4"
-      >
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/50 to-transparent" />
-        <div className="mb-2 text-left text-sm font-black italic tracking-widest text-white md:text-base">
-          对抗链
-        </div>
-        <div className="flex items-stretch gap-2 overflow-x-auto pb-1 custom-scrollbar">
-          {items.map((item, index) => (
-            <ConfrontationChainNode
-              key={`${item.linkNumber}-${item.sourceCardId || item.title}-${index}`}
-              item={item}
-              index={index}
-              isLatest={index === items.length - 1}
-            />
-          ))}
-        </div>
-      </motion.div>
-    </motion.div>
-  );
-};
-
-const ConfrontationChainNode: React.FC<{ item: BattleAnimationChainItem; index: number; isLatest: boolean }> = ({ item, index, isLatest }) => {
-  const isMine = item.side === 'player';
-  const isOpponent = item.side === 'opponent';
-  const hasCard = !!item.cardImageUrl;
-  const Icon = item.type === 'ATTACK'
-    ? Swords
-    : item.type === 'PHASE_END'
-      ? RefreshCw
-      : item.type === 'PLAY'
-        ? Play
-        : Zap;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 24, scale: 0.94 }}
-      animate={{ opacity: [0, 1, 1, 0], y: [24, 0, 0, 12], scale: [0.94, isLatest ? 1.03 : 1, isLatest ? 1.01 : 1, 0.98] }}
-      transition={{ duration: 2.72, delay: index * 0.1, times: [0, 0.14, 0.88, 1], ease: 'easeOut' }}
-      className={cn(
-        "relative flex shrink-0 items-center gap-3 overflow-hidden rounded-md border bg-black/72 p-2.5 shadow-lg",
-        isLatest ? "min-w-[16rem] max-w-[18rem] md:min-w-[19rem] md:max-w-[21rem]" : "min-w-[5.75rem] max-w-[5.75rem] md:min-w-[6.75rem] md:max-w-[6.75rem]",
-        isMine ? "border-emerald-300/55 shadow-emerald-500/20" : isOpponent ? "border-red-300/55 shadow-red-500/20" : "border-white/20",
-        isLatest && "ring-1 ring-white/35"
-      )}
-    >
-      <div className={cn("absolute inset-y-0 left-0 w-1", isMine ? "bg-emerald-400/80" : isOpponent ? "bg-red-500/80" : "bg-white/35")} />
-      <div className="relative flex h-20 aspect-[3/4] shrink-0 items-center justify-center overflow-visible rounded border border-white/15 bg-zinc-950 md:h-24">
-        {hasCard ? (
-          <img
-            src={item.cardImageUrl}
-            alt={item.cardName || item.title}
-            className="h-full w-full object-cover"
-            draggable={false}
-            referrerPolicy="no-referrer"
-          />
-        ) : (
-          <Icon className={cn("h-7 w-7", isOpponent ? "text-red-100" : isMine ? "text-emerald-100" : "text-white")} />
-        )}
-        <motion.div
-          initial={{ y: 0, opacity: 0, scale: 0.9 }}
-          animate={{ y: 0, opacity: 1, scale: 1 }}
-          transition={{ duration: 0.18, delay: index * 0.1 + 0.12, ease: 'easeOut' }}
-          className={cn(
-            "absolute -bottom-2 -left-2 flex h-8 w-8 items-center justify-center border-2 bg-black text-base font-black leading-none shadow-lg",
-            isMine ? "border-emerald-300 text-emerald-100 shadow-emerald-500/30" : isOpponent ? "border-red-300 text-red-100 shadow-red-500/30" : "border-white/45 text-white"
-          )}
-        >
-          {item.linkNumber}
-        </motion.div>
-      </div>
-      {isLatest && (
-        <div className="min-w-0 flex-1">
-          <div className="line-clamp-2 text-xs font-black leading-tight text-white md:text-sm">
-            {item.cardName || item.title}
-          </div>
-          {item.subtitle && (
-            <div className={cn("mt-2 text-[11px] font-black tracking-wider", isMine ? "text-emerald-200" : isOpponent ? "text-red-200" : "text-white/60")}>
-              {item.subtitle}
-            </div>
-          )}
-        </div>
-      )}
-      {index > 0 && (
-        <div className="absolute -left-2 top-1/2 hidden h-px w-4 -translate-y-1/2 bg-white/35 md:block" />
-      )}
-    </motion.div>
-  );
-};
 
 const GoddessAnimation: React.FC<{ event: BattleAnimationEvent }> = ({ event }) => {
   const isOpponent = event.side === 'opponent';

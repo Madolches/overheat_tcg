@@ -82,36 +82,26 @@ export const ServerGameService = {
   isVisualAnimationPending(gameState: GameState) {
     if (ServerGameService.shouldSkipVisualDelay(gameState)) return false;
     if (gameState.drawAnimationResume) return true;
+    if (gameState.animationHint?.type === 'CONFRONTATION_CHAIN') return false;
     return Number(gameState.animationUntil || 0) > Date.now();
   },
 
-  markConfrontationChainAnimation(gameState: GameState, durationMs = 1100, reason: 'build' | 'resolve' = 'build') {
+  markConfrontationChainAnimation(gameState: GameState, _durationMs = 1100, _reason: 'build' | 'resolve' = 'build') {
     if (!gameState.counterStack?.length) return;
-    if (ServerGameService.shouldSkipVisualDelay(gameState)) return;
-    const now = Date.now();
-    const resolvedDurationMs = Math.max(0, Number(durationMs) || 0);
     const topItem = gameState.counterStack[gameState.counterStack.length - 1];
-    const chainKey = `${reason}-${topItem.timestamp || now}-${gameState.counterStack.length}-${now}`;
     (topItem as any).chainAnimationShown = true;
-    gameState.animationHint = {
-      id: `confrontation-${chainKey}`,
-      type: 'CONFRONTATION_CHAIN',
-      playerUid: gameState.priorityPlayerId || topItem.ownerUid,
-      durationMs: resolvedDurationMs,
-      createdAt: now
-    };
-    gameState.animationUntil = now + resolvedDurationMs;
+    if (gameState.animationHint?.type === 'CONFRONTATION_CHAIN') {
+      delete gameState.animationHint;
+      delete gameState.animationUntil;
+    }
   },
 
-  isConfrontationAnimationPending(gameState: GameState) {
-    if (ServerGameService.shouldSkipVisualDelay(gameState)) return false;
-    return gameState.animationHint?.type === 'CONFRONTATION_CHAIN' &&
-      Number(gameState.animationUntil || 0) > Date.now();
+  isConfrontationAnimationPending(_gameState: GameState) {
+    return false;
   },
 
-  assertConfrontationAnimationComplete(gameState: GameState) {
-    if (!ServerGameService.isConfrontationAnimationPending(gameState)) return;
-    throw new Error('对抗链动画播放中，请稍候。');
+  assertConfrontationAnimationComplete(_gameState: GameState) {
+    return;
   },
 
   clearAllianceAttackMarkers(gameState: GameState, attackerIds?: string[]) {
@@ -2797,8 +2787,9 @@ export const ServerGameService = {
     const elapsed = now - (gameState.phaseTimerStart || now);
     const opponentId = gameState.playerIds.find(id => id !== sourcePlayerId);
     const isUncounterable = ServerGameService.isStackItemUncounterable(gameState, sourcePlayerId, stackItem);
+    const isStartingNewCounterChain = gameState.phase !== 'COUNTERING';
 
-    if (gameState.phase !== 'COUNTERING') {
+    if (isStartingNewCounterChain) {
       // If we are leaving a shared phase, subtract from the acting side's turn budget.
       const sharedPhases: GamePhase[] = ['MAIN', 'BATTLE_DECLARATION', 'DEFENSE_DECLARATION', 'BATTLE_FREE'];
       if (sharedPhases.includes(gameState.phase)) {
@@ -2814,13 +2805,28 @@ export const ServerGameService = {
       gameState.phaseTimerStart = now; // Independent 15/30s starts now
     }
 
+    const chainId = isStartingNewCounterChain || !gameState.currentConfrontationChainId
+      ? `${gameState.gameId || 'game'}_${gameState.turnCount}_${now}_${Math.random().toString(36).slice(2, 8)}`
+      : gameState.currentConfrontationChainId;
+    if (!isStartingNewCounterChain && !gameState.currentConfrontationChainId) {
+      gameState.counterStack.forEach(item => {
+        if (!item.confrontationChainId) item.confrontationChainId = chainId;
+      });
+    }
+    gameState.currentConfrontationChainId = chainId;
+    stackItem.confrontationChainId = chainId;
+
     gameState.isCountering = 1;
     gameState.counterStack.forEach(item => item.isInterrupted = true);
     gameState.counterStack.push(stackItem);
 
-    // Combo Link Numbering (Link 1 is the trigger, Link 2 is the first response, etc.)
-    const linkNumber = gameState.counterStack.length;
-    ServerGameService.assignDeclaredTargetLink(gameState, stackItem.declaredTargets, linkNumber);
+    // Combo Link Numbering is local to the active confrontation chain and only counts real cards.
+    const linkNumber = gameState.counterStack.filter(item =>
+      item.confrontationChainId === chainId && item.card?.gamecardId
+    ).length;
+    if (linkNumber > 0) {
+      ServerGameService.assignDeclaredTargetLink(gameState, stackItem.declaredTargets, linkNumber);
+    }
     gameState.priorityPlayerId = isUncounterable ? sourcePlayerId : opponentId;
 
     if (stackItem.card && stackItem.type !== 'PHASE_END') {
@@ -3339,6 +3345,7 @@ export const ServerGameService = {
       gameState.isResolvingStack = false;
       delete (gameState as any).deferTriggeredEffectsUntilCounterStackEnds;
       gameState.priorityPlayerId = undefined;
+      gameState.currentConfrontationChainId = undefined;
       ServerGameService.clearAllDeclaredTargetMarkers(gameState);
 
       const nextPhase = phaseEndItem!.nextPhase;
@@ -3568,6 +3575,7 @@ export const ServerGameService = {
     gameState.isCountering = 0;
     gameState.priorityPlayerId = undefined;
     gameState.currentProcessingItem = null; // Ensure this is cleared
+    gameState.currentConfrontationChainId = undefined;
     gameState.phaseTimerStart = Date.now();
     delete (gameState as any).deferTriggeredEffectsUntilCounterStackEnds;
     ServerGameService.clearAllDeclaredTargetMarkers(gameState);

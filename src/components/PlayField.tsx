@@ -6,12 +6,33 @@ import { StandardPopup } from './StandardPopup';
 import { KeywordBadges } from './KeywordBadges';
 import { CardEffectList } from './CardEffectList';
 import { GameService } from '../services/gameService';
-import { ArrowDown, Shield, Sword, Zap, Flag, BookOpen, Play, X, LogOut, Coins, Sparkles } from 'lucide-react';
+import { ArrowDown, Shield, Sword, Zap, Flag, BookOpen, Play, X, LogOut, Coins, Sparkles, Hourglass, Link2 } from 'lucide-react';
 import { cn, getCardImageUrl } from '../lib/utils';
 import { getPlayerWealthCount } from '../lib/wealth';
 import { getPlayerOngoingEffects } from '../lib/playerOngoingEffects';
 
 export const AnimatingCardsContext = createContext<Set<string> | undefined>(undefined);
+const StackOrderContext = createContext<Map<string, number> | undefined>(undefined);
+const HandStackOrderContext = createContext<Map<string, number> | undefined>(undefined);
+
+const StackOrderBadge: React.FC<{ order?: number; className?: string }> = ({ order, className }) => {
+  if (!order) return null;
+
+  return (
+    <div className={cn(
+      "pointer-events-none absolute right-1 top-1 z-50 isolate flex h-7 min-w-7 items-center justify-center rounded-full bg-[conic-gradient(from_145deg,#67e8f9_0deg,#f8fafc_72deg,#f59e0b_128deg,#0f172a_210deg,#22d3ee_300deg,#67e8f9_360deg)] p-[2px] shadow-[0_0_14px_rgba(34,211,238,0.62),0_8px_18px_rgba(0,0,0,0.55)] ring-1 ring-cyan-100/70 motion-safe:animate-[stack-order-pulse_1.8s_ease-in-out_infinite] motion-reduce:animate-none md:h-8 md:min-w-8",
+      className
+    )}>
+      <div className="absolute inset-[-5px] -z-10 rounded-full bg-cyan-300/35 blur-[5px]" />
+      <div className="relative flex h-full min-w-[1.55rem] items-center justify-center rounded-full border border-cyan-100/60 bg-[radial-gradient(circle_at_35%_25%,rgba(255,255,255,0.22),transparent_34%),linear-gradient(145deg,#020617,#083344_52%,#0f172a)] px-1.5 text-xs font-black leading-none text-cyan-50 shadow-[inset_0_1px_4px_rgba(255,255,255,0.22),inset_0_-3px_8px_rgba(8,47,73,0.72)] tabular-nums md:min-w-[1.8rem] md:text-sm">
+        <span className="drop-shadow-[0_0_6px_rgba(103,232,249,0.9)]">{order}</span>
+      </div>
+      <div className="absolute -bottom-1 -left-1 z-[1] flex h-3.5 w-3.5 items-center justify-center rounded-full border border-amber-100/70 bg-zinc-950 text-amber-200 shadow-[0_0_8px_rgba(245,158,11,0.55)] md:h-4 md:w-4">
+        <Link2 className="h-2.5 w-2.5 md:h-3 md:w-3" strokeWidth={3} />
+      </div>
+    </div>
+  );
+};
 
 interface PlayFieldProps {
   player: PlayerState;
@@ -37,7 +58,9 @@ interface PlayFieldProps {
   onShowLogs?: () => void;
   onOpenRulebook?: () => void;
   onSurrender?: () => void;
-  onPhaseClick?: () => void;
+  onEndTurn?: () => void;
+  onEndBattleFree?: () => void;
+  onOpenPhaseMenu?: () => void;
   confrontationStrategy?: 'ON' | 'AUTO' | 'OFF';
   onUpdateStrategy?: (strategy: 'ON' | 'AUTO' | 'OFF') => void;
   canConfront?: boolean;
@@ -100,7 +123,9 @@ const CardSlot: React.FC<{
   animationAnchor?: string;
 }> = ({ card, label, onClick, onPreview, onHover, className, isFaceUp = true, isExhausted, isSelectedForPayment, isDeck, count = 0, showCount = true, isAttacking, isDefending, isOpponent, isAllianceInitiator, displayMode, slotLabel, cardBackUrl, isHighlighted, isSelectedForQuery, querySelectionOrder, allowFaceDownHover = false, ignoreSkin = false, animationAnchor }) => {
   const animatingCardIds = useContext(AnimatingCardsContext);
+  const stackOrders = useContext(StackOrderContext);
   const isAnimating = !!(card && animatingCardIds?.has(card.gamecardId));
+  const stackOrder = card && isFaceUp ? stackOrders?.get(card.gamecardId) : undefined;
 
   // Dynamic height scaling for stack areas (Deck, Grave, Exile)
   const isStackArea = isDeck || label === '墓地' || label === '放逐';
@@ -109,6 +134,9 @@ const CardSlot: React.FC<{
   const isDeclaredEffectTarget =
     !!card?.declaredTargetMarkers?.length ||
     !!card?.influencingEffects?.some(effect => effect.description.includes('指定为效果对象'));
+  const stackOrderBadgeClassName = displayMode === 'unit'
+    ? "left-1/2 right-auto top-[-0.85rem] -translate-x-1/2 md:top-[-1rem]"
+    : undefined;
 
   return (
     <div
@@ -212,7 +240,7 @@ const CardSlot: React.FC<{
         )}
 
         {/* Count Badge - Repositioned to center and enlarged */}
-        {showCount && (count > 0 || typeof count === 'string') && (
+        {showCount && !stackOrder && (count > 0 || typeof count === 'string') && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
             <div className="bg-black/60 backdrop-blur-sm text-[16px] font-black px-3 py-1 rounded-full border border-white/30 text-white shadow-2xl">
               {count}
@@ -220,6 +248,8 @@ const CardSlot: React.FC<{
           </div>
         )}
       </div>
+
+      <StackOrderBadge order={stackOrder} className={stackOrderBadgeClassName} />
 
       {slotLabel && (
         <div className={cn(
@@ -459,6 +489,7 @@ const PlayerHalf: React.FC<{
   const [hoveredHandCardId, setHoveredHandCardId] = useState<string | null>(null);
   const [draggingHandCard, setDraggingHandCard] = useState<HandDragState | null>(null);
   const suppressHandClickUntilRef = useRef(0);
+  const stackOrders = useContext(HandStackOrderContext);
 
   if (!player) return null;
   const sandboxPlayerKey: SandboxPlayerKey = isOpponent ? 'opponent' : 'player';
@@ -482,6 +513,7 @@ const PlayerHalf: React.FC<{
     const index = selectedTargetCardIds.findIndex(id => id === card.gamecardId || id === card.id);
     return index === -1 ? undefined : index + 1;
   };
+  const getStackOrder = (card?: Card | null) => card ? stackOrders?.get(card.gamecardId) : undefined;
   const hasHighlightedCardInZone = (cards?: (Card | null)[]) =>
     !!highlightedCardIds && !!cards?.some(card => !!card && highlightedCardIds.has(card.gamecardId));
   const erosionSlotLabels = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'];
@@ -686,12 +718,13 @@ const PlayerHalf: React.FC<{
                         key={card.gamecardId || i}
                         data-animation-anchor={`card:${card.gamecardId}`}
                         data-animation-card-id={card.gamecardId}
-                        className="w-10 md:w-[76.8px] shrink-0 cursor-pointer shadow-lg drop-shadow-md transition-all hover:-translate-y-1"
+                        className="relative w-10 shrink-0 cursor-pointer shadow-lg drop-shadow-md transition-all hover:-translate-y-1 md:w-[76.8px]"
                         onClick={(e) => clickSandboxZone('hand', i, costDisplay.card) || onCardClick?.(costDisplay.card, 'hand', i, e)}
                         onMouseEnter={() => onHoverCard?.(costDisplay.card)}
                         onMouseLeave={() => onHoverCard?.(null)}
                       >
                         <CardComponent card={costDisplay.card} cardBackUrl={cardBackUrl} disableZoom displayMode="hand" effectiveAcValue={costDisplay.effectiveAcValue} ignoreSkin={ignoreCardSkins} />
+                        <StackOrderBadge order={getStackOrder(costDisplay.card)} />
                       </div>
                     );
                   })
@@ -966,6 +999,7 @@ const PlayerHalf: React.FC<{
                           isFeijingSelected && "shadow-[#f27d26]/60 ring-2 ring-[#f27d26]"
                         )}
                       />
+                      <StackOrderBadge order={getStackOrder(costDisplay.card)} />
                     </div>
                   );
                 })}
@@ -1081,10 +1115,10 @@ const PlayerHalf: React.FC<{
 
 export const PlayField: React.FC<PlayFieldProps> = ({
   player, opponent, game, onCardClick, onPreviewCard, onPlayCard,
-  paymentSelection, pendingPlayCard, myUid, selectedAttackers,
+  paymentSelection, pendingPlayCard, stack = [], myUid, selectedAttackers,
   selectedDefender, allianceInitiator, timer, cardBackUrl, viewingZone,
   setViewingZone, highlightedCardIds, selectedTargetIds, selectedTargetCardIds, onShowLogs, onOpenRulebook,
-  onSurrender, onPhaseClick, confrontationStrategy, onUpdateStrategy,
+  onSurrender, onEndTurn, onEndBattleFree, onOpenPhaseMenu, confrontationStrategy, onUpdateStrategy,
   canConfront, isConfrontPromptActive, isCounteringPromptActive, isDefensePromptActive, isCounteringPromptWaiting, onStartConfront, onDeclineConfront, onDeclineDefense,
   showPhaseMenu, isAnyPopupOpen, isPopupHidden, onHidePopup, onExpand, isSpectator,
   ignoreOpponentCardSkins = false, handEffectsEnabled = true, sandboxEditMode, onSandboxZoneClick, sandboxCenterControls,
@@ -1113,6 +1147,51 @@ export const PlayField: React.FC<PlayFieldProps> = ({
   const playerOngoingEffects = getPlayerOngoingEffects(game, player.uid);
   const opponentOngoingEffects = getPlayerOngoingEffects(game, opponent.uid);
   const isCounteringChainPromptWaiting = !!isCounteringPromptActive && !!isCounteringPromptWaiting;
+  const stackItemsForOrdering = useMemo(() => {
+    const activeChainId = stack[stack.length - 1]?.confrontationChainId;
+    return activeChainId
+      ? stack.filter(item => item.confrontationChainId === activeChainId)
+      : stack;
+  }, [stack]);
+  const stackOrdersByCardId = useMemo(() => {
+    const orders = new Map<string, number>();
+    let order = 0;
+    stackItemsForOrdering.forEach(item => {
+      if (item.card?.gamecardId) {
+        order += 1;
+        orders.set(item.card.gamecardId, order);
+      }
+    });
+    return orders;
+  }, [stackItemsForOrdering]);
+  const handStackOrdersByCardId = useMemo(() => {
+    const orders = new Map<string, number>();
+    let order = 0;
+    stackItemsForOrdering.forEach(item => {
+      if (item.card?.gamecardId) {
+        order += 1;
+        if (item.type !== 'PLAY') {
+          orders.set(item.card.gamecardId, order);
+        }
+      }
+    });
+    return orders;
+  }, [stackItemsForOrdering]);
+  const phaseStackRequests = useMemo(() => {
+    const requests = { attack: false, mainEnd: false, battleFreeEnd: false };
+    stack.forEach(item => {
+      if (item.type === 'ATTACK') {
+        requests.attack = true;
+      }
+      if (item.type === 'PHASE_END' && item.nextPhase === 'DISCARD') {
+        requests.mainEnd = true;
+      }
+      if (item.type === 'PHASE_END' && item.nextPhase === 'DAMAGE_CALCULATION') {
+        requests.battleFreeEnd = true;
+      }
+    });
+    return requests;
+  }, [stack]);
   const openOngoingEffects = (targetPlayer: PlayerState, isOpponentTarget?: boolean) => {
     setOngoingEffectsPopup({
       title: isSpectator
@@ -1121,12 +1200,75 @@ export const PlayField: React.FC<PlayFieldProps> = ({
       effects: targetPlayer.uid === opponent.uid ? opponentOngoingEffects : playerOngoingEffects
     });
   };
+  const displayedPhase = game.phase === 'COUNTERING' ? (game.previousPhase || 'MAIN') : game.phase;
   const phaseLabel =
-    game.phase === 'COUNTERING' ? '对抗' :
-      game.phase === 'MAIN' ? '主要' :
-        game.phase === 'BATTLE_DECLARATION' ? '战斗宣言' :
-          game.phase === 'DEFENSE_DECLARATION' ? '防御宣言' :
-            game.phase === 'BATTLE_FREE' ? (isCurrentPlayer ? '结束战斗自由' : '战斗自由') : game.phase;
+    displayedPhase === 'MAIN' ? '主要阶段' :
+      displayedPhase === 'START' ? '回合开始阶段' :
+        displayedPhase === 'DRAW' ? '抽卡阶段' :
+          displayedPhase === 'EROSION' ? '侵蚀阶段' :
+            displayedPhase === 'BATTLE_DECLARATION' ? '战斗宣言' :
+              displayedPhase === 'DEFENSE_DECLARATION' ? '防御宣言' :
+                displayedPhase === 'BATTLE_FREE' ? '战斗自由时段' :
+                  displayedPhase === 'DAMAGE_CALCULATION' ? '伤害判定步骤' :
+                    displayedPhase === 'END' ? '回合结束阶段' : displayedPhase;
+  const phaseDisplayNode =
+    phaseStackRequests.mainEnd
+      ? { label: '主要阶段结束', isConfrontTiming: true }
+      : phaseStackRequests.battleFreeEnd
+        ? { label: '战斗自由时段结束', isConfrontTiming: true }
+        : phaseStackRequests.attack
+          ? { label: '攻击宣言', isConfrontTiming: true }
+          : { label: phaseLabel, isConfrontTiming: false };
+  const phaseAction: {
+    label: string;
+    tone: 'blue' | 'green' | 'neutral' | 'red' | 'white';
+    icon: React.ReactNode;
+    onClick?: () => void;
+    disabled?: boolean;
+  } = (() => {
+    const fallbackAction = {
+      label: '等待操作',
+      tone: 'neutral' as const,
+      icon: <Hourglass className="h-3.5 w-3.5 md:h-4 md:w-4" />,
+      disabled: true
+    };
+
+    if (isSpectator) return fallbackAction;
+    if (isDefensePromptActive) {
+      return {
+        label: '放弃防御',
+        tone: 'blue',
+        icon: <Shield className="h-3.5 w-3.5 md:h-4 md:w-4" />,
+        onClick: onDeclineDefense
+      };
+    }
+    if (isConfrontPromptActive || isCounteringPromptActive) {
+      return {
+        label: isCounteringChainPromptWaiting ? '对抗链' : '忽略对抗',
+        tone: 'green',
+        icon: <Zap className="h-3.5 w-3.5 md:h-4 md:w-4" />,
+        onClick: onDeclineConfront,
+        disabled: isCounteringChainPromptWaiting
+      };
+    }
+    if (game.phase === 'MAIN' && isCurrentPlayer) {
+      return {
+        label: '结束回合',
+        tone: 'white',
+        icon: <LogOut className="h-3.5 w-3.5 md:h-4 md:w-4" />,
+        onClick: onEndTurn
+      };
+    }
+    if (game.phase === 'BATTLE_FREE' && isCurrentPlayer) {
+      return {
+        label: '结束战斗',
+        tone: 'red',
+        icon: <Sword className="h-3.5 w-3.5 md:h-4 md:w-4" />,
+        onClick: onEndBattleFree
+      };
+    }
+    return fallbackAction;
+  })();
   const viewingZoneOwner = viewingZone?.isOpponentZone ? opponent : player;
   const viewingZoneCards = !viewingZone ? [] : (
     viewingZone.type === 'item' ? ((viewingZoneOwner.itemZone?.filter(Boolean) as Card[]) || []) :
@@ -1152,6 +1294,8 @@ export const PlayField: React.FC<PlayFieldProps> = ({
     onHoverPreview?.(card);
   };
   return (
+    <StackOrderContext.Provider value={stackOrdersByCardId}>
+    <HandStackOrderContext.Provider value={handStackOrdersByCardId}>
     <AnimatingCardsContext.Provider value={animatingCardIds}>
       <div className="relative w-full h-full max-w-full lg:max-w-7xl mx-auto bg-[#0a0a0a] border-y md:border-2 border-[#1a1a1a] md:rounded-xl shadow-2xl font-sans text-white select-none flex flex-col">
       {/* Background Overlay */}
@@ -1333,7 +1477,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
 
       {/* Central Battle Info Panel */}
       <div className={cn(
-        "relative h-16 md:h-20 w-full flex items-center justify-center z-[100] transition-all duration-300",
+        "relative h-20 md:h-24 w-full flex items-center justify-center z-[100] transition-all duration-300",
         (isAnyPopupOpen && !isPopupHidden) ? "opacity-0 pointer-events-none scale-95" : "opacity-100 scale-100"
       )}>
         <div className="absolute inset-0 bg-gradient-to-r from-transparent via-[#f27d26]/10 to-transparent border-y border-white/5" />
@@ -1343,8 +1487,8 @@ export const PlayField: React.FC<PlayFieldProps> = ({
             {sandboxCenterControls}
           </div>
         ) : (
-        <div className="mx-auto flex w-fit max-w-[calc(100%-0.75rem)] flex-col items-center gap-1 rounded-2xl border border-white/10 bg-zinc-950/80 px-2 py-1 shadow-[0_20px_50px_rgba(0,0,0,0.5)] backdrop-blur-xl md:w-auto md:max-w-full md:flex-row md:gap-4 md:rounded-[2rem] md:px-4 md:py-2 scale-[0.85] md:scale-100 origin-center">
-          <div className="flex w-fit max-w-full flex-wrap items-center justify-center gap-2 md:w-auto md:flex-nowrap md:gap-4">
+        <div className="mx-auto flex w-fit max-w-[calc(100%-0.5rem)] flex-col items-center gap-1 rounded-2xl border border-white/10 bg-zinc-950/80 px-2 py-1 shadow-[0_20px_50px_rgba(0,0,0,0.5)] backdrop-blur-xl origin-center scale-[0.78] sm:scale-[0.88] md:w-auto md:max-w-full md:flex-row md:gap-3 md:rounded-[2rem] md:px-3 md:py-2 md:scale-100">
+          <div className="flex w-fit max-w-full flex-wrap items-center justify-center gap-2 md:w-auto md:flex-nowrap md:gap-3">
             {/* Round & Surrender */}
             <div className="flex items-center gap-2 md:gap-4">
               <button
@@ -1387,55 +1531,45 @@ export const PlayField: React.FC<PlayFieldProps> = ({
               )}
             </div>
 
-            {/* Phase transition */}
+            {/* Phase display */}
             <div
               className={cn(
-                "relative flex min-w-[132px] flex-col items-center justify-center rounded-xl border border-transparent px-2 py-0.5 text-center transition-all md:min-w-[156px] md:px-4 md:py-1",
-                (isConfrontPromptActive || isCounteringPromptActive || isDefensePromptActive)
-                  ? "cursor-default"
-                  : "cursor-pointer hover:bg-white/5",
-                showPhaseMenu && "bg-white/10 border-white/20 shadow-lg",
-                game.phase === 'BATTLE_FREE' && isCurrentPlayer && !isConfrontPromptActive && !isCounteringPromptActive &&
-                  "bg-amber-500/15 border-amber-400/40 shadow-[0_0_24px_rgba(251,191,36,0.35)] animate-pulse"
+                "relative flex min-w-[150px] max-w-full items-center justify-center rounded-xl border border-white/10 bg-black/30 px-2 py-1.5 text-center shadow-inner transition-all md:min-w-[220px] md:px-3",
+                showPhaseMenu && "border-white/20 bg-white/10"
               )}
-              onClick={(e) => {
-                if (isSpectator || isPopupHidden) return;
-                if (isConfrontPromptActive || isCounteringPromptActive || isDefensePromptActive) return;
-                onPhaseClick?.();
-              }}
             >
-              {(isConfrontPromptActive || isCounteringPromptActive || isDefensePromptActive) ? (
-                <button
-                  disabled={isPopupHidden || isCounteringChainPromptWaiting}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (isDefensePromptActive) {
-                      onDeclineDefense?.();
-                      return;
-                    }
-                    if (isCounteringChainPromptWaiting) return;
-                    onDeclineConfront?.();
-                  }}
-                  className="absolute inset-[-0.15rem] z-10 flex min-w-[132px] items-center justify-center gap-1.5 rounded-xl border border-sky-400/60 bg-sky-500/25 px-3 py-1.5 text-sky-100 shadow-[0_0_26px_rgba(56,189,248,0.42)] transition-all hover:bg-sky-500/35 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-sky-500/25 md:inset-[-0.25rem] md:min-w-[156px] md:gap-2 md:px-4 md:py-2"
-                >
-                  {isDefensePromptActive ? <Shield className="h-4 w-4" /> : <Zap className="h-4 w-4" />}
-                  <span className="text-xs font-black italic tracking-widest md:text-sm">
-                    {isCounteringChainPromptWaiting ? '对抗链' : isDefensePromptActive ? '放弃防御' : '放弃对抗'}
-                  </span>
-                </button>
-              ) : (
-                <span className={cn(
-                  "flex w-full items-center justify-center gap-1.5 whitespace-nowrap text-center text-[15px] font-black italic uppercase tracking-tight md:gap-2 md:text-xl",
-                  game.phase === 'BATTLE_FREE' && isCurrentPlayer ? "text-amber-200" : "text-white"
-                )}>
-                  {phaseLabel}
-                  <Zap className={cn(
-                    "h-3.5 w-3.5 animate-pulse md:h-4 md:w-4",
-                    game.phase === 'BATTLE_FREE' && isCurrentPlayer ? "text-amber-300" : "text-[#f27d26]"
-                  )} />
-                </span>
-              )}
+              <div
+                className="relative flex h-7 min-w-[128px] max-w-full items-center justify-center gap-1 rounded-full border border-[#f27d26]/60 bg-[#f27d26]/15 px-3 text-[11px] font-black italic leading-none text-white shadow-[0_0_14px_rgba(242,125,38,0.28)] transition-all md:h-8 md:min-w-[168px] md:px-4 md:text-sm"
+              >
+                <span className="inline-flex whitespace-nowrap px-1 leading-tight">{phaseDisplayNode.label}</span>
+                {phaseDisplayNode.isConfrontTiming && (
+                  <Zap className="h-3.5 w-3.5 animate-pulse text-[#f27d26] md:h-4 md:w-4" />
+                )}
+              </div>
             </div>
+
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                if (phaseAction.disabled) return;
+                phaseAction.onClick?.();
+              }}
+              disabled={isPopupHidden || phaseAction.disabled || !phaseAction.onClick}
+              title={phaseAction.label}
+              className={cn(
+                "flex h-8 min-w-[88px] items-center justify-center gap-1.5 rounded-xl border px-3 text-[10px] font-black italic tracking-widest shadow-lg transition-all hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:brightness-100 md:h-9 md:min-w-[104px] md:px-4 md:text-[11px]",
+                phaseAction.tone === 'blue' && "border-blue-300/45 bg-blue-500/20 text-blue-100 shadow-[0_0_22px_rgba(59,130,246,0.24)]",
+                phaseAction.tone === 'green' && "border-emerald-300/50 bg-emerald-500/20 text-emerald-100 shadow-[0_0_22px_rgba(16,185,129,0.24)]",
+                phaseAction.tone === 'neutral' && "border-white/10 bg-white/5 text-white/70 hover:bg-white/10",
+                phaseAction.tone === 'red' && "border-red-300/45 bg-red-500/20 text-red-100 shadow-[0_0_22px_rgba(239,68,68,0.22)]",
+                phaseAction.tone === 'white' && "border-white/45 bg-white/15 text-white shadow-[0_0_22px_rgba(255,255,255,0.18)] hover:bg-white/20",
+                showPhaseMenu && phaseAction.label === '阶段操作' && !phaseAction.disabled && "border-white/25 bg-white/[0.12] text-white"
+              )}
+            >
+              {phaseAction.icon}
+              <span className="whitespace-nowrap">{phaseAction.label}</span>
+            </button>
           </div>
 
           <div className="hidden h-8 w-px bg-white/10 md:block" />
@@ -1525,6 +1659,14 @@ export const PlayField: React.FC<PlayFieldProps> = ({
       </div>
 
       <style>{`
+        @keyframes stack-order-pulse {
+          0%, 100% {
+            box-shadow: 0 0 14px rgba(34, 211, 238, 0.62), 0 8px 18px rgba(0, 0, 0, 0.55);
+          }
+          50% {
+            box-shadow: 0 0 24px rgba(34, 211, 238, 0.9), 0 0 12px rgba(245, 158, 11, 0.45), 0 8px 18px rgba(0, 0, 0, 0.55);
+          }
+        }
         .custom-scrollbar::-webkit-scrollbar {
           width: 2px;
         }
@@ -1538,5 +1680,7 @@ export const PlayField: React.FC<PlayFieldProps> = ({
       `}</style>
       </div>
     </AnimatingCardsContext.Provider>
+    </HandStackOrderContext.Provider>
+    </StackOrderContext.Provider>
   );
 };

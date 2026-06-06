@@ -68,7 +68,9 @@ const FORCE_LOGOUT_REASON = '账号已在其他设备登录';
 
 function getBotVisualAnimationDelayMs(gameState: any, now = Date.now()) {
     if (ServerGameService.shouldSkipVisualDelay(gameState)) return 0;
-    const animationUntil = Number(gameState.animationUntil || 0);
+    const animationUntil = gameState.animationHint?.type === 'CONFRONTATION_CHAIN'
+        ? 0
+        : Number(gameState.animationUntil || 0);
     const drawResumeAt = Number(gameState.drawAnimationResume?.resumeAt || 0);
     const waitUntil = Math.max(animationUntil, drawResumeAt);
     if (waitUntil > now) return waitUntil - now + 250;
@@ -554,8 +556,9 @@ async function handleBotMove(gameState: any, gameId: string) {
 
     // Use a delay to simulate thinking and allow final state propagation
     const now = Date.now();
-    const delay = gameState.animationUntil && gameState.animationUntil > now 
-        ? Math.max(1600, gameState.animationUntil - now + 500) 
+    const animationUntil = gameState.animationHint?.type === 'CONFRONTATION_CHAIN' ? 0 : Number(gameState.animationUntil || 0);
+    const delay = animationUntil && animationUntil > now
+        ? Math.max(1600, animationUntil - now + 500)
         : 1600;
 
     setTimeout(async () => {
@@ -1832,10 +1835,9 @@ setInterval(async () => {
                     !gameState.pendingQuery &&
                     !gameState.isResolvingStack &&
                     !gameState.currentProcessingItem &&
-                    gameState.animationHint?.type === 'CONFRONTATION_CHAIN' &&
-                    Number(gameState.animationUntil || 0) > 0 &&
-                    now >= Number(gameState.animationUntil || 0)
+                    gameState.animationHint?.type === 'CONFRONTATION_CHAIN'
                 ) {
+                    delete gameState.animationHint;
                     delete gameState.animationUntil;
                     await ServerGameService.applyConfrontationStrategy(gameState, async (state) => {
                         await syncGameStateForCallback(gameId, state, 'timer:confrontationAnimationComplete');

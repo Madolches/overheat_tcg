@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { BattleLogEntry, Card, GameState, StackItem } from '../types/game';
+import type { BattleLogEntry, Card, GameState } from '../types/game';
 import { battleLogText, normalizeBattleLogEntry } from '../lib/battleLog';
 import { getCardImageUrl } from '../lib/utils';
 import type { BattleAnimationEvent, BattleAnimationType } from '../components/BattleAnimationLayer';
@@ -140,23 +140,6 @@ export function useBattleAnimations(game: GameState | null, perspectiveUid?: str
         if (game.animationHint.type === 'DRAW_CARD' && game.animationHint.cardId) {
           hintedDrawCardsRef.current.add(`${game.animationHint.playerUid}:${game.animationHint.cardId}`);
         }
-        if (game.animationHint.type === 'CONFRONTATION_CHAIN') {
-          const chainItems = (game.counterStack || []).map((item, index) =>
-            stackItemToChainAnimationItem(item, index + 1, game, perspectiveUid)
-          );
-          const visibleChainItems = lastChainItems(chainItems);
-          if (visibleChainItems.length > 0) {
-            enqueue([{
-              id: `confrontation_hint_${game.animationHint.id}`,
-              type: 'confrontation',
-              side: 'neutral',
-              title: '对抗链',
-              chainLength: game.counterStack?.length || chainItems.length,
-              chainItems: visibleChainItems,
-              durationMs: game.animationHint.durationMs
-            }]);
-          }
-        }
       }
       return;
     }
@@ -197,25 +180,6 @@ export function useBattleAnimations(game: GameState | null, perspectiveUid?: str
           targetZone: 'HAND',
           revealTo,
           cardBackUrl
-        });
-      }
-    }
-    if (game.animationHint?.type === 'CONFRONTATION_CHAIN' && !seenAnimationHintsRef.current.has(game.animationHint.id)) {
-      seenAnimationHintsRef.current.add(game.animationHint.id);
-      const counterLength = game.counterStack?.length || 0;
-      const chainItems = (game.counterStack || []).map((item, index) =>
-        stackItemToChainAnimationItem(item, index + 1, game, perspectiveUid)
-      );
-      const visibleChainItems = lastChainItems(chainItems);
-      if (counterLength > 0 && visibleChainItems.length > 0) {
-        nextEvents.push({
-          id: `confrontation_hint_${game.animationHint.id}`,
-          type: 'confrontation',
-          side: 'neutral',
-          title: '对抗链',
-          chainLength: counterLength,
-          chainItems: visibleChainItems,
-          durationMs: game.animationHint.durationMs
         });
       }
     }
@@ -527,46 +491,6 @@ function findCardByLogRef(game: GameState, gamecardId?: string, cardId?: string,
 function findCardByGamecardId(game: GameState, gamecardId?: string) {
   if (!gamecardId) return undefined;
   return findCardByLogRef(game, gamecardId);
-}
-
-function stackItemToChainAnimationItem(
-  item: StackItem,
-  linkNumber: number,
-  game: GameState,
-  perspectiveUid: string | null | undefined
-): NonNullable<BattleAnimationEvent['chainItems']>[number] {
-  const side = sideForUid(item.ownerUid, perspectiveUid, game);
-  const phaseTitle = phaseEndTitle(item);
-  const title = item.card?.fullName || phaseTitle || (item.type === 'ATTACK' ? '攻击宣言' : '回合结束');
-  const subtitle = item.type === 'PLAY'
-    ? '打出卡牌'
-    : item.type === 'EFFECT'
-      ? '发动效果'
-      : item.type === 'ATTACK'
-        ? '宣言攻击'
-        : phaseTitle || '回合结束';
-
-  return {
-    linkNumber,
-    side,
-    type: item.type,
-    title,
-    subtitle,
-    cardName: item.card?.fullName,
-    cardImageUrl: item.card ? getCardPreviewImage(item.card) : undefined,
-    sourceCardId: item.card?.gamecardId
-  };
-}
-
-function phaseEndTitle(item: StackItem) {
-  if (item.type !== 'PHASE_END') return undefined;
-  if (item.nextPhase === 'DAMAGE_CALCULATION') return '战斗自由阶段结束';
-  if (item.nextPhase === 'BATTLE_DECLARATION' || item.nextPhase === 'DISCARD') return '宣言结束主要阶段';
-  return '回合结束';
-}
-
-function lastChainItems<T>(items: T[], count = 3) {
-  return items.slice(Math.max(0, items.length - count));
 }
 
 function sideForUid(uid: string | null | undefined, perspectiveUid: string | null | undefined, game: GameState): BattleAnimationEvent['side'] {
