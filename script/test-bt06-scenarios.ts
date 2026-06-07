@@ -2812,10 +2812,10 @@ async function testSimpleAiResolvesAnnihilationAngelsDamageTrigger(): Promise<Sc
   delete state.players.BOT;
 
   await ServerGameService.resolveDamage(state);
-  const asked = state.pendingQuery?.callbackKey === 'EFFECT_RESOLVE' &&
+  const asked = ['DECLARE_EFFECT_TARGETS', 'EFFECT_RESOLVE'].includes(state.pendingQuery?.callbackKey || '') &&
     state.pendingQuery.playerUid === 'BOT_PLAYER' &&
     state.pendingQuery.context?.effectId === '101130104_damage_bottom';
-  const openedSelection = state.pendingQuery?.callbackKey === 'EFFECT_RESOLVE' &&
+  const openedSelection = ['DECLARE_EFFECT_TARGETS', 'EFFECT_RESOLVE'].includes(state.pendingQuery?.callbackKey || '') &&
     state.pendingQuery.playerUid === 'BOT_PLAYER' &&
     state.pendingQuery.context?.effectId === '101130104_damage_bottom';
   const markedForBattleEnd = !!(state as any).pendingBattleEndAfterQuery;

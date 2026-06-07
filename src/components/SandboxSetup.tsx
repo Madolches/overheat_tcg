@@ -796,7 +796,6 @@ export const SandboxSetup: React.FC = () => {
             game={previewGame}
             stack={[]}
             myUid="SANDBOX_PLAYER"
-            timer={sandbox.turnTimerLimit || 300}
             isSpectator
             sandboxEditMode
             onSandboxZoneClick={openSandboxTarget}

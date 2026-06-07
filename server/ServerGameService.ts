@@ -82,36 +82,26 @@ export const ServerGameService = {
   isVisualAnimationPending(gameState: GameState) {
     if (ServerGameService.shouldSkipVisualDelay(gameState)) return false;
     if (gameState.drawAnimationResume) return true;
+    if (gameState.animationHint?.type === 'CONFRONTATION_CHAIN') return false;
     return Number(gameState.animationUntil || 0) > Date.now();
   },
 
-  markConfrontationChainAnimation(gameState: GameState, durationMs = 1100, reason: 'build' | 'resolve' = 'build') {
+  markConfrontationChainAnimation(gameState: GameState, _durationMs = 1100, _reason: 'build' | 'resolve' = 'build') {
     if (!gameState.counterStack?.length) return;
-    if (ServerGameService.shouldSkipVisualDelay(gameState)) return;
-    const now = Date.now();
-    const resolvedDurationMs = Math.max(0, Number(durationMs) || 0);
     const topItem = gameState.counterStack[gameState.counterStack.length - 1];
-    const chainKey = `${reason}-${topItem.timestamp || now}-${gameState.counterStack.length}-${now}`;
     (topItem as any).chainAnimationShown = true;
-    gameState.animationHint = {
-      id: `confrontation-${chainKey}`,
-      type: 'CONFRONTATION_CHAIN',
-      playerUid: gameState.priorityPlayerId || topItem.ownerUid,
-      durationMs: resolvedDurationMs,
-      createdAt: now
-    };
-    gameState.animationUntil = now + resolvedDurationMs;
+    if (gameState.animationHint?.type === 'CONFRONTATION_CHAIN') {
+      delete gameState.animationHint;
+      delete gameState.animationUntil;
+    }
   },
 
-  isConfrontationAnimationPending(gameState: GameState) {
-    if (ServerGameService.shouldSkipVisualDelay(gameState)) return false;
-    return gameState.animationHint?.type === 'CONFRONTATION_CHAIN' &&
-      Number(gameState.animationUntil || 0) > Date.now();
+  isConfrontationAnimationPending(_gameState: GameState) {
+    return false;
   },
 
-  assertConfrontationAnimationComplete(gameState: GameState) {
-    if (!ServerGameService.isConfrontationAnimationPending(gameState)) return;
-    throw new Error('对抗链动画播放中，请稍候。');
+  assertConfrontationAnimationComplete(_gameState: GameState) {
+    return;
   },
 
   clearAllianceAttackMarkers(gameState: GameState, attackerIds?: string[]) {
@@ -167,6 +157,85 @@ export const ServerGameService = {
       type: 'PHASE_CHANGED',
       data: { phase: 'MAIN', reason }
     });
+  },
+
+  async recoverBotPendingQueryFailure(
+    gameState: GameState,
+    playerUid: string,
+    query: any,
+    reason: string,
+    onUpdate?: (state: GameState) => Promise<void>
+  ) {
+    const activeQuery = gameState.pendingQuery;
+    const recoveryQuery = activeQuery?.id === query?.id ? activeQuery : query;
+    if (!recoveryQuery || recoveryQuery.playerUid !== playerUid) return false;
+
+    const callback = recoveryQuery.callbackKey || recoveryQuery.type || 'UNKNOWN_QUERY';
+    const options = recoveryQuery.options || [];
+    const canDecline = options.some((option: any) =>
+      option?.id === 'NO' ||
+      option?.selectionId === 'NO' ||
+      option?.value === 'NO'
+    );
+
+    if (canDecline) {
+      try {
+        gameState.pendingQuery = recoveryQuery;
+        gameState.logs.push(`[Bot recovery] ${callback} failed (${reason}); retrying as NO.`);
+        await ServerGameService.handleQueryChoice(gameState, playerUid, recoveryQuery.id, ['NO'], onUpdate);
+        await ServerGameService.finalizeBattleAfterPendingQuery(gameState, onUpdate);
+        return true;
+      } catch (fallbackErr: any) {
+        reason = `${reason}; NO fallback failed: ${fallbackErr?.message || fallbackErr}`;
+      }
+    }
+
+    if (gameState.pendingQuery && gameState.pendingQuery.id !== recoveryQuery.id) return false;
+    gameState.pendingQuery = undefined;
+    if (gameState.priorityPlayerId === playerUid) gameState.priorityPlayerId = undefined;
+
+    ServerGameService.recordAiDecision(gameState, playerUid, {
+      action: 'QUERY_RECOVERY',
+      subject: recoveryQuery.title || callback,
+      reason: `Bot query failed and was skipped to keep the game state moving: ${reason}`,
+      details: {
+        callback,
+        type: recoveryQuery.type,
+        phase: gameState.phase,
+        options: options.filter((option: any) => !option.disabled).length,
+      },
+    });
+    gameState.logs.push(`[Bot recovery] skipped ${callback}: ${reason}`);
+
+    if (gameState.isResolvingStack || gameState.phase === 'COUNTERING') {
+      if (gameState.counterStack.length > 0) {
+        await ServerGameService.resolveCounterStack(gameState, onUpdate);
+      } else {
+        await ServerGameService.finishCounteringStack(gameState, onUpdate);
+      }
+    } else if (!gameState.isCountering) {
+      await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
+    }
+
+    await ServerGameService.finalizeBattleAfterPendingQuery(gameState, onUpdate);
+
+    if (!gameState.pendingQuery && gameState.phase === 'DAMAGE_CALCULATION' && gameState.battleState) {
+      const attackerPlayerId = gameState.playerIds[gameState.currentTurnPlayer];
+      ServerGameService.clearBattleAndReturnMain(gameState, 'BOT_QUERY_RECOVERY', {
+        log: `[Bot recovery] battle was returned to MAIN after unresolved ${callback}.`
+      });
+      await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
+      if (!gameState.pendingQuery) {
+        await ServerGameService.enterForcedAttackBattleIfNeeded(
+          gameState,
+          attackerPlayerId,
+          onUpdate,
+          'FORCED_ATTACK_CONTINUE'
+        );
+      }
+    }
+
+    return true;
   },
 
   rememberBattleEndAfterPendingQuery(gameState: GameState, attackerPlayerId?: string) {
@@ -2797,8 +2866,9 @@ export const ServerGameService = {
     const elapsed = now - (gameState.phaseTimerStart || now);
     const opponentId = gameState.playerIds.find(id => id !== sourcePlayerId);
     const isUncounterable = ServerGameService.isStackItemUncounterable(gameState, sourcePlayerId, stackItem);
+    const isStartingNewCounterChain = gameState.phase !== 'COUNTERING';
 
-    if (gameState.phase !== 'COUNTERING') {
+    if (isStartingNewCounterChain) {
       // If we are leaving a shared phase, subtract from the acting side's turn budget.
       const sharedPhases: GamePhase[] = ['MAIN', 'BATTLE_DECLARATION', 'DEFENSE_DECLARATION', 'BATTLE_FREE'];
       if (sharedPhases.includes(gameState.phase)) {
@@ -2814,13 +2884,28 @@ export const ServerGameService = {
       gameState.phaseTimerStart = now; // Independent 15/30s starts now
     }
 
+    const chainId = isStartingNewCounterChain || !gameState.currentConfrontationChainId
+      ? `${gameState.gameId || 'game'}_${gameState.turnCount}_${now}_${Math.random().toString(36).slice(2, 8)}`
+      : gameState.currentConfrontationChainId;
+    if (!isStartingNewCounterChain && !gameState.currentConfrontationChainId) {
+      gameState.counterStack.forEach(item => {
+        if (!item.confrontationChainId) item.confrontationChainId = chainId;
+      });
+    }
+    gameState.currentConfrontationChainId = chainId;
+    stackItem.confrontationChainId = chainId;
+
     gameState.isCountering = 1;
     gameState.counterStack.forEach(item => item.isInterrupted = true);
     gameState.counterStack.push(stackItem);
 
-    // Combo Link Numbering (Link 1 is the trigger, Link 2 is the first response, etc.)
-    const linkNumber = gameState.counterStack.length;
-    ServerGameService.assignDeclaredTargetLink(gameState, stackItem.declaredTargets, linkNumber);
+    // Combo Link Numbering is local to the active confrontation chain and only counts real cards.
+    const linkNumber = gameState.counterStack.filter(item =>
+      item.confrontationChainId === chainId && item.card?.gamecardId
+    ).length;
+    if (linkNumber > 0) {
+      ServerGameService.assignDeclaredTargetLink(gameState, stackItem.declaredTargets, linkNumber);
+    }
     gameState.priorityPlayerId = isUncounterable ? sourcePlayerId : opponentId;
 
     if (stackItem.card && stackItem.type !== 'PHASE_END') {
@@ -3339,6 +3424,7 @@ export const ServerGameService = {
       gameState.isResolvingStack = false;
       delete (gameState as any).deferTriggeredEffectsUntilCounterStackEnds;
       gameState.priorityPlayerId = undefined;
+      gameState.currentConfrontationChainId = undefined;
       ServerGameService.clearAllDeclaredTargetMarkers(gameState);
 
       const nextPhase = phaseEndItem!.nextPhase;
@@ -3568,6 +3654,7 @@ export const ServerGameService = {
     gameState.isCountering = 0;
     gameState.priorityPlayerId = undefined;
     gameState.currentProcessingItem = null; // Ensure this is cleared
+    gameState.currentConfrontationChainId = undefined;
     gameState.phaseTimerStart = Date.now();
     delete (gameState as any).deferTriggeredEffectsUntilCounterStackEnds;
     ServerGameService.clearAllDeclaredTargetMarkers(gameState);
@@ -4071,6 +4158,7 @@ export const ServerGameService = {
             declaredTargets,
             declaredModeId: query.context?.modeId
           }, onUpdate);
+          await ServerGameService.finalizeBattleAfterPendingQuery(gameState, onUpdate);
           return gameState;
         }
 
@@ -4144,6 +4232,7 @@ export const ServerGameService = {
             declaredTargets,
             declaredModeId: modeId
           }, onUpdate);
+          await ServerGameService.finalizeBattleAfterPendingQuery(gameState, onUpdate);
           return gameState;
         }
       }
@@ -5570,7 +5659,10 @@ export const ServerGameService = {
             isAlliance: !!gameState.battleState.isAlliance
           }
         });
-        if (gameState.pendingQuery) return gameState;
+        if (gameState.pendingQuery) {
+          ServerGameService.rememberBattleEndAfterPendingQuery(gameState, attackerId);
+          return gameState;
+        }
       }
     } else {
       // Unit combat
@@ -9620,21 +9712,27 @@ export const ServerGameService = {
             options: (query.options || []).filter((option: any) => !option.disabled).length,
           },
         });
-        gameState.pendingQuery = undefined;
-        if (gameState.isResolvingStack || gameState.phase === 'COUNTERING') {
-          if (gameState.counterStack.length > 0) {
-            await ServerGameService.resolveCounterStack(gameState, onUpdate);
-          } else {
-            await ServerGameService.finishCounteringStack(gameState, onUpdate);
-          }
-        } else if (!gameState.isCountering) {
-          await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
-        }
-        gameState.logs.push(`[Bot错误] 自动处理效果失败：没有可选择的合法对象。`);
+        await ServerGameService.recoverBotPendingQueryFailure(
+          gameState,
+          playerUid,
+          query,
+          'no legal selections',
+          onUpdate
+        );
         return;
       }
 
-      await ServerGameService.handleQueryChoice(gameState, playerUid, query.id, selections, onUpdate);
+      try {
+        await ServerGameService.handleQueryChoice(gameState, playerUid, query.id, selections, onUpdate);
+      } catch (err: any) {
+        await ServerGameService.recoverBotPendingQueryFailure(
+          gameState,
+          playerUid,
+          query,
+          err?.message || String(err),
+          onUpdate
+        );
+      }
       return;
     }
 
