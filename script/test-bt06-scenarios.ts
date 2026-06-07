@@ -2830,6 +2830,55 @@ async function testSimpleAiResolvesAnnihilationAngelsDamageTrigger(): Promise<Sc
     : fail(name, `asked=${asked}, selected=${openedSelection}, marked=${markedForBattleEnd}, finished=${finished}, bottomed=${bottomed}, phase=${state.phase}, pending=${state.pendingQuery?.callbackKey || 'none'}`);
 }
 
+async function testBotResolvesDamageCalculationWhenDefending(): Promise<ScenarioResult> {
+  const name = 'Bot resolves damage calculation while defending';
+  const attacker = testCard({
+    id: 'PLAYER_ATTACKER',
+    fullName: 'Player Attacker',
+    gamecardId: 'PLAYER_ATTACKER',
+    cardlocation: 'UNIT',
+    power: 3000,
+    basePower: 3000,
+    damage: 1,
+    baseDamage: 1,
+  });
+  const state = game({
+    uid: 'BOT_PLAYER',
+    displayName: 'BOT_PLAYER',
+    isTurn: false,
+  }, {
+    uid: 'P1',
+    displayName: 'P1',
+    isTurn: true,
+    unitZone: [attacker, null, null, null, null, null],
+  }, {
+    phase: 'DAMAGE_CALCULATION',
+    currentTurnPlayer: 0,
+    playerIds: ['P1', 'BOT_PLAYER'],
+    battleState: {
+      attackers: [attacker.gamecardId],
+      isAlliance: false,
+      resolvedUnitIds: [],
+      battleId: 'bot_defending_damage_calculation',
+    },
+  });
+  state.players.BOT.uid = 'BOT_PLAYER';
+  state.players.BOT.displayName = 'BOT_PLAYER';
+  state.players.BOT.isTurn = false;
+  state.players.BOT_PLAYER = state.players.BOT;
+  delete state.players.BOT;
+  state.players.P1.isTurn = true;
+
+  await ServerGameService.botMoveForPlayer(state, 'BOT_PLAYER');
+
+  const finished = state.phase === 'MAIN' && !state.battleState && !state.pendingQuery;
+  const damageApplied = state.players.BOT_PLAYER.erosionFront.filter(Boolean).length === 1;
+
+  return finished && damageApplied
+    ? pass(name, `phase=${state.phase}, botErosion=${state.players.BOT_PLAYER.erosionFront.filter(Boolean).length}`)
+    : fail(name, `finished=${finished}, damageApplied=${damageApplied}, phase=${state.phase}, battle=${!!state.battleState}, pending=${state.pendingQuery?.callbackKey || 'none'}`);
+}
+
 async function testTyaHeroicAuraStopsOutsideZeroToThree(): Promise<ScenarioResult> {
   const name = 'BT03-W05 Tya heroic aura stops outside 0-3 erosion';
   const tyaUnit = cloneScriptCard(tya as Card, 'UNIT', { baseHeroic: false, isHeroic: false });
@@ -3409,6 +3458,7 @@ const scenarios: ScenarioRun[] = [
   testAttackAndDamageTriggersUseUnifiedFlow,
   testAnnihilationAngelsCombatDamageTriggerFinishesBattle,
   testSimpleAiResolvesAnnihilationAngelsDamageTrigger,
+  testBotResolvesDamageCalculationWhenDefending,
   testTyaHeroicAuraStopsOutsideZeroToThree,
   testMandatoryEndTurnOrderWithValkyrieAndGreatAlchemist,
   testTriggerOrderAcceptsDisplayedCardIds,

@@ -21,12 +21,15 @@ const silverCrossEquipEffect: CardEffect = {
     gameState.phase === 'MAIN' &&
     (!!instance.equipTargetId || playerState.unitZone.some(unit => unit && !hasSilverCrossBattlewear(playerState, unit, instance))),
   execute: async (instance, gameState, playerState) => {
-    const currentTargetId = instance.equipTargetId;
-    const options = currentTargetId
-      ? [{ card: instance, source: 'ITEM' as const }]
-      : playerState.unitZone
-          .filter((unit): unit is Card => !!unit && !hasSilverCrossBattlewear(playerState, unit, instance))
-          .map(unit => ({ card: unit, source: 'UNIT' as const }));
+    if (instance.equipTargetId) {
+      instance.equipTargetId = undefined;
+      EventEngine.recalculateContinuousEffects(gameState);
+      return;
+    }
+
+    const options = playerState.unitZone
+      .filter((unit): unit is Card => !!unit && !hasSilverCrossBattlewear(playerState, unit, instance))
+      .map(unit => ({ card: unit, source: 'UNIT' as const }));
 
     if (options.length === 0) return;
 
@@ -35,8 +38,8 @@ const silverCrossEquipEffect: CardEffect = {
       type: 'SELECT_CARD',
       playerUid: playerState.uid,
       options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, options),
-      title: currentTargetId ? '解除装备' : '选择装备目标',
-      description: currentTargetId ? '选择这张卡自身以解除装备。' : '选择1个未装备《银白十字战衣》的单位装备这张卡。',
+      title: '选择装备目标',
+      description: '选择1个未装备《银白十字战衣》的单位装备这张卡。',
       minSelections: 1,
       maxSelections: 1,
       callbackKey: 'EFFECT_RESOLVE',

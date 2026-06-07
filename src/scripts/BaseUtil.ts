@@ -1022,12 +1022,15 @@ export const universalEquipEffect: CardEffect = {
   triggerLocation: ['ITEM'],
   condition: gameState => gameState.phase === 'MAIN',
   execute: async (card, gameState, playerState) => {
-    const currentTargetId = card.equipTargetId;
-    const options = currentTargetId
-      ? [{ card, source: 'ITEM' as const }]
-      : playerState.unitZone
-          .filter((unit): unit is Card => !!unit)
-          .map(unit => ({ card: unit, source: 'UNIT' as const }));
+    if (card.equipTargetId) {
+      card.equipTargetId = undefined;
+      EventEngine.recalculateContinuousEffects(gameState);
+      return;
+    }
+
+    const options = playerState.unitZone
+      .filter((unit): unit is Card => !!unit)
+      .map(unit => ({ card: unit, source: 'UNIT' as const }));
 
     if (options.length === 0) return;
 
@@ -1036,8 +1039,8 @@ export const universalEquipEffect: CardEffect = {
       type: 'SELECT_CARD',
       playerUid: playerState.uid,
       options: AtomicEffectExecutor.enrichQueryOptions(gameState, playerState.uid, options),
-      title: currentTargetId ? '解除装备' : '选择装备目标',
-      description: currentTargetId ? '选择这张卡自身以解除装备。' : `选择1个单位装备 ${card.fullName}。`,
+      title: '选择装备目标',
+      description: `选择1个单位装备 ${card.fullName}。`,
       minSelections: 1,
       maxSelections: 1,
       callbackKey: 'EFFECT_RESOLVE',

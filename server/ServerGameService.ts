@@ -9938,6 +9938,17 @@ export const ServerGameService = {
       }
     }
 
+    // Damage Calculation Phase can require the bot backend to advance even when the bot is defending.
+    if (gameState.phase === 'DAMAGE_CALCULATION') {
+      if (gameState.battleState) {
+        await ServerGameService.resolveDamage(gameState);
+      } else {
+        gameState.phase = 'MAIN';
+        gameState.phaseTimerStart = Date.now();
+      }
+      return;
+    }
+
     if (!bot.isTurn) return;
 
     // Handle Erosion Phase
@@ -10891,16 +10902,6 @@ export const ServerGameService = {
       return;
     }
 
-    // Damage Calculation Phase
-    if (gameState.phase === 'DAMAGE_CALCULATION') {
-      if (gameState.battleState) {
-        await ServerGameService.resolveDamage(gameState);
-      } else {
-        gameState.phase = 'MAIN';
-        gameState.phaseTimerStart = Date.now();
-      }
-      return;
-    }
   },
 
   // Helper: Assign unique gamecardId to all cards in a deck
