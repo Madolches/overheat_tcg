@@ -124,11 +124,13 @@ const CardSlot: React.FC<{
   const stackOrders = useContext(StackOrderContext);
   const isAnimating = !!(card && animatingCardIds?.has(card.gamecardId));
   const stackOrder = card && isFaceUp ? stackOrders?.get(card.gamecardId) : undefined;
+  const visibleStackOrder = isAnimating ? undefined : stackOrder;
 
-  // Dynamic height scaling for stack areas (Deck, Grave, Exile)
+  // Dynamic height scaling for stack areas. Do not stretch visible cards in grave/exile.
   const isStackArea = isDeck || label === '墓地' || label === '放逐';
   const numericCount = typeof count === 'number' ? count : 0;
-  const heightScale = isStackArea ? 1 + Math.min(numericCount / 100, 0.2) : 1;
+  const shouldScaleStackHeight = isStackArea && (isDeck || !card);
+  const heightScale = shouldScaleStackHeight ? 1 + Math.min(numericCount / 100, 0.2) : 1;
   const isDeclaredEffectTarget =
     !!card?.declaredTargetMarkers?.length ||
     !!card?.influencingEffects?.some(effect => effect.description.includes('指定为效果对象'));
@@ -243,7 +245,7 @@ const CardSlot: React.FC<{
         )}
       </div>
 
-      <StackOrderBadge order={stackOrder} />
+      <StackOrderBadge order={visibleStackOrder} />
 
       {slotLabel && (
         <div className={cn(

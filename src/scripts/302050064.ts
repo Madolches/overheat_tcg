@@ -1,5 +1,6 @@
 import { Card, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
+import { EventEngine } from '../services/EventEngine';
 import { addContinuousDamage, addContinuousPower, addInfluence, createSelectCardQuery, ensureData, wasPlacedByPromotion } from './BaseUtil';
 
 const equippedTarget = (gameState: any, instance: Card) =>
@@ -20,13 +21,19 @@ const promotionEquipEffect: CardEffect = {
     gameState.phase === 'MAIN' &&
     (!!instance.equipTargetId || promotionEquipTargets(playerState, gameState).length > 0),
   execute: async (instance, gameState, playerState) => {
-    const targets = instance.equipTargetId ? [instance] : promotionEquipTargets(playerState, gameState);
+    if (instance.equipTargetId) {
+      instance.equipTargetId = undefined;
+      EventEngine.recalculateContinuousEffects(gameState);
+      return;
+    }
+
+    const targets = promotionEquipTargets(playerState, gameState);
     createSelectCardQuery(
       gameState,
       playerState.uid,
       targets,
-      instance.equipTargetId ? '解除装备' : '选择装备目标',
-      instance.equipTargetId ? '选择这张卡解除装备。' : '选择1个由于晋升进入战场的单位装备。',
+      '选择装备目标',
+      '选择1个由于晋升进入战场的单位装备。',
       1,
       1,
       { sourceCardId: instance.gamecardId, effectId: '302050064_equip_to_promotion_unit' },

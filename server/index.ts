@@ -548,7 +548,8 @@ async function handleBotMove(gameState: any, gameId: string) {
     const isBotPriority = gameState.priorityPlayerId === 'BOT_PLAYER';
     const isBotQuery = gameState.pendingQuery && gameState.pendingQuery.playerUid === 'BOT_PLAYER';
     const isBotDefending = gameState.phase === 'DEFENSE_DECLARATION' && !bot.isTurn;
-    const shouldBotMove = bot.isTurn || isBotAsked || isBotPriority || isBotQuery || isBotDefending;
+    const isBotDamageCalculation = shouldAutoResolveDamageForBotGame(gameState);
+    const shouldBotMove = bot.isTurn || isBotAsked || isBotPriority || isBotQuery || isBotDefending || isBotDamageCalculation;
 
     if (!shouldBotMove) return;
 
@@ -599,7 +600,8 @@ async function handleBotMove(gameState: any, gameId: string) {
                         const isBotQueryNext = nextState.pendingQuery && nextState.pendingQuery.playerUid === 'BOT_PLAYER';
 
                         const isBotDefendingNext = nextState.phase === 'DEFENSE_DECLARATION' && !botObj.isTurn;
-                        if (currentPlayerId === 'BOT_PLAYER' || isBotAskedNext || isBotPriorityNext || isBotQueryNext || isBotDefendingNext) {
+                        const isBotDamageCalculationNext = shouldAutoResolveDamageForBotGame(nextState);
+                        if (currentPlayerId === 'BOT_PLAYER' || isBotAskedNext || isBotPriorityNext || isBotQueryNext || isBotDefendingNext || isBotDamageCalculationNext) {
                             // Release before recursive call to allow the next move to be scheduled
                             botMovingGames.delete(gameId);
                             handleBotMove(nextState, gameId);
@@ -635,6 +637,16 @@ async function handleBotMove(gameState: any, gameId: string) {
     }, delay);
 }
 
+function shouldAutoResolveDamageForBotGame(gameState: any) {
+    return !!gameState.players?.['BOT_PLAYER'] &&
+        gameState.phase === 'DAMAGE_CALCULATION' &&
+        !!gameState.battleState &&
+        !gameState.pendingQuery &&
+        !gameState.isResolvingStack &&
+        !gameState.currentProcessingItem &&
+        getBotVisualAnimationDelayMs(gameState) <= 0;
+}
+
 function triggerBotIfNeeded(gameState: any, gameId: string) {
     const bot = gameState.players['BOT_PLAYER'];
     if (!bot) return;
@@ -649,8 +661,9 @@ function triggerBotIfNeeded(gameState: any, gameId: string) {
     const isBotPriority = gameState.priorityPlayerId === 'BOT_PLAYER';
     const isBotQuery = gameState.pendingQuery && gameState.pendingQuery.playerUid === 'BOT_PLAYER';
     const isBotDefending = gameState.phase === 'DEFENSE_DECLARATION' && !bot.isTurn;
+    const isBotDamageCalculation = shouldAutoResolveDamageForBotGame(gameState);
 
-    if (currentPlayerId === 'BOT_PLAYER' || isBotAsked || isBotPriority || isBotQuery || isBotDefending) {
+    if (currentPlayerId === 'BOT_PLAYER' || isBotAsked || isBotPriority || isBotQuery || isBotDefending || isBotDamageCalculation) {
         // console.log(`[Bot] Triggering bot move for game ${gameId}. Reason: ${currentPlayerId === 'BOT_PLAYER' ? 'Turn' : isBotAsked ? 'Confrontation' : isBotPriority ? 'Priority' : 'Query'}`);
         handleBotMove(gameState, gameId);
     }
@@ -1875,7 +1888,8 @@ setInterval(async () => {
                 const currentPlayerId = gameState.playerIds[gameState.currentTurnPlayer];
                 const isBotQuery = gameState.pendingQuery && gameState.pendingQuery.playerUid === 'BOT_PLAYER';
                 const isBotDefending = gameState.phase === 'DEFENSE_DECLARATION' && !gameState.players['BOT_PLAYER']?.isTurn;
-                if (isBotQuery || (!gameState.pendingQuery && (currentPlayerId === 'BOT_PLAYER' || gameState.priorityPlayerId === 'BOT_PLAYER' || isBotDefending))) {
+                const isBotDamageCalculation = shouldAutoResolveDamageForBotGame(gameState);
+                if (isBotQuery || (!gameState.pendingQuery && (currentPlayerId === 'BOT_PLAYER' || gameState.priorityPlayerId === 'BOT_PLAYER' || isBotDefending || isBotDamageCalculation))) {
                     const syncCallback = async (state: any) => {
                         await syncGameStateForCallback(gameId, state, 'timer:callback');
                     };

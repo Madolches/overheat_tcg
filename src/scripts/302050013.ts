@@ -24,15 +24,16 @@ const universalEquipEffect: CardEffect = {
   triggerLocation: ['ITEM'],
   condition: (gameState) => gameState.phase === 'MAIN',
   execute: async (card, gameState, playerState) => {
-    const currentHostId = card.equipTargetId;
+    if (card.equipTargetId) {
+      card.equipTargetId = undefined;
+      EventEngine.recalculateContinuousEffects(gameState);
+      return;
+    }
+
     const options: any[] = [];
 
-    if (currentHostId) {
-      options.push({ card: card, source: 'ITEM' as any });
-    } else {
-      const units = playerState.unitZone.filter(u => u !== null) as Card[];
-      options.push(...units.map(u => ({ card: u, source: 'UNIT' as any })));
-    }
+    const units = playerState.unitZone.filter(u => u !== null) as Card[];
+    options.push(...units.map(u => ({ card: u, source: 'UNIT' as any })));
 
     if (options.length === 0) {
       gameState.logs.push(`[系统] 没有可供操作的目标单位`);
@@ -44,8 +45,8 @@ const universalEquipEffect: CardEffect = {
       type: 'SELECT_CARD',
       playerUid: playerState.uid,
       options: options,
-      title: currentHostId ? '解除装备' : '选择装备目标',
-      description: currentHostId ? '选择卡牌本身以确认解除装备状态。' : `选择一个单位进行装备 ${card.fullName}`,
+      title: '选择装备目标',
+      description: `选择一个单位进行装备 ${card.fullName}`,
       minSelections: 1,
       maxSelections: 1,
       callbackKey: 'EFFECT_RESOLVE',
