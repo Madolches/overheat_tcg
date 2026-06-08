@@ -66,7 +66,13 @@ import bt04R09 from '../src/scripts/202060130';
 import bt05R07 from '../src/scripts/102060244';
 import bt07R04 from '../src/scripts/102060369';
 import bt07R11 from '../src/scripts/102060373';
+import prLightForging from '../src/scripts/202000153';
+import prSeller from '../src/scripts/104020504';
+import prSaru, { areCardsTemporarilySameName } from '../src/scripts/103090505';
+import prRainbow from '../src/scripts/105000503';
+import prQuickMystery from '../src/scripts/201140152';
 import { canPutUnitOntoBattlefield, destroyByEffect, ensureData, moveCard, moveCardAsCost, wealthCount } from '../src/scripts/BaseUtil';
+import { cardHasEffectiveColor, getColorRequirementResult } from '../src/lib/effectiveColors';
 
 type ScenarioResult = {
   name: string;
@@ -260,6 +266,172 @@ async function confirmAllTriggers(state: any, playerUid: string) {
       await answerPendingQuery(state, playerUid, ['YES']);
     }
   }
+}
+
+async function testPrLightForgingPlacesRedUnits(): Promise<ScenarioResult> {
+  const name = 'PR Light Forging places up to two eligible red units';
+  const story = cloneScriptCard(prLightForging as Card, 'HAND');
+  const redCost = testCard({ id: 'PR_LIGHT_RED_COST', fullName: 'Red Cost', color: 'RED', cardlocation: 'HAND' });
+  const eligibleA = testCard({ id: 'PR_LIGHT_A', fullName: 'Light A', color: 'RED', acValue: 2, colorReq: {}, cardlocation: 'DECK' });
+  const eligibleB = testCard({ id: 'PR_LIGHT_B', fullName: 'Light B', color: 'RED', acValue: 1, colorReq: {}, cardlocation: 'DECK' });
+  const highAc = testCard({ id: 'PR_LIGHT_HIGH', fullName: 'High AC', color: 'RED', acValue: 3, colorReq: {}, cardlocation: 'DECK' });
+  const reqUnit = testCard({ id: 'PR_LIGHT_REQ', fullName: 'Req Unit', color: 'RED', acValue: 2, colorReq: { RED: 1 }, cardlocation: 'DECK' });
+  const godUnit = testCard({ id: 'PR_LIGHT_GOD', fullName: 'God Unit', color: 'RED', acValue: 2, godMark: true, cardlocation: 'DECK' });
+  const wrongColor = testCard({ id: 'PR_LIGHT_BLUE', fullName: 'Blue Unit', color: 'BLUE', acValue: 2, colorReq: {}, cardlocation: 'DECK' });
+  const state = game({
+    hand: [story, redCost],
+    deck: [eligibleA, highAc, reqUnit, eligibleB, godUnit, wrongColor],
+    unitZone: [null, null, null, null, null, null],
+  });
+
+  await ServerGameService.playCard(state, 'BOT', story.gamecardId, {});
+  await answerPendingQuery(state, 'BOT', [redCost.gamecardId]);
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
+  const optionIds = new Set((state.pendingQuery?.options || []).map((option: any) => option.id));
+  const filters =
+    optionIds.has(eligibleA.gamecardId) &&
+    optionIds.has(eligibleB.gamecardId) &&
+    !optionIds.has(highAc.gamecardId) &&
+    !optionIds.has(reqUnit.gamecardId) &&
+    !optionIds.has(godUnit.gamecardId) &&
+    !optionIds.has(wrongColor.gamecardId);
+  await answerPendingQuery(state, 'BOT', [eligibleA.gamecardId, eligibleB.gamecardId]);
+  const placed = state.players.BOT.unitZone.some((card: Card | null) => card?.gamecardId === eligibleA.gamecardId) &&
+    state.players.BOT.unitZone.some((card: Card | null) => card?.gamecardId === eligibleB.gamecardId);
+  return filters && placed
+    ? pass(name, `filters=${filters}, placed=${placed}`)
+    : fail(name, `filters=${filters}, placed=${placed}, options=${Array.from(optionIds).join(',')}`);
+}
+
+async function testPrSellerWealthAndBounce(): Promise<ScenarioResult> {
+  const name = 'PR Seller gains wealth and bounces unit at wealth four';
+  const seller = cloneScriptCard(prSeller as Card, 'UNIT', { data: { grantedWealthValue: 3 } } as any);
+  const discard = testCard({ id: 'PR_SELLER_DISCARD', fullName: 'Seller Discard', cardlocation: 'HAND' });
+  const draw = testCard({ id: 'PR_SELLER_DRAW', fullName: 'Seller Draw', cardlocation: 'DECK' });
+  const target = testCard({ id: 'PR_SELLER_TARGET', fullName: 'Seller Target', cardlocation: 'UNIT' });
+  const state = game({
+    hand: [discard],
+    deck: [draw],
+    unitZone: [seller, null, null, null, null, null],
+  }, {
+    unitZone: [target, null, null, null, null, null],
+  });
+
+  await ServerGameService.activateEffect(state, 'BOT', seller.gamecardId, 0);
+  await answerPendingQuery(state, 'BOT', [discard.gamecardId]);
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
+  const wealth = wealthCount(state.players.BOT, state);
+  const drew = state.players.BOT.hand.some((card: Card) => card.gamecardId === draw.gamecardId);
+
+  await ServerGameService.activateEffect(state, 'BOT', seller.gamecardId, 1);
+  await answerPendingQuery(state, 'BOT', [target.gamecardId]);
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
+  const sellerInGrave = state.players.BOT.grave.some((card: Card) => card.gamecardId === seller.gamecardId);
+  const targetReturned = state.players.P1.hand.some((card: Card) => card.gamecardId === target.gamecardId);
+
+  return wealth >= 4 && drew && sellerInGrave && targetReturned
+    ? pass(name, `wealth=${wealth}, drew=${drew}, targetReturned=${targetReturned}`)
+    : fail(name, `wealth=${wealth}, drew=${drew}, sellerInGrave=${sellerInGrave}, targetReturned=${targetReturned}`);
+}
+
+async function testPrSaruResonanceAndSameName(): Promise<ScenarioResult> {
+  const name = 'PR Saru resonance, same-name tune, and silver instrument revive';
+  const saru = cloneScriptCard(prSaru as Card, 'UNIT');
+  const fieldGreen = testCard({ id: 'PR_SARU_FIELD', fullName: 'Field Green', color: 'GREEN', cardlocation: 'UNIT' });
+  const graveGreen = testCard({ id: 'PR_SARU_GRAVE', fullName: 'Grave Green', color: 'GREEN', cardlocation: 'GRAVE' });
+  const state = game({
+    unitZone: [saru, fieldGreen, null, null, null, null],
+    grave: [graveGreen],
+  });
+
+  await ServerGameService.activateEffect(state, 'BOT', saru.gamecardId, 1);
+  await answerPendingQuery(state, 'BOT', [fieldGreen.gamecardId]);
+  await answerPendingQuery(state, 'BOT', [graveGreen.gamecardId]);
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
+  const sameName = areCardsTemporarilySameName(state, fieldGreen, graveGreen);
+
+  const exiledSaru = cloneScriptCard(prSaru as Card, 'GRAVE', { gamecardId: 'PR_SARU_EXILED' });
+  const silver = testCard({ id: 'PR_SILVER_INSTRUMENT', fullName: '银乐器 测试', color: 'GREEN', type: 'UNIT', godMark: false, cardlocation: 'GRAVE' });
+  const discard = testCard({ id: 'PR_SARU_DISCARD', fullName: 'Saru Discard', cardlocation: 'HAND' });
+  const triggerState = game({
+    hand: [discard],
+    grave: [exiledSaru, silver],
+    erosionFront: deckCards(5, 'PR_SARU_FRONT').map(card => ({ ...card, cardlocation: 'EROSION_FRONT' as TriggerLocation })),
+  });
+  ensureData(exiledSaru).resonanceSourceCardId = 'ANY_RESONANCE';
+  moveCard(triggerState, 'BOT', exiledSaru, 'EXILE', saru);
+  await confirmTrigger(triggerState, 'BOT');
+  if (triggerState.pendingQuery?.callbackKey === 'ACTIVATE_COST_RESOLVE') {
+    await answerPendingQuery(triggerState, 'BOT', [discard.gamecardId]);
+  }
+  if (triggerState.pendingQuery?.callbackKey === 'ACTIVATE_COST_RESOLVE') {
+    return fail(name, `sameName=${sameName}, pending cost after discard`);
+  }
+  await answerPendingQuery(triggerState, 'BOT', [silver.gamecardId]);
+  const revived = triggerState.players.BOT.unitZone.some((card: Card | null) => card?.gamecardId === silver.gamecardId);
+
+  return sameName && revived
+    ? pass(name, `sameName=${sameName}, revived=${revived}`)
+    : fail(name, `sameName=${sameName}, revived=${revived}, pending=${triggerState.pendingQuery?.callbackKey || 'none'}`);
+}
+
+async function testPrRainbowFeijingAllColors(): Promise<ScenarioResult> {
+  const name = 'PR Rainbow Harmonizer makes Feijing units all colors';
+  const rainbow = cloneScriptCard(prRainbow as Card, 'UNIT');
+  const fieldFeijing = testCard({ id: 'PR_FIELD_FEIJING', fullName: 'Field Feijing', color: 'YELLOW', feijingMark: true, cardlocation: 'UNIT' });
+  const handFeijing = testCard({ id: 'PR_HAND_FEIJING', fullName: 'Hand Feijing', color: 'YELLOW', feijingMark: true, cardlocation: 'HAND' });
+  const state = game({
+    hand: [handFeijing],
+    unitZone: [rainbow, fieldFeijing, null, null, null, null],
+  });
+  const fieldProvidesBlue = getColorRequirementResult(state.players.BOT, { BLUE: 1 }, state).valid;
+  const fieldProvidesYellowAndBlue = getColorRequirementResult(state.players.BOT, { YELLOW: 1, BLUE: 1 }, state).valid;
+  const handPaysRed = cardHasEffectiveColor(handFeijing, 'RED', { player: state.players.BOT, gameState: state });
+  state.players.BOT.unitZone[0] = null;
+  const afterLeave = cardHasEffectiveColor(handFeijing, 'RED', { player: state.players.BOT, gameState: state });
+  return fieldProvidesBlue && fieldProvidesYellowAndBlue && handPaysRed && !afterLeave
+    ? pass(name, `field=${fieldProvidesBlue}/${fieldProvidesYellowAndBlue}, hand=${handPaysRed}, afterLeave=${afterLeave}`)
+    : fail(name, `field=${fieldProvidesBlue}/${fieldProvidesYellowAndBlue}, hand=${handPaysRed}, afterLeave=${afterLeave}`);
+}
+
+async function testPrQuickMysteryModes(): Promise<ScenarioResult> {
+  const name = 'PR Quick Mystery protects actions and buries face-up erosion';
+  const quick = cloneScriptCard(prQuickMystery as Card, 'HAND');
+  const state = game({
+    hand: [quick],
+  }, {
+    hand: [cloneScriptCard(bt08W09 as Card, 'HAND')],
+  });
+  await ServerGameService.playCard(state, 'BOT', quick.gamecardId, {}, [] as any, { declaredModeId: 'PROTECT' });
+  const selfPriority = state.priorityPlayerId === 'BOT';
+  await ServerGameService.passConfrontation(state, state.priorityPlayerId);
+  const protectedTurn = (state.players.BOT as any).uncounterableActionsTurn === state.turnCount &&
+    (state.players.BOT as any).cardEffectsCannotBeNegatedTurn === state.turnCount;
+  const protectedItem = { ownerUid: 'BOT', type: 'PLAY', card: testCard({ id: 'PR_PROTECTED_PLAY', cardlocation: 'PLAY' }), isNegated: true, timestamp: Date.now() } as any;
+  const protectedStillResolves = ServerGameService.isStackItemProtectedFromCounterOrNegate(state, protectedItem);
+
+  const quickBury = cloneScriptCard(prQuickMystery as Card, 'HAND', { gamecardId: 'PR_QUICK_BURY' });
+  const goddessCost = testCard({ id: 'PR_GODDESS_COST', fullName: 'Goddess Cost', faction: '女神教会', cardlocation: 'HAND' });
+  const botFace = testCard({ id: 'PR_BOT_FACE', fullName: 'Bot Face', cardlocation: 'EROSION_FRONT', displayState: 'FRONT_UPRIGHT' });
+  const botBack = testCard({ id: 'PR_BOT_BACK', fullName: 'Bot Back', cardlocation: 'EROSION_BACK', displayState: 'BACK_UPRIGHT' });
+  const oppFace = testCard({ id: 'PR_OPP_FACE', fullName: 'Opp Face', cardlocation: 'EROSION_FRONT', displayState: 'FRONT_UPRIGHT' });
+  const buryState = game({
+    hand: [quickBury, goddessCost],
+    erosionFront: [botFace],
+    erosionBack: [botBack],
+  }, {
+    erosionFront: [oppFace],
+  });
+  await ServerGameService.playCard(buryState, 'BOT', quickBury.gamecardId, {}, [] as any, { declaredModeId: 'BURY_EROSION' });
+  await ServerGameService.passConfrontation(buryState, buryState.priorityPlayerId);
+  await answerPendingQuery(buryState, 'BOT', [goddessCost.gamecardId]);
+  const faceBuried = buryState.players.BOT.grave.some((card: Card) => card.gamecardId === botFace.gamecardId) &&
+    buryState.players.P1.grave.some((card: Card) => card.gamecardId === oppFace.gamecardId);
+  const backStayed = buryState.players.BOT.erosionBack.some((card: Card | null) => card?.gamecardId === botBack.gamecardId);
+
+  return selfPriority && protectedTurn && protectedStillResolves && faceBuried && backStayed
+    ? pass(name, `priority=${selfPriority}, protect=${protectedTurn}, bury=${faceBuried}/${backStayed}`)
+    : fail(name, `priority=${selfPriority}, protect=${protectedTurn}, protectedItem=${protectedStillResolves}, bury=${faceBuried}/${backStayed}`);
 }
 
 async function testPrayerDestroysItemAfterShingiCost(): Promise<ScenarioResult> {
@@ -2362,6 +2534,11 @@ async function testYellowPuppetDesignerBlueprintAndDominic(): Promise<ScenarioRe
 }
 
 const scenarios: { name: string; run: ScenarioRun }[] = [
+  { name: 'PR Light Forging places up to two eligible red units', run: testPrLightForgingPlacesRedUnits },
+  { name: 'PR Seller gains wealth and bounces unit at wealth four', run: testPrSellerWealthAndBounce },
+  { name: 'PR Saru resonance, same-name tune, and silver instrument revive', run: testPrSaruResonanceAndSameName },
+  { name: 'PR Rainbow Harmonizer makes Feijing units all colors', run: testPrRainbowFeijingAllColors },
+  { name: 'PR Quick Mystery protects actions and buries face-up erosion', run: testPrQuickMysteryModes },
   { name: 'BT08-W01 destroys non-god item after Shingi story cost exile', run: testPrayerDestroysItemAfterShingiCost },
   { name: 'BT08-W02 gains stats and heroic after Shingi effect entry', run: testEliteWarriorGetsShingiStats },
   { name: 'BT08-W02 destroys opponent field card when destroyed', run: testEliteWarriorDestroysOpponentCardWhenDestroyed },

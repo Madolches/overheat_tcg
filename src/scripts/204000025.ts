@@ -2,6 +2,13 @@ import { Card, GameState, PlayerState, CardEffect, TriggerLocation } from '../ty
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
 import { standardizeChoiceOptions } from './BaseUtil';
 
+const canNegateStackItem = (gameState: GameState, playerUid: string, item: any) =>
+  (item.type === 'PLAY' || item.type === 'EFFECT') &&
+  !item.isNegated &&
+  item.ownerUid !== playerUid &&
+  (gameState.players[item.ownerUid] as any)?.uncounterableActionsTurn !== gameState.turnCount &&
+  (gameState.players[item.ownerUid] as any)?.cardEffectsCannotBeNegatedTurn !== gameState.turnCount;
+
 const effect_204000025_activation: CardEffect = {
   id: 'kaguya_flowering_silence',
   type: 'ACTIVATE',
@@ -19,9 +26,7 @@ const effect_204000025_activation: CardEffect = {
     const isCounterMode = playPhase === 'COUNTERING' || (!playPhase && gameState.phase === 'COUNTERING');
     if (isCounterMode) {
       return gameState.counterStack.some(item =>
-        (item.type === 'PLAY' || item.type === 'EFFECT') &&
-        !item.isNegated &&
-        item.ownerUid !== playerState.uid
+        canNegateStackItem(gameState, playerState.uid, item)
       );
     }
 
@@ -62,9 +67,7 @@ const effect_204000025_activation: CardEffect = {
         const playPhase = (instance as any).__playSnapshot?.phase;
         const isCounterMode = playPhase === 'COUNTERING' || (!playPhase && gameState.phase === 'COUNTERING');
         return isCounterMode && gameState.counterStack.some(item =>
-          (item.type === 'PLAY' || item.type === 'EFFECT') &&
-          !item.isNegated &&
-          item.ownerUid !== playerState.uid
+          canNegateStackItem(gameState, playerState.uid, item)
         );
       },
       getCandidates: () => []
@@ -118,7 +121,7 @@ const effect_204000025_activation: CardEffect = {
     const isCounterMode = playPhase === 'COUNTERING' || (!playPhase && gameState.phase === 'COUNTERING');
     if (isCounterMode) {
       const stackCandidates = gameState.counterStack
-        .filter(item => (item.type === 'PLAY' || item.type === 'EFFECT') && !item.isNegated && item.ownerUid !== playerState.uid);
+        .filter(item => canNegateStackItem(gameState, playerState.uid, item));
 
       const fieldCandidates: Card[] = [];
       Object.values(gameState.players).forEach(p => {
@@ -170,7 +173,7 @@ const effect_204000025_activation: CardEffect = {
     if (selectedMode === 'COUNTER_NEGATE' || context.step === 'COUNTER_NEGATE') {
       const item = [...gameState.counterStack]
         .reverse()
-        .find(i => (i.type === 'PLAY' || i.type === 'EFFECT') && !i.isNegated && i.ownerUid !== playerState.uid);
+        .find(i => canNegateStackItem(gameState, playerState.uid, i));
       if (item) {
         item.isNegated = true;
         gameState.logs.push(`[${instance.fullName}] 成功拦截并使 [${item.card?.fullName || '效果'}] 无效。`);
@@ -182,7 +185,8 @@ const effect_204000025_activation: CardEffect = {
       const selectedId = selections[0];
 
       const stackItemIndex = gameState.counterStack.findIndex(i =>
-        i.card?.gamecardId === selectedId || `stack_${gameState.counterStack.indexOf(i)}` === selectedId
+        canNegateStackItem(gameState, playerState.uid, i) &&
+        (i.card?.gamecardId === selectedId || `stack_${gameState.counterStack.indexOf(i)}` === selectedId)
       );
 
       if (stackItemIndex !== -1) {

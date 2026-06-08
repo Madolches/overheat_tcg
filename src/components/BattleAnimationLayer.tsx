@@ -44,7 +44,7 @@ interface BattleAnimationLayerProps {
 
 const DISPLAY_MS: Record<BattleAnimationType, number> = {
   'card-played': 1100,
-  'effect-activated': 1800,
+  'effect-activated': 2800,
   damage: 950,
   attack: 1000,
   goddess: 1800,
@@ -387,6 +387,8 @@ const EffectActivatedAnimation: React.FC<{ event: BattleAnimationEvent; layerRef
     ? 'border-cyan-200/60 shadow-[0_0_24px_rgba(34,211,238,0.45)]'
     : 'border-amber-100/60 shadow-[0_0_24px_rgba(242,125,38,0.45)]';
   const cardWidth = Math.max(48, Math.min(82, (point.width || 78) * 0.76));
+  const durationSeconds = Math.max(0.9, (event.durationMs || DISPLAY_MS['effect-activated']) / 1000);
+  const panelExitStart = Math.max(0.72, 1 - 0.2 / durationSeconds);
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-50">
@@ -430,7 +432,7 @@ const EffectActivatedAnimation: React.FC<{ event: BattleAnimationEvent; layerRef
       <motion.div
         initial={{ opacity: 0, y: 12, scale: 0.96 }}
         animate={{ opacity: [0, 1, 1, 0], y: [12, 0, 0, -6], scale: [0.96, 1, 1, 0.98] }}
-        transition={{ duration: 0.9, times: [0, 0.16, 0.78, 1], ease: 'easeOut' }}
+        transition={{ duration: durationSeconds, times: [0, 0.16, panelExitStart, 1], ease: 'easeOut' }}
         className={cn('absolute left-1/2 top-[16%] flex w-[min(86vw,30rem)] -translate-x-1/2 items-center gap-3 rounded-xl border px-3 py-2.5 backdrop-blur-md md:top-[18%] md:px-4', panel)}
       >
         <div className={cn('relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-black/45 md:h-12 md:w-12', ring)}>

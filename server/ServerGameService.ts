@@ -5,6 +5,7 @@ import { clearBattlefieldState, shouldClearBattlefieldStateOnMove } from '../src
 import { getCardAdjustmentGroupId, getCardAdjustmentVersionKey } from '../src/lib/cardAdjustments';
 import { getEntryRestrictionReason, satisfiesHighAlchemyEntryRestriction } from '../src/lib/highAlchemy';
 import { getCardIdentity } from '../src/lib/utils';
+import { cardHasEffectiveColor, getColorRequirementResult as getEffectiveColorRequirementResult } from '../src/lib/effectiveColors';
 import { addBattleLog, addCardAddedToHandBattleLog, cardToBattleLogRef, describeBattleLogTarget } from '../src/lib/battleLog';
 import { SERVER_CARD_LIBRARY } from './card_loader';
 import { GameService } from '../src/services/gameService';
@@ -927,36 +928,7 @@ export const ServerGameService = {
   },
 
   getColorRequirementResult(player: PlayerState, req: Record<string, number> = {}) {
-    const availableColors: Record<string, number> = { RED: 0, WHITE: 0, YELLOW: 0, BLUE: 0, GREEN: 0, NONE: 0 };
-    let omniColorCount = 0;
-
-    player.unitZone.forEach(c => {
-      if (!c) return;
-      const isOmni = String(c.id) === '105000481' || !!c.effects?.some(e => e.id === '105000481_omni');
-      if (isOmni) {
-        omniColorCount++;
-      } else if (c.color !== 'NONE') {
-        availableColors[c.color] = (availableColors[c.color] || 0) + 1;
-      }
-      const extraColors = [
-        ...((c as any).temporaryExtraColors || []),
-        ...((c as any).persistentExtraColors || [])
-      ];
-      if (Array.isArray(extraColors)) {
-        extraColors.forEach(color => {
-          if (typeof color === 'string' && color !== c.color && color in availableColors) {
-            availableColors[color] = (availableColors[color] || 0) + 1;
-          }
-        });
-      }
-    });
-
-    let totalDeficit = 0;
-    for (const [color, reqCount] of Object.entries(req)) {
-      totalDeficit += Math.max(0, (reqCount as number) - (availableColors[color] || 0));
-    }
-
-    return { valid: totalDeficit <= omniColorCount, totalDeficit, omniColorCount };
+    return getEffectiveColorRequirementResult(player, req);
   },
 
   hasGlobalDisableAllActivated(gameState: GameState, affectedPlayerUid?: string) {
@@ -2371,14 +2343,9 @@ export const ServerGameService = {
       if ((card as any).data?.spiritCostTarget103080185 || ServerGameService.hasSpiritDiscountTargetOnField(gameState, card)) {
         colorReqOptions.unshift({ GREEN: 1 });
       }
-      const colorRequirementResults = colorReqOptions.map(req => {
-        let totalDeficit = 0;
-        for (const [color, reqCount] of Object.entries(req)) {
-          const deficit = Math.max(0, (reqCount as number) - (availableColors[color] || 0));
-          totalDeficit += deficit;
-        }
-        return { valid: totalDeficit <= omniColorCount, totalDeficit };
-      });
+      const colorRequirementResults = colorReqOptions.map(req =>
+        ServerGameService.getColorRequirementResult(player, req)
+      );
 
       if (!colorRequirementResults.some(result => result.valid)) {
         const bestDeficit = Math.min(...colorRequirementResults.map(result => result.totalDeficit));
@@ -2405,7 +2372,7 @@ export const ServerGameService = {
       if (onlyFeijingPayment && !player.hand.some(c =>
         c.gamecardId !== card.gamecardId &&
         c.feijingMark &&
-        c.color === card.color
+        cardHasEffectiveColor(c, card.color, { player, gameState })
       )) {
         return { canPlay: false, reason: '这张卡只能通过菲晶能力支付使用费用' };
       }
@@ -2422,7 +2389,7 @@ export const ServerGameService = {
       const hasFeijing = player.hand.some(c =>
         c.gamecardId !== card.gamecardId &&
         c.feijingMark &&
-        c.color === card.color
+        cardHasEffectiveColor(c, card.color, { player, gameState })
       );
       if (remainingCost > 0 && hasFeijing) {
         remainingCost = Math.max(0, remainingCost - 3);
@@ -2698,7 +2665,7 @@ export const ServerGameService = {
           ) {
             remainingCost = 0;
             use204000145Replacement = true;
-          } else if (cardColor && feijingCard.color !== cardColor) {
+          } else if (cardColor && !cardHasEffectiveColor(feijingCard, cardColor, { player, gameState })) {
             if (reservedDeckCard) player.deck.push(reservedDeckCard);
             return { success: false, reason: '菲晶卡颜色与打出的卡牌颜色不匹配' };
           } else if (!feijingCard.feijingMark) {
@@ -2952,6 +2919,9 @@ export const ServerGameService = {
   },
 
   isStackItemUncounterable(gameState: GameState, sourcePlayerId: string, stackItem: StackItem) {
+    if (ServerGameService.isStackItemProtectedFromCounterOrNegate(gameState, stackItem)) {
+      return true;
+    }
     if (
       stackItem.type === 'PLAY' &&
       ServerGameService.isShingiNamedCard(stackItem.card) &&
@@ -2961,6 +2931,29 @@ export const ServerGameService = {
       return true;
     }
     return false;
+  },
+
+  isStackItemProtectedFromCounterOrNegate(gameState: GameState, stackItem?: StackItem) {
+    if (!stackItem) return false;
+    const player = gameState.players[stackItem.ownerUid] as any;
+    if (!player) return false;
+    if (
+      stackItem.card?.id === '201140152' &&
+      ((stackItem as any).declaredModeId === 'PROTECT' || (stackItem.declaredTargets as any)?.declaredModeId === 'PROTECT')
+    ) {
+      return true;
+    }
+    return (
+      (stackItem.type === 'PLAY' || stackItem.type === 'EFFECT') &&
+      (
+        player.uncounterableActionsTurn === gameState.turnCount ||
+        player.cardEffectsCannotBeNegatedTurn === gameState.turnCount
+      )
+    );
+  },
+
+  canCounterOrNegateStackItem(gameState: GameState, stackItem?: StackItem) {
+    return !!stackItem && !stackItem.isNegated && !ServerGameService.isStackItemProtectedFromCounterOrNegate(gameState, stackItem);
   },
 
   async playCard(gameState: GameState, playerId: string, cardId: string, paymentSelection: { feijingCardId?: string, exhaustUnitIds?: string[], erosionFrontIds?: string[] }, declaredTargets?: DeclaredEffectTarget[], options?: { resumeFromQuery?: boolean; paymentSelectionResolved?: boolean; declaredModeId?: string; effectCostResolved?: boolean }) {
@@ -3470,7 +3463,7 @@ export const ServerGameService = {
       const card = stackItem.card;
       const owner = gameState.players[stackItem.ownerUid];
 
-      if (stackItem.isNegated) {
+      if (stackItem.isNegated && !ServerGameService.isStackItemProtectedFromCounterOrNegate(gameState, stackItem)) {
         ServerGameService.clearDeclaredTargetMarkers(gameState, stackItem.declaredTargets);
         // We still need to cleanup the card if it was played to the field/play zone
         if (stackItem.type === 'PLAY' && card) {
@@ -6956,6 +6949,9 @@ export const ServerGameService = {
         delete (p as any).preventOpponentEffectDamageSourceCardId;
         delete (p as any).preventedOpponentEffectDamageThisTurn;
         delete (p as any).drawnByEffectTurn;
+        delete (p as any).uncounterableActionsTurn;
+        delete (p as any).cardEffectsCannotBeNegatedTurn;
+        delete (p as any).quickMysterySourceName;
 
         const allCards = [
           ...p.deck, ...p.hand, ...p.grave, ...p.exile,
@@ -7642,6 +7638,9 @@ export const ServerGameService = {
       }
 
       p.negatedNames = [];
+      delete (p as any).uncounterableActionsTurn;
+      delete (p as any).cardEffectsCannotBeNegatedTurn;
+      delete (p as any).quickMysterySourceName;
 
       // Reset target protection and effect negation
       [...p.deck, ...p.hand, ...p.grave, ...p.exile, ...p.unitZone, ...p.itemZone, ...p.erosionFront, ...p.erosionBack, ...p.playZone].forEach(c => {
@@ -8484,7 +8483,7 @@ export const ServerGameService = {
     const hasFeijing = player.hand.some(card =>
       card.gamecardId !== sourceCardId &&
       card.feijingMark &&
-      (!normalizedColor || card.color === normalizedColor)
+      cardHasEffectiveColor(card, normalizedColor, { player, gameState })
     );
     if (hasFeijing) remainingCost = Math.max(0, remainingCost - 3);
 
@@ -9358,7 +9357,7 @@ export const ServerGameService = {
           ServerGameService.canUse204000145AsPaymentSubstitute(card, cardColor, paymentCost, playingCardId) ||
           ServerGameService.canUse205000136AsPaymentSubstitute(card, cardColor, paymentCost, playingCardId) ||
           ServerGameService.canUseStoryPaymentSubstitute(card, playingCard, paymentCost, playingCardId) ||
-          (card.feijingMark && (!cardColor || card.color === cardColor))
+          (card.feijingMark && cardHasEffectiveColor(card, cardColor, { player, gameState }))
         );
       })
       .sort((a, b) => difficulty === 'hard'

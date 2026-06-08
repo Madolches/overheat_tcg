@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const BT08_PR_IDS = ['103090505', '104020504', '105000503', '201140152', '202000153'];
-const IMPLEMENTED_PR_IDS = ['202000113', '205000117', '204000115', '203000116'];
-const EXPECTED_EMPTY_PR_IDS = [...BT08_PR_IDS, '104000263'];
+const IMPLEMENTED_PR_IDS = ['202000113', '205000117', '204000115', '203000116', ...BT08_PR_IDS];
+const EXPECTED_EMPTY_PR_IDS = ['104000263'];
 
 const scriptsDir = path.resolve('src/scripts');
 
@@ -26,8 +26,8 @@ for (const id of BT08_PR_IDS) {
   if (matchString(source, 'cardPackage') !== 'PR') {
     failures.push(`${id} cardPackage is not PR`);
   }
-  if (!hasEmptyEffects(source)) {
-    failures.push(`${id} should stay empty until effect text is confirmed`);
+  if (hasEmptyEffects(source)) {
+    failures.push(`${id} should be implemented`);
   }
 }
 

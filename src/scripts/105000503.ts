@@ -1,4 +1,10 @@
-import { Card } from '../types/game';
+import { Card, CardEffect } from '../types/game';
+
+const cardEffects: CardEffect[] = [{
+  id: '105000503_rainbow_feijing_all_colors',
+  type: 'CONTINUOUS',
+  description: '你的战场上和手牌中的具有菲晶的单位卡视作具备所有颜色。'
+}];
 
 const card: Card = {
   id: '105000503',
@@ -21,7 +27,7 @@ const card: Card = {
   canAttack: true,
   feijingMark: false,
   canResetCount: 0,
-  effects: [],
+  effects: cardEffects,
   rarity: 'PR',
   availableRarities: ['PR'],
   cardPackage: 'PR',

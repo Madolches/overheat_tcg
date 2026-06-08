@@ -6,6 +6,7 @@
 import { socket } from '../socket';
 import { GameState, Card, CardEffect, TriggerLocation, GameEvent, PlayerState } from '../types/game';
 import { getEntryRestrictionReason, satisfiesHighAlchemyEntryRestriction } from '../lib/highAlchemy';
+import { cardHasEffectiveColor, getColorRequirementResult } from '../lib/effectiveColors';
 
 const isFullEffectSilencedThisTurn = (gameState: GameState | null, card: Card) =>
   !!gameState &&
@@ -441,47 +442,11 @@ export const GameService = {
       }
     }
 
-    const availableColors: Record<string, number> = { RED: 0, WHITE: 0, YELLOW: 0, BLUE: 0, GREEN: 0, NONE: 0 };
-    let omniColorCount = 0;
-
-    const checkOmni = (target: Card | null) => {
-      if (!target) return false;
-      const isTargetId = String(target.id) === '105000481';
-      const hasOmniEffect = target.effects?.some(effect => effect.id === '105000481_omni');
-      return isTargetId || !!hasOmniEffect;
-    };
-
-    player.unitZone.forEach(cardInZone => {
-      if (!cardInZone) return;
-      if (checkOmni(cardInZone)) {
-        omniColorCount++;
-      } else if (cardInZone.color !== 'NONE') {
-        availableColors[cardInZone.color] = (availableColors[cardInZone.color] || 0) + 1;
-      }
-      const extraColors = [
-        ...((cardInZone as any).temporaryExtraColors || []),
-        ...((cardInZone as any).persistentExtraColors || [])
-      ];
-      if (Array.isArray(extraColors)) {
-        extraColors.forEach(color => {
-          if (typeof color === 'string' && color !== cardInZone.color && color in availableColors) {
-            availableColors[color] = (availableColors[color] || 0) + 1;
-          }
-        });
-      }
-    });
-
     const colorReqOptions = [card.colorReq || {}];
     if ((card as any).data?.spiritCostTarget103080185 || hasSpiritDiscountTargetOnField(gameState, card)) {
       colorReqOptions.unshift({ GREEN: 1 });
     }
-    const colorRequirementResults = colorReqOptions.map(req => {
-      let totalDeficit = 0;
-      for (const [color, reqCount] of Object.entries(req)) {
-        totalDeficit += Math.max(0, (reqCount as number) - (availableColors[color] || 0));
-      }
-      return { valid: totalDeficit <= omniColorCount, totalDeficit };
-    });
+    const colorRequirementResults = colorReqOptions.map(req => getColorRequirementResult(player, req, gameState));
 
     if (!colorRequirementResults.some(result => result.valid)) {
       const bestDeficit = Math.min(...colorRequirementResults.map(result => result.totalDeficit));
@@ -501,7 +466,7 @@ export const GameService = {
       if (onlyFeijingPayment && !player.hand.some(cardInHand =>
         cardInHand.gamecardId !== card.gamecardId &&
         cardInHand.feijingMark &&
-        cardInHand.color === card.color
+        cardHasEffectiveColor(cardInHand, card.color, { player, gameState })
       )) {
         return { canPlay: false, reason: 'This card can only be paid by Feijing' };
       }
@@ -517,7 +482,7 @@ export const GameService = {
       const hasFeijing = player.hand.some(cardInHand =>
         cardInHand.gamecardId !== card.gamecardId &&
         cardInHand.feijingMark &&
-        cardInHand.color === card.color
+        cardHasEffectiveColor(cardInHand, card.color, { player, gameState })
       );
       if (remainingCost > 0 && hasFeijing) {
         remainingCost = Math.max(0, remainingCost - 3);

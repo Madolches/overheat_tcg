@@ -13,10 +13,13 @@ const findOpponentBlueLowNonGodPlay = (gameState: any, playerUid: string) => {
   for (let index = (gameState.counterStack?.length || 0) - 1; index >= 0; index -= 1) {
     const item = gameState.counterStack[index];
     const card = item?.card as Card | undefined;
+    const owner = item?.ownerUid ? gameState.players[item.ownerUid] as any : undefined;
     if (
       item?.type === 'PLAY' &&
       item.ownerUid !== playerUid &&
       !item.isNegated &&
+      owner?.uncounterableActionsTurn !== gameState.turnCount &&
+      owner?.cardEffectsCannotBeNegatedTurn !== gameState.turnCount &&
       card &&
       card.color === 'BLUE' &&
       !card.godMark &&

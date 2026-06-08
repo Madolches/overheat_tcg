@@ -8,7 +8,15 @@ const findCounteredOpponentPlay = (gameState: GameState, playerUid: string) => {
 
   for (let i = gameState.counterStack.length - 1; i >= 0; i--) {
     const item = gameState.counterStack[i];
-    if (item.type === 'PLAY' && item.ownerUid === opponentUid && !item.isNegated && item.card) {
+    const owner = gameState.players[item.ownerUid] as any;
+    if (
+      item.type === 'PLAY' &&
+      item.ownerUid === opponentUid &&
+      !item.isNegated &&
+      owner?.uncounterableActionsTurn !== gameState.turnCount &&
+      owner?.cardEffectsCannotBeNegatedTurn !== gameState.turnCount &&
+      item.card
+    ) {
       return item;
     }
   }

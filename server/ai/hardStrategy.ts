@@ -1,4 +1,5 @@
 import { Card, CardEffect, EffectQuery, GameState, PlayerState } from '../../src/types/game';
+import { getColorRequirementResult } from '../../src/lib/effectiveColors';
 import {
   BotDifficulty,
   DeckAiProfile,
@@ -952,33 +953,7 @@ export function buildCheatIntelSummary(gameState: GameState, player: PlayerState
 function canEventuallyPlayDrawnCard(gameState: GameState, player: PlayerState, card: Card) {
   if (player.factionLock && card.faction !== player.factionLock) return false;
   const colorReq = card.colorReq || {};
-  const availableColors: Record<string, number> = { RED: 0, WHITE: 0, YELLOW: 0, BLUE: 0, GREEN: 0, NONE: 0 };
-  let omniColorCount = 0;
-
-  player.unitZone.forEach(fieldCard => {
-    if (!fieldCard) return;
-    const isOmni = String(fieldCard.id) === '105000481' || !!fieldCard.effects?.some(effect => effect.id === '105000481_omni');
-    if (isOmni) {
-      omniColorCount += 1;
-    } else if (fieldCard.color !== 'NONE') {
-      availableColors[fieldCard.color] = (availableColors[fieldCard.color] || 0) + 1;
-    }
-    const extraColors = [
-      ...((fieldCard as any).temporaryExtraColors || []),
-      ...((fieldCard as any).persistentExtraColors || [])
-    ];
-    extraColors.forEach(color => {
-      if (typeof color === 'string' && color !== fieldCard.color && color in availableColors) {
-        availableColors[color] = (availableColors[color] || 0) + 1;
-      }
-    });
-  });
-
-  const totalDeficit = Object.entries(colorReq).reduce((sum, [color, amount]) =>
-    sum + Math.max(0, Number(amount || 0) - (availableColors[color] || 0)),
-    0
-  );
-  return totalDeficit <= omniColorCount;
+  return getColorRequirementResult(player, colorReq, gameState).valid;
 }
 
 export function scoreCheatDrawCard(

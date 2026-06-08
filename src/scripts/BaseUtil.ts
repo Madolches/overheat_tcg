@@ -4,6 +4,7 @@ export { AtomicEffectExecutor };
 import { EventEngine } from '../services/EventEngine';
 import { getCardWealthValue, getPlayerWealthCount } from '../lib/wealth';
 import { HighAlchemyEntryContext, satisfiesHighAlchemyEntryRestriction } from '../lib/highAlchemy';
+import { cardHasEffectiveColor, getColorRequirementResult as getEffectiveColorRequirementResult, getEffectiveColors } from '../lib/effectiveColors';
 
 const VIRTUAL_GOD_MARK_IDS = new Set(['105000472', '105000473']);
 
@@ -191,37 +192,8 @@ export const addPersistentExtraColor = (card: Card, color: string) => {
   ]));
 };
 
-export const getBattlefieldColorRequirementResult = (playerState: PlayerState, req: Record<string, number> = {}) => {
-  const availableColors: Record<string, number> = { RED: 0, WHITE: 0, YELLOW: 0, BLUE: 0, GREEN: 0, NONE: 0 };
-  let omniColorCount = 0;
-
-  playerState.unitZone.forEach(card => {
-    if (!card) return;
-    const isOmni = String(card.id) === '105000481' || !!card.effects?.some(effect => effect.id === '105000481_omni');
-    if (isOmni) {
-      omniColorCount += 1;
-    } else if (card.color !== 'NONE') {
-      availableColors[card.color] = (availableColors[card.color] || 0) + 1;
-    }
-
-    const extraColors = new Set([
-      ...((card as any).temporaryExtraColors || []),
-      ...((card as any).persistentExtraColors || [])
-    ]);
-    extraColors.forEach(color => {
-      if (typeof color === 'string' && color !== card.color && color in availableColors) {
-        availableColors[color] = (availableColors[color] || 0) + 1;
-      }
-    });
-  });
-
-  let totalDeficit = 0;
-  for (const [color, reqCount] of Object.entries(req)) {
-    totalDeficit += Math.max(0, Number(reqCount) - (availableColors[color] || 0));
-  }
-
-  return { valid: totalDeficit <= omniColorCount, totalDeficit, omniColorCount, availableColors };
-};
+export const getBattlefieldColorRequirementResult = (playerState: PlayerState, req: Record<string, number> = {}) =>
+  getEffectiveColorRequirementResult(playerState, req);
 
 export const canMeetBattlefieldColorRequirement = (playerState: PlayerState, cardOrReq: Card | Record<string, number>) => {
   const req: Record<string, number> = typeof (cardOrReq as Card).id === 'string'
@@ -844,15 +816,7 @@ export const findUnitOnBattlefield = (gameState: GameState, gamecardId?: string)
 export type PutOntoBattlefieldContext = HighAlchemyEntryContext;
 
 export const highAlchemyMaterialColorsOf = (card: Card) => {
-  const colors = new Set<string>();
-  if (card.color && card.color !== 'NONE') colors.add(card.color);
-
-  [
-    ...(((card as any).temporaryExtraColors || []) as string[]),
-    ...(((card as any).persistentExtraColors || []) as string[]),
-  ]
-    .filter(color => typeof color === 'string' && color !== 'NONE')
-    .forEach(color => colors.add(color));
+  const colors = new Set<string>(Array.from(getEffectiveColors(card)));
 
   if ((card.id === '105000384' || card.id === '305000062') && (card.cardlocation === 'UNIT' || card.cardlocation === 'ITEM')) {
     ['RED', 'WHITE', 'YELLOW', 'BLUE', 'GREEN'].forEach(color => colors.add(color));
@@ -2184,7 +2148,7 @@ export const canPayAccessCost = (gameState: GameState, playerState: PlayerState,
   const hasFeijing = playerState.hand.some(card =>
     card.gamecardId !== sourceCardId &&
     (
-      (card.feijingMark && (!paymentColor || card.color === paymentColor)) ||
+      (card.feijingMark && cardHasEffectiveColor(card, paymentColor, { player: playerState, gameState })) ||
       (card.id === '204000145' && paymentColor === 'BLUE' && amount <= 3) ||
       (card.id === '205000136' && paymentColor === 'YELLOW' && amount <= 3) ||
       (card.id === '201000132' && paymentColor === 'WHITE' && amount <= 3) ||

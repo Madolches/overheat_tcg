@@ -9,7 +9,9 @@ const findOpponentNonGodPlay = (gameState: any, playerUid: string) => {
     item.ownerUid === opponentUid &&
     item.card &&
     !item.card.godMark &&
-    !item.isNegated
+    !item.isNegated &&
+    gameState.players[item.ownerUid]?.uncounterableActionsTurn !== gameState.turnCount &&
+    gameState.players[item.ownerUid]?.cardEffectsCannotBeNegatedTurn !== gameState.turnCount
   );
 };
 
