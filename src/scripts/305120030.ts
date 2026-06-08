@@ -35,6 +35,8 @@ const effect_305120030_activate: CardEffect = {
     );
     return true;
   },
+  canPayCost: (_gameState, playerState, instance) =>
+    !instance.isExhausted && playerState.hand.some(isYellowHandCard),
   onCostResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step !== 'DISCARD_AND_EXHAUST_COST') return;
     const discard = selections[0] ? playerState.hand.find((card: Card) => card.gamecardId === selections[0] && isYellowHandCard(card)) : undefined;

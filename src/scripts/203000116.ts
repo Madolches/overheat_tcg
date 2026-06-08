@@ -120,6 +120,11 @@ const cardEffects: CardEffect[] = [story('203000116_conveyed_thoughts', '选择1
     if (!mode) return false;
     return openDiscardCostQuery(gameState, playerState, instance, mode);
   },
+  canPayCost: (gameState, playerState, instance, context?: any) => {
+    const mode = selectedModeFromContext(context);
+    if (mode) return canUseMode(gameState, playerState, instance, mode);
+    return canUseMode(gameState, playerState, instance, MODE_PROTECT) || canUseMode(gameState, playerState, instance, MODE_BOOST);
+  },
   onCostResolve: async (instance, gameState, playerState, selections, context) => {
     const mode = context?.mode;
     const discarded = selections[0]

@@ -1088,6 +1088,14 @@ export const somelinStorybookGrantedActivate = (sourceEquipId: string): CardEffe
     unit.isExhausted = true;
     return true;
   },
+  canPayCost: (gameState, _playerState, unit) => {
+    const sourceEquip = AtomicEffectExecutor.findCardById(gameState, sourceEquipId);
+    return !!sourceEquip &&
+      sourceEquip.cardlocation === 'ITEM' &&
+      sourceEquip.equipTargetId === unit.gamecardId &&
+      !unit.isExhausted &&
+      !((unit as any).data?.cannotExhaustUntilTurn >= gameState.turnCount);
+  },
   execute: async (unit, gameState, playerState) => {
     const sourceEquip = AtomicEffectExecutor.findCardById(gameState, sourceEquipId);
     if (!sourceEquip || sourceEquip.equipTargetId !== unit.gamecardId) return;
@@ -1885,7 +1893,16 @@ export const selectFromEntries = (
   };
 };
 
-export const discardHandCost = (count: number, predicate?: (card: Card) => boolean): CardEffect['cost'] => async (gameState, playerState, instance) => {
+type CostAvailabilityResult = { valid: boolean; reason?: string };
+
+export const costAvailable = (valid: boolean, reason = '发动费用不足'): CostAvailabilityResult =>
+  valid ? { valid: true } : { valid: false, reason };
+
+export const canDiscardHandCost = (playerState: PlayerState, instance: Card, count: number, predicate?: (card: Card) => boolean) =>
+  playerState.hand.filter(card => card.gamecardId !== instance.gamecardId && (!predicate || predicate(card))).length >= count;
+
+export const discardHandCost = (count: number, predicate?: (card: Card) => boolean): CardEffect['cost'] => {
+  const cost: CardEffect['cost'] = async (gameState, playerState, instance) => {
   const candidates = playerState.hand.filter(card => card.gamecardId !== instance.gamecardId && (!predicate || predicate(card)));
   if (candidates.length < count) return false;
   createSelectCardQuery(
@@ -1904,6 +1921,10 @@ export const discardHandCost = (count: number, predicate?: (card: Card) => boole
     () => 'HAND'
   );
   return true;
+  };
+  (cost as any).canPayCost = (_gameState: GameState, playerState: PlayerState, instance: Card) =>
+    costAvailable(canDiscardHandCost(playerState, instance, count, predicate));
+  return cost;
 };
 
 export const hasActiveTotemReviveGrant = (gameState: GameState, playerState: PlayerState) => {
@@ -2137,6 +2158,8 @@ export const paymentCost = (amount: number, color?: string): CardEffect['cost'] 
   };
   (cost as any).paymentCost = amount;
   (cost as any).paymentColor = color;
+  (cost as any).canPayCost = (gameState: GameState, playerState: PlayerState, instance: Card) =>
+    costAvailable(amount <= 0 || canPayAccessCost(gameState, playerState, amount, color === 'NONE' ? undefined : color, instance));
   return cost;
 };
 
@@ -2179,14 +2202,22 @@ export const canPayAccessCost = (gameState: GameState, playerState: PlayerState,
   return playerState.deck.length >= remaining;
 };
 
+export const canPayExhaustCost = (gameState: GameState, instance: Card) =>
+  !instance.isExhausted && !((instance as any).data?.cannotExhaustUntilTurn >= gameState.turnCount);
+
 export const exhaustCost: CardEffect['cost'] = async (gameState, _playerState, instance) => {
   if (instance.isExhausted) return false;
   if ((instance as any).data?.cannotExhaustUntilTurn >= gameState.turnCount) return false;
   instance.isExhausted = true;
   return true;
 };
+(exhaustCost as any).canPayCost = (gameState: GameState, _playerState: PlayerState, instance: Card) =>
+  costAvailable(canPayExhaustCost(gameState, instance));
 
-export const erosionCost = (amount: number): CardEffect['cost'] => async (gameState, playerState, instance) => {
+export const canPayErosionCost = (playerState: PlayerState, amount: number) => faceUpErosion(playerState).length >= amount;
+
+export const erosionCost = (amount: number): CardEffect['cost'] => {
+  const cost: CardEffect['cost'] = async (gameState, playerState, instance) => {
   const targets = faceUpErosion(playerState);
   if (targets.length < amount) return false;
   createSelectCardQuery(
@@ -2205,6 +2236,10 @@ export const erosionCost = (amount: number): CardEffect['cost'] => async (gameSt
     () => 'EROSION_FRONT'
   );
   return true;
+  };
+  (cost as any).canPayCost = (_gameState: GameState, playerState: PlayerState) =>
+    costAvailable(canPayErosionCost(playerState, amount));
+  return cost;
 };
 
 export const searchDeckEffect = (id: string, description: string, predicate: (card: Card, source: Card) => boolean): CardEffect => ({

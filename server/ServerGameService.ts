@@ -1160,6 +1160,7 @@ export const ServerGameService = {
           condition: originalEffect.condition,
           execute: originalEffect.execute,
           cost: originalEffect.cost,
+          canPayCost: originalEffect.canPayCost || (originalEffect.cost as any)?.canPayCost,
           onQueryResolve: originalEffect.onQueryResolve,
           onCostResolve: originalEffect.onCostResolve,
           resolve: originalEffect.resolve,
@@ -1805,6 +1806,26 @@ export const ServerGameService = {
     }
 
     return { valid: true };
+  },
+
+  getEffectActivationAvailability(gameState: GameState, playerUid: string, card: Card, effect: CardEffect, triggerLocation?: TriggerLocation, event?: GameEvent, context?: any): { valid: boolean; reason?: string } {
+    const rules = ServerGameService.checkEffectLimitsAndReqs(gameState, playerUid, card, effect, triggerLocation, event);
+    if (!rules.valid) return rules;
+    const canPayCost = effect.canPayCost || (effect.cost as any)?.canPayCost;
+    if (!canPayCost) return { valid: true };
+
+    const player = gameState.players[playerUid];
+    if (!player) return { valid: false, reason: '未找到玩家信息' };
+
+    try {
+      const result = canPayCost(gameState, player, card, context);
+      if (typeof result === 'boolean') {
+        return result ? { valid: true } : { valid: false, reason: '发动费用不足' };
+      }
+      return result.valid ? { valid: true } : { valid: false, reason: result.reason || '发动费用不足' };
+    } catch {
+      return { valid: false, reason: '发动费用不足' };
+    }
   },
 
   recordEffectUsage(gameState: GameState, playerUid: string, card: Card, effect: CardEffect) {
@@ -2477,7 +2498,7 @@ export const ServerGameService = {
 
         return !!card.effects?.some(effect =>
           (effect.type === 'ACTIVATE' || effect.type === 'ACTIVATED') &&
-          ServerGameService.checkEffectLimitsAndReqs(gameState, playerId, card, effect, location).valid
+          ServerGameService.getEffectActivationAvailability(gameState, playerId, card, effect, location).valid
         );
       })
     );
@@ -3214,7 +3235,10 @@ export const ServerGameService = {
       throw new Error('不能发动对手卡牌的效果');
     }
     const loc = location || (card.cardlocation as TriggerLocation);
-    const result = ServerGameService.checkEffectLimitsAndReqs(gameState, playerId, card, effect, loc);
+    const result = ServerGameService.getEffectActivationAvailability(gameState, playerId, card, effect, loc, undefined, {
+      declaredTargets,
+      declaredModeId: (declaredTargets as any)?.declaredModeId || declaredTargets?.[0]?.modeId || options?.declaredModeId
+    });
     if (!result.valid) {
       throw new Error(result.reason || '不满足发动条件或已达到使用次数限制');
     }
@@ -9101,7 +9125,7 @@ export const ServerGameService = {
           if (effect.id && failedEffectIds[effect.id]) return undefined;
           const attemptKey = ServerGameService.getBotEffectAttemptKey(gameState, card, effectIndex);
           if (attempts[attemptKey]) return undefined;
-          const rules = ServerGameService.checkEffectLimitsAndReqs(gameState, playerUid, card, effect, location);
+          const rules = ServerGameService.getEffectActivationAvailability(gameState, playerUid, card, effect, location);
           if (!rules.valid) return undefined;
           const paymentCost = ServerGameService.getBotEffectPaymentCost(effect);
           const paymentOptions = ServerGameService.botEffectPaymentExhaustsSource(effect)
