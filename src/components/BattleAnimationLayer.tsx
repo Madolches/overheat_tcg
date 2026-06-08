@@ -205,6 +205,10 @@ export const BattleAnimationLayer: React.FC<BattleAnimationLayerProps> = ({
   const soloEvent = React.useMemo(() => {
     return parallelEvents.length ? null : (events[0] || null);
   }, [events, parallelEvents.length]);
+  const effectPanelSourceEvent = React.useMemo(() => {
+    return parallelEvents.find(event => event.type === 'effect-activated')
+      || (soloEvent?.type === 'effect-activated' ? soloEvent : null);
+  }, [parallelEvents, soloEvent]);
 
   useEffect(() => {
     if (enabled) return;
@@ -214,10 +218,10 @@ export const BattleAnimationLayer: React.FC<BattleAnimationLayerProps> = ({
 
   useEffect(() => {
     if (!enabled) return;
-    if (soloEvent?.type === 'effect-activated') {
-      setPanelEvent(current => current?.id === soloEvent.id ? current : soloEvent);
+    if (effectPanelSourceEvent) {
+      setPanelEvent(current => current?.id === effectPanelSourceEvent.id ? current : effectPanelSourceEvent);
     }
-  }, [enabled, soloEvent]);
+  }, [enabled, effectPanelSourceEvent]);
 
   return (
     <div ref={layerRef} className="pointer-events-none absolute inset-0 z-[180] overflow-hidden">

@@ -47,6 +47,25 @@ const getEffectTypeLabel = (type?: string | null) => {
   return EFFECT_TYPE_LABELS[type] || type;
 };
 
+type EffectSelectionEntry = {
+  effect: CardEffect;
+  index: number;
+  availability: { valid: boolean; reason?: string };
+};
+
+const getEffectUnavailableReasonLabel = (reason?: string) => {
+  const normalized = String(reason || '').toLowerCase();
+  if (!normalized) return '暂时不能发动';
+  if (normalized.includes('usage') || normalized.includes('次数') || normalized.includes('限制')) return '发动次数已用尽';
+  if (normalized.includes('erosion') || normalized.includes('侵蚀')) return '侵蚀数量不满足';
+  if (normalized.includes('cost') || normalized.includes('费用') || normalized.includes('pay')) return '发动费用不足';
+  if (normalized.includes('condition') || normalized.includes('条件')) return '发动条件不满足';
+  if (normalized.includes('location') || normalized.includes('位置')) return '发动位置不正确';
+  if (normalized.includes('silenced') || normalized.includes('negated') || normalized.includes('disabled') || normalized.includes('无效') || normalized.includes('失去') || normalized.includes('封')) return '该效果被无效';
+  if (normalized.includes('faction') || normalized.includes('阵营')) return '阵营限制不满足';
+  return reason || '暂时不能发动';
+};
+
 const MulliganRevealOverlay: React.FC<{
   reveal?: PlayerState['mulliganReveal'];
   cardBackUrl: string;
@@ -331,7 +350,7 @@ export const BattleField: React.FC = () => {
   } | null>(null);
   const [effectSelection, setEffectSelection] = useState<{
     card: Card;
-    effects: { effect: CardEffect; index: number }[];
+    effects: EffectSelectionEntry[];
     triggerLocation: TriggerLocation;
   } | null>(null);
   const [allianceConfirmation, setAllianceConfirmation] = useState<{
@@ -760,7 +779,7 @@ export const BattleField: React.FC = () => {
 
     return !!card.effects?.some((effect) =>
       (effect.type === 'ACTIVATE' || effect.type === 'ACTIVATED') &&
-      GameService.checkEffectLimitsAndReqs(game, myUid, card, effect, location).valid
+      GameService.getEffectActivationAvailability(game, myUid, card, effect, location).valid
     );
   };
 
@@ -1323,6 +1342,10 @@ export const BattleField: React.FC = () => {
       const num = parseInt(e.key, 10);
       if (!isNaN(num) && num > 0 && num <= effectSelection.effects.length) {
         const selected = effectSelection.effects[num - 1];
+        if (!selected.availability.valid) {
+          setLastError(getEffectUnavailableReasonLabel(selected.availability.reason));
+          return;
+        }
         setEffectConfirmation({
           card: effectSelection.card,
           effect: selected.effect,
@@ -2232,23 +2255,25 @@ export const BattleField: React.FC = () => {
       ].some(c => c?.gamecardId === card.gamecardId);
 
       if (isMyCard) {
-        const validEffects = (card.effects || [])
-          .map((effect, effectIndex) => ({ effect, effectIndex }))
-          .filter(({ effect }) =>
-            (effect.type === 'ACTIVATE' || effect.type === 'ACTIVATED') &&
-            GameService.checkEffectLimitsAndReqs(game, myUid, card, effect, triggerLocation).valid
-          );
+        const effectEntries: EffectSelectionEntry[] = (card.effects || [])
+          .map((effect, effectIndex) => ({
+            effect,
+            index: effectIndex,
+            availability: GameService.getEffectActivationAvailability(game, myUid, card, effect, triggerLocation)
+          }))
+          .filter(({ effect }) => effect.type === 'ACTIVATE' || effect.type === 'ACTIVATED');
+        const validEffects = effectEntries.filter(entry => entry.availability.valid);
 
-        if (validEffects.length === 1) {
-          activateAbility(card, validEffects[0].effect, validEffects[0].effectIndex, triggerLocation);
+        if (validEffects.length === 1 && effectEntries.length === 1) {
+          activateAbility(card, validEffects[0].effect, validEffects[0].index, triggerLocation);
           closeViewingZoneForCardAction(zone);
           return;
         }
 
-        if (validEffects.length > 1) {
+        if (validEffects.length > 0) {
           setEffectSelection({
             card,
-            effects: validEffects,
+            effects: effectEntries,
             triggerLocation
           });
           closeViewingZoneForCardAction(zone);
@@ -3816,10 +3841,13 @@ export const BattleField: React.FC = () => {
                   'erosion_back': 'EROSION_BACK',
                   'hand': 'HAND'
                 };
-                const validEffects = activateEffects.filter(e => {
-                  const triggerLocation = zoneMap[cardMenu.zone] as TriggerLocation;
-                  return GameService.checkEffectLimitsAndReqs(game, myUid, latestCard, e.effect, triggerLocation).valid;
-                });
+                const triggerLocation = zoneMap[cardMenu.zone] as TriggerLocation;
+                const effectEntries: EffectSelectionEntry[] = activateEffects.map(e => ({
+                  effect: e.effect,
+                  index: e.index,
+                  availability: GameService.getEffectActivationAvailability(game, myUid, latestCard, e.effect, triggerLocation)
+                }));
+                const validEffects = effectEntries.filter(e => e.availability.valid);
 
                 if (validEffects.length > 0) {
                   return (
@@ -3827,21 +3855,12 @@ export const BattleField: React.FC = () => {
                       whileHover={{ scale: 1.1 }}
                       className="px-4 py-3 md:py-1.5 text-[12px] md:text-[10px] font-bold text-white bg-[#22c55e] rounded-full shadow-lg border border-white/20 flex items-center justify-center w-full"
                       onClick={() => {
-                        const triggerLocation = (
-                          cardMenu.zone === 'unit' ? 'UNIT' :
-                          cardMenu.zone === 'item' ? 'ITEM' :
-                          cardMenu.zone === 'erosion_front' ? 'EROSION_FRONT' :
-                          cardMenu.zone === 'erosion_back' ? 'EROSION_BACK' :
-                          cardMenu.zone === 'grave' ? 'GRAVE' :
-                          cardMenu.zone === 'exile' ? 'EXILE' :
-                          'HAND'
-                        ) as TriggerLocation;
-                        if (validEffects.length === 1) {
+                        if (validEffects.length === 1 && effectEntries.length === 1) {
                           activateAbility(latestCard, validEffects[0].effect, validEffects[0].index, triggerLocation);
                         } else {
                           setEffectSelection({
                             card: latestCard,
-                            effects: validEffects,
+                            effects: effectEntries,
                             triggerLocation
                           });
                         }
@@ -4037,10 +4056,17 @@ export const BattleField: React.FC = () => {
               </button>
               <h3 className="text-xl md:text-2xl font-black italic text-red-500 mb-4 md:mb-6 uppercase tracking-tighter">选择要发动的效果</h3>
               <div className="space-y-4">
-                {effectSelection.effects.map((e, i) => (
-                  <button
+                {effectSelection.effects.map((e, i) => {
+                  const disabled = !e.availability.valid;
+                  return (
+                    <button
                     key={i}
+                    disabled={disabled}
                     onClick={() => {
+                      if (disabled) {
+                        setLastError(getEffectUnavailableReasonLabel(e.availability.reason));
+                        return;
+                      }
                       setEffectConfirmation({
                         card: effectSelection.card,
                         effect: e.effect,
@@ -4049,7 +4075,12 @@ export const BattleField: React.FC = () => {
                       });
                       setEffectSelection(null);
                     }}
-                    className="w-full text-left p-4 rounded-xl border border-white/10 bg-black/40 hover:bg-white/5 hover:border-red-500/50 transition-all group flex items-start gap-4"
+                    className={cn(
+                      'w-full text-left p-4 rounded-xl border transition-all group flex items-start gap-4',
+                      disabled
+                        ? 'cursor-not-allowed border-white/5 bg-zinc-950/50 opacity-45 grayscale'
+                        : 'border-white/10 bg-black/40 hover:bg-white/5 hover:border-red-500/50'
+                    )}
                   >
                     <div className="shrink-0 w-6 h-6 md:w-8 md:h-8 bg-white/10 text-white rounded flex items-center justify-center font-bold text-xs md:text-base">
                       {i + 1}
@@ -4060,12 +4091,18 @@ export const BattleField: React.FC = () => {
                           {e.effect.type}
                         </span>
                       </div>
-                      <p className="text-[10px] md:text-sm text-zinc-300 leading-relaxed group-hover:text-white transition-colors">
+                      <p className={cn('text-[10px] md:text-sm leading-relaxed transition-colors', disabled ? 'text-zinc-500' : 'text-zinc-300 group-hover:text-white')}>
                         {e.effect.description}
                       </p>
+                      {disabled && (
+                        <p className="mt-2 text-[10px] font-black text-zinc-500 md:text-xs">
+                          {getEffectUnavailableReasonLabel(e.availability.reason)}
+                        </p>
+                      )}
                     </div>
                   </button>
-                ))}
+                  );
+                })}
               </div>
               <div className="mt-8 flex justify-end">
                 <button

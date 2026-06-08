@@ -56,6 +56,8 @@ const cardEffects: CardEffect[] = [{
     );
     return true;
   },
+  canPayCost: (_gameState, playerState) =>
+    godmarkGraveCards(playerState).length > 0,
   onCostResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step !== 'GODMARK_GRAVE_EXILE_COST') return;
     const cost = godmarkGraveCards(playerState).find((card: Card) => card.gamecardId === selections[0]);

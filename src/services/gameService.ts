@@ -628,6 +628,26 @@ export const GameService = {
     return { valid: true };
   },
 
+  getEffectActivationAvailability(gameState: GameState | null, playerUid: string, card: Card, effect: CardEffect, triggerLocation: TriggerLocation, event?: GameEvent, context?: any): { valid: boolean; reason?: string } {
+    const rules = GameService.checkEffectLimitsAndReqs(gameState, playerUid, card, effect, triggerLocation, event);
+    if (!rules.valid) return rules;
+    const canPayCost = effect.canPayCost || (effect.cost as any)?.canPayCost;
+    if (!gameState || !canPayCost) return { valid: true };
+
+    const player = gameState.players?.[playerUid];
+    if (!player) return { valid: false, reason: 'Player data not found' };
+
+    try {
+      const result = canPayCost(gameState, player, card, context);
+      if (typeof result === 'boolean') {
+        return result ? { valid: true } : { valid: false, reason: 'Insufficient activation cost' };
+      }
+      return result.valid ? { valid: true } : { valid: false, reason: result.reason || 'Insufficient activation cost' };
+    } catch {
+      return { valid: false, reason: 'Insufficient activation cost' };
+    }
+  },
+
   recordEffectUsage(_game: GameState | null, _playerUid: string, _card: Card, _effect: CardEffect) {
     // Persistent usage is recorded on the server.
   }
