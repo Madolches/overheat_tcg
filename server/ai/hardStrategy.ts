@@ -20,6 +20,7 @@ import {
   scoreAdventurerGuildMulliganKeep,
   scoreAdventurerGuildPlayableCard,
 } from './decks/adventurerGuildStrategy';
+import { scoreHardAiOpeningQueryCard } from './decks/openingProfiles';
 
 const getCardCost = (card: Card) => Math.max(0, card.baseAcValue ?? card.acValue ?? 0);
 const HARD_AI_HIGH_VALUE_BOARD_THRESHOLD = 58;
@@ -3167,6 +3168,10 @@ function scoreQueryCardOption(
 ) {
   const card = option.card as Card | undefined;
   if (!card) return 0;
+
+  const effectId = String(query.context?.effectId || '');
+  const openingQueryScore = scoreHardAiOpeningQueryCard(profile, effectId, card);
+  if (openingQueryScore) return openingQueryScore.score;
 
   const isMine = optionIsMine(gameState, playerUid, option);
   const cardValue = scoreCardValue(card, profile);

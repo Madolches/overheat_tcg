@@ -1,4 +1,4 @@
-import { GameState, PlayerState, Card, Deck, TriggerLocation, CardEffect, StackItem, GamePhase, GAME_TIMEOUTS, GameEvent, DeclaredEffectTarget, EffectTargetCandidate, AiDecisionLog } from '../src/types/game';
+import { GameState, PlayerState, Card, Deck, TriggerLocation, CardEffect, StackItem, GamePhase, GAME_TIMEOUTS, GameEvent, DeclaredEffectTarget, EffectTargetCandidate, AiDecisionLog, EffectQuery } from '../src/types/game';
 import { EventEngine } from '../src/services/EventEngine';
 import { AtomicEffectExecutor } from '../src/services/AtomicEffectExecutor';
 import { clearBattlefieldState, shouldClearBattlefieldStateOnMove } from '../src/lib/cardState';
@@ -36,7 +36,10 @@ import {
   scorePlayableCard,
   scorePaymentSacrificeValue
 } from './ai/hardStrategy';
-import { ADVENTURER_GUILD_DEFAULT_OPENING_CARD_IDS, ADVENTURER_GUILD_PROFILE_ID, describeAdventurerGuildAttack, describeAdventurerGuildDefense, describeAdventurerGuildPlayableCard, describeAdventurerGuildQueryOption, getAdventurerGuildRouteAdvice, scoreAdventurerGuildDevelopmentPriority } from './ai/decks/adventurerGuildStrategy';
+import { ADVENTURER_GUILD_PROFILE_ID, describeAdventurerGuildAttack, describeAdventurerGuildDefense, describeAdventurerGuildPlayableCard, describeAdventurerGuildQueryOption, getAdventurerGuildRouteAdvice, scoreAdventurerGuildDevelopmentPriority } from './ai/decks/adventurerGuildStrategy';
+import { chooseHardAiForcedFirstTurnPlay, getHardAiOpeningCardIds, markHardAiForcedOpeningPlayed, scoreHardAiOpeningQueryCard } from './ai/decks/openingProfiles';
+
+export { getHardAiOpeningCardIds } from './ai/decks/openingProfiles';
 
 type PaymentSummary = {
   success: boolean;
@@ -45,10 +48,6 @@ type PaymentSummary = {
   erosionCostCards?: { id: string; name: string }[];
   feijingCard?: { id: string; name: string; destination: TriggerLocation };
 };
-
-export function getHardAiOpeningCardIds(profileId?: string | null) {
-  return profileId === ADVENTURER_GUILD_PROFILE_ID ? ADVENTURER_GUILD_DEFAULT_OPENING_CARD_IDS : undefined;
-}
 
 export const ServerGameService = {
   shouldSkipVisualDelay(gameState: GameState) {
@@ -8756,6 +8755,189 @@ export const ServerGameService = {
     return candidates.length >= (firstTargetShape.minSelections ?? 0) ? candidates.length : 0;
   },
 
+  createBotDeclareTargetQuery(
+    gameState: GameState,
+    playerUid: string,
+    sourceCard: Card,
+    effect: CardEffect,
+    effectIndex: number,
+    spec: any,
+    targetShape: any,
+    candidates: EffectTargetCandidate[],
+    context: {
+      modeId?: string;
+      targetGroupIndex?: number;
+      declaredTargets?: DeclaredEffectTarget[];
+    } = {}
+  ): EffectQuery {
+    return {
+      id: 'BOT_DECLARE_TARGETS',
+      type: 'SELECT_CARD',
+      playerUid,
+      options: AtomicEffectExecutor.enrichQueryOptions(
+        gameState,
+        playerUid,
+        candidates.map(candidate => ({
+          card: candidate.card,
+          source: candidate.source || (candidate.card.cardlocation as TriggerLocation)
+        }))
+      ),
+      title: targetShape.title || spec.title || '选择对象',
+      description: targetShape.description || spec.description || '请选择合法对象。',
+      minSelections: targetShape.minSelections ?? 1,
+      maxSelections: targetShape.maxSelections ?? targetShape.minSelections ?? 1,
+      callbackKey: 'DECLARE_EFFECT_TARGETS',
+      context: {
+        sourceCardId: sourceCard.gamecardId,
+        effectIndex,
+        effectId: effect.id,
+        activationPlayerUid: playerUid,
+        modeId: context.modeId,
+        targetGroupIndex: context.targetGroupIndex ?? 0,
+        declaredTargets: context.declaredTargets,
+        step: targetShape.step,
+        capturedContext: targetShape.capturedContext
+      }
+    };
+  },
+
+  previewBotDeclaredTargets(
+    gameState: GameState,
+    playerUid: string,
+    sourceCard: Card,
+    effect: CardEffect,
+    effectIndex: number,
+    selections: string[],
+    targetShape: any,
+    previousTargets?: DeclaredEffectTarget[],
+    modeId?: string
+  ) {
+    const minSelections = targetShape.minSelections ?? 1;
+    const maxSelections = targetShape.maxSelections ?? minSelections;
+    if (selections.length < minSelections || selections.length > maxSelections) return undefined;
+
+    const legalCandidates = ServerGameService.getTargetCandidates(gameState, playerUid, sourceCard, effect, targetShape, previousTargets);
+    const declaredTargets: DeclaredEffectTarget[] = [];
+
+    for (const id of selections) {
+      const candidate = legalCandidates.find(entry => entry.card.gamecardId === id);
+      if (!candidate) return undefined;
+      const card = candidate.card;
+      const ownerUid = candidate.ownerUid || AtomicEffectExecutor.findCardOwnerKey(gameState, card.gamecardId) || playerUid;
+      declaredTargets.push({
+        gamecardId: card.gamecardId,
+        ownerUid,
+        zone: candidate.source || (card.cardlocation as TriggerLocation),
+        costTarget: !!targetShape.costTarget,
+        sourceCardId: sourceCard.gamecardId,
+        sourceCardName: sourceCard.fullName,
+        effectIndex,
+        modeId,
+        step: targetShape.step,
+        capturedContext: targetShape.capturedContext
+      });
+    }
+
+    return declaredTargets;
+  },
+
+  canBotChooseDeclaredTargetsForEffect(
+    gameState: GameState,
+    playerUid: string,
+    sourceCard: Card,
+    effect: CardEffect,
+    effectIndex: number
+  ) {
+    if (!ServerGameService.hasPreselectTargetSpec(effect) || !effect.targetSpec) return true;
+
+    const profile = ServerGameService.getBotProfile(gameState, playerUid);
+    const difficulty = ServerGameService.getBotDifficulty(gameState, playerUid);
+    const spec: any = effect.targetSpec;
+    let modeId: string | undefined;
+    let targetShapes: any[] = [];
+
+    if (spec.modeOptions?.length) {
+      const player = gameState.players[playerUid];
+      const availableModes = spec.modeOptions.filter((mode: any) => {
+        if (mode.condition && !mode.condition(gameState, player, sourceCard)) return false;
+        const shapes = mode.targetGroups?.length ? mode.targetGroups : [mode];
+        return shapes.every((shape: any) => {
+          if ((shape.maxSelections ?? 0) === 0) return true;
+          return ServerGameService.getTargetCandidates(gameState, playerUid, sourceCard, effect, shape).length >= (shape.minSelections ?? 0);
+        });
+      });
+      if (availableModes.length === 0) return false;
+
+      const modeQuery: any = {
+        id: 'BOT_DECLARE_TARGET_MODE',
+        type: 'SELECT_CHOICE',
+        playerUid,
+        options: availableModes.map((mode: any) => ({
+          id: mode.id,
+          value: mode.id,
+          label: mode.label,
+          detail: mode.modeDescription || mode.description
+        })),
+        title: spec.modeTitle || '选择效果',
+        description: spec.modeDescription || '选择要发动的效果。',
+        minSelections: 1,
+        maxSelections: 1,
+        callbackKey: 'DECLARE_EFFECT_TARGET_MODE',
+        context: {
+          sourceCardId: sourceCard.gamecardId,
+          effectIndex,
+          effectId: effect.id,
+          activationPlayerUid: playerUid
+        }
+      };
+      const [selectedModeId] = chooseQuerySelections(gameState, playerUid, modeQuery, profile, difficulty);
+      const selectedMode = availableModes.find((mode: any) => mode.id === selectedModeId) || availableModes[0];
+      modeId = selectedMode.id;
+      targetShapes = selectedMode.targetGroups?.length ? selectedMode.targetGroups : [selectedMode];
+    } else {
+      targetShapes = spec.targetGroups?.length ? spec.targetGroups : [spec];
+    }
+
+    let declaredTargets: DeclaredEffectTarget[] = [];
+    for (let index = 0; index < targetShapes.length; index += 1) {
+      const targetShape = targetShapes[index];
+      if ((targetShape.maxSelections ?? 0) === 0) continue;
+
+      const candidates = ServerGameService.getTargetCandidates(gameState, playerUid, sourceCard, effect, targetShape, declaredTargets);
+      if (candidates.length < (targetShape.minSelections ?? 0)) return false;
+
+      const targetQuery = ServerGameService.createBotDeclareTargetQuery(
+        gameState,
+        playerUid,
+        sourceCard,
+        effect,
+        effectIndex,
+        spec,
+        targetShape,
+        candidates,
+        { modeId, targetGroupIndex: index, declaredTargets }
+      );
+      const selections = chooseQuerySelections(gameState, playerUid, targetQuery, profile, difficulty);
+      if (selections.length < (targetShape.minSelections ?? 1)) return false;
+
+      const previewTargets = ServerGameService.previewBotDeclaredTargets(
+        gameState,
+        playerUid,
+        sourceCard,
+        effect,
+        effectIndex,
+        selections,
+        targetShape,
+        declaredTargets,
+        modeId
+      );
+      if (!previewTargets) return false;
+      declaredTargets = [...declaredTargets, ...previewTargets];
+    }
+
+    return true;
+  },
+
   getStoryPlayEffect(card: Card) {
     return card.type === 'STORY'
       ? card.effects?.find(effect => effect.type === 'ALWAYS' || effect.type === 'ACTIVATE' || effect.type === 'ACTIVATED')
@@ -8804,7 +8986,12 @@ export const ServerGameService = {
         minSelections: 1,
         maxSelections: 1,
         callbackKey: 'DECLARE_EFFECT_TARGET_MODE',
-        context: { sourceCardId: sourceCard.gamecardId, effectIndex }
+        context: {
+          sourceCardId: sourceCard.gamecardId,
+          effectIndex,
+          effectId: effect.id,
+          activationPlayerUid: playerUid
+        }
       };
       const [selectedModeId] = chooseQuerySelections(gameState, playerUid, modeQuery, profile, difficulty);
       if (difficulty === 'hard') {
@@ -8846,9 +9033,13 @@ export const ServerGameService = {
         context: {
           sourceCardId: sourceCard.gamecardId,
           effectIndex,
+          effectId: effect.id,
+          activationPlayerUid: playerUid,
           modeId,
           targetGroupIndex: index,
-          declaredTargets
+          declaredTargets,
+          step: targetShape.step,
+          capturedContext: targetShape.capturedContext
         }
       };
       const selections = chooseQuerySelections(gameState, playerUid, targetQuery, profile, difficulty);
@@ -8944,6 +9135,12 @@ export const ServerGameService = {
             : { penalty: 0, notes: [] as string[], estimatedDeckPayment: 0, readyDefendersAfter: undefined };
           const targetCount = ServerGameService.getEffectTargetCount(gameState, playerUid, card, effect);
           if (targetCount !== undefined && targetCount <= 0) return undefined;
+          if (
+            targetCount !== undefined &&
+            !ServerGameService.canBotChooseDeclaredTargetsForEffect(gameState, playerUid, card, effect, effectIndex)
+          ) {
+            return undefined;
+          }
           const scored = scoreActivatableEffect(gameState, player, card, effect, profile, {
             opponent,
             targetCount,
@@ -9289,10 +9486,11 @@ export const ServerGameService = {
   recordBotQuerySelectionDecision(gameState: GameState, playerUid: string, query: any, selections: string[], profile: DeckAiProfile) {
     const selectableOptions = (query.options || []).filter((option: any) => !option.disabled);
     const scored = selectableOptions
-      .map((option: any) => ({
-        option,
-        detail: describeAdventurerGuildQueryOption(gameState, playerUid, query, option, profile),
-      }))
+      .map((option: any) => {
+        const detail = describeAdventurerGuildQueryOption(gameState, playerUid, query, option, profile) ||
+          (option.card ? scoreHardAiOpeningQueryCard(profile, String(query.context?.effectId || ''), option.card) : undefined);
+        return { option, detail };
+      })
       .filter((entry: any): entry is { option: any; detail: NonNullable<ReturnType<typeof describeAdventurerGuildQueryOption>> } => !!entry.detail)
       .sort((a, b) => b.detail.score - a.detail.score);
 
@@ -10297,13 +10495,6 @@ export const ServerGameService = {
         }
       }
 
-      if (difficulty === 'hard' && await ServerGameService.tryActivateBotEffect(gameState, playerUid, 'MAIN', turnPlan?.minMainEffectScore ?? 8.5, onUpdate)) {
-        if (turnPlan && isClosingTurnPlan(turnPlan) && !turnPlan.attackBeforeDeveloping && gameState.turnCount > 1) {
-          ServerGameService.markBotClosingAttackCommitment(gameState, playerUid, turnPlan);
-        }
-        return;
-      }
-
       const canPayPlayCostForBot = (card: Card) => {
         const effectiveCost = ServerGameService.getEffectivePlayCost(bot, card, gameState);
         if (effectiveCost < 0) {
@@ -10333,6 +10524,16 @@ export const ServerGameService = {
             : scoreCardValue(card, profile),
         }))
         .sort((a, b) => b.score - a.score);
+      const forcedOpeningPlayCard = difficulty === 'hard'
+        ? chooseHardAiForcedFirstTurnPlay(gameState, bot, profile, playableCards)
+        : undefined;
+
+      if (!forcedOpeningPlayCard && difficulty === 'hard' && await ServerGameService.tryActivateBotEffect(gameState, playerUid, 'MAIN', turnPlan?.minMainEffectScore ?? 8.5, onUpdate)) {
+        if (turnPlan && isClosingTurnPlan(turnPlan) && !turnPlan.attackBeforeDeveloping && gameState.turnCount > 1) {
+          ServerGameService.markBotClosingAttackCommitment(gameState, playerUid, turnPlan);
+        }
+        return;
+      }
 
       const buildPlayOption = (card: Card) => {
         const rawScore = difficulty === 'hard'
@@ -10495,8 +10696,9 @@ export const ServerGameService = {
           return option.defenseDevelopmentBonus > 0;
         })
         : undefined;
+      const forcedOpeningPlayOption = forcedOpeningPlayCard ? buildPlayOption(forcedOpeningPlayCard) : undefined;
       const chosenPlayOption = difficulty === 'hard'
-        ? rankedPlayOptions.find(option => option.score > 0) || emergencyBlockerOption
+        ? forcedOpeningPlayOption || rankedPlayOptions.find(option => option.score > 0) || emergencyBlockerOption
         : playableCards[0] ? buildPlayOption(playableCards[0]) : undefined;
       const cardToPlay = chosenPlayOption?.card;
 
@@ -10564,6 +10766,9 @@ export const ServerGameService = {
               declaredModeId: (declaredTargets as any)?.declaredModeId
             }
           );
+          if (forcedOpeningPlayOption) {
+            markHardAiForcedOpeningPlayed(bot, profile, cardToPlay);
+          }
           if (turnPlan && isClosingTurnPlan(turnPlan) && !turnPlan.attackBeforeDeveloping && gameState.turnCount > 1) {
             ServerGameService.markBotClosingAttackCommitment(gameState, playerUid, turnPlan);
           }
@@ -10935,19 +11140,28 @@ export const ServerGameService = {
 
   drawInitialHand(player: PlayerState, count = 4, preferredCardIds?: readonly string[]) {
     const drawnCards: Card[] = [];
+    const preferredCards: Card[] = [];
 
     for (const cardId of preferredCardIds || []) {
-      if (drawnCards.length >= count) break;
       const cardIndex = player.deck.findIndex(card => card?.id === cardId);
       if (cardIndex === -1) continue;
       const [card] = player.deck.splice(cardIndex, 1);
-      if (card) drawnCards.push(card);
+      if (card) preferredCards.push(card);
     }
+
+    drawnCards.push(...preferredCards.slice(0, count));
 
     while (drawnCards.length < count) {
       const card = player.deck.pop();
       if (!card) break;
       drawnCards.push(card);
+    }
+
+    const reservedPreferredCards = preferredCards.slice(count);
+    for (let i = reservedPreferredCards.length - 1; i >= 0; i--) {
+      const card = reservedPreferredCards[i];
+      card.cardlocation = 'DECK';
+      player.deck.push(card);
     }
 
     drawnCards.forEach(card => {

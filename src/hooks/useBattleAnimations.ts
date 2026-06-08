@@ -422,7 +422,8 @@ function animationFromLog(
       sourceCardId,
       playerUid: effectOwnerUid || actorUid,
       sourceAnchor: sourceAnchorForLog(game, sourceCard, effectOwnerUid || actorUid),
-      durationMs: 2800,
+      durationMs: 900,
+      panelDurationMs: 2800,
       effectKind
     });
   }

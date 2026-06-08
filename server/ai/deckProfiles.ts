@@ -1,5 +1,6 @@
 import { DeckAiProfile, DEFAULT_AI_WEIGHTS } from './types';
 import { adventurerGuildProfile } from './decks/adventurerGuild';
+import { pureYellowSteelProfile } from './decks/pureYellowSteel';
 
 export const genericProfile: DeckAiProfile = {
   id: 'generic',
@@ -10,6 +11,7 @@ export const genericProfile: DeckAiProfile = {
 
 export const AI_DECK_PROFILES: DeckAiProfile[] = [
   adventurerGuildProfile,
+  pureYellowSteelProfile,
 ];
 
 export const ALL_DECK_AI_PROFILES: DeckAiProfile[] = [...AI_DECK_PROFILES];

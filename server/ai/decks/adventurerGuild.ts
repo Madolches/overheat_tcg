@@ -3,7 +3,7 @@ import { DeckAiProfile, DEFAULT_AI_WEIGHTS } from '../types';
 export const adventurerGuildProfile: DeckAiProfile = {
   id: 'adventurer-guild',
   displayName: '冒险家公会',
-  shareCode: 'GiZGyewEZXJuIMgDevDfKf9tFZ1wurNp2lQ',
+  shareCode: 'GihIjIjYOVY1kX2fdZtTRgFcWXj6dQw',
   notes: '新困难人机第一套测试卡组，先使用通用困难 AI 评分，后续按实战表现补充专用策略。',
   weights: {
     ...DEFAULT_AI_WEIGHTS,

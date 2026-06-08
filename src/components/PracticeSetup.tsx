@@ -11,6 +11,7 @@ import { useCardCatalog } from '../hooks/useCardCatalog';
 
 const AI_OPPONENT_DECKS = [
   { id: 'adventurer-guild', name: '冒险家公会', detail: '新困难人机测试卡组' },
+  { id: 'pure-yellow-steel', name: '纯黄钢兵', detail: '蓝图魔偶展开与钢兵压制' },
 ] as const;
 
 export const PracticeSetup: React.FC = () => {
@@ -22,6 +23,7 @@ export const PracticeSetup: React.FC = () => {
   const [deckDropdownOpen, setDeckDropdownOpen] = useState(false);
   const [turnTime, setTurnTime] = useState(300);
   const [botDifficulty, setBotDifficulty] = useState<'simple' | 'hard'>('simple');
+  const [botDeckProfileId, setBotDeckProfileId] = useState<(typeof AI_OPPONENT_DECKS)[number]['id']>('adventurer-guild');
 
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
   const token = localStorage.getItem('token');
@@ -31,7 +33,7 @@ export const PracticeSetup: React.FC = () => {
   } = useCardCatalog({ includeEffects: false });
   const selectedDeck = myDecks.find(deck => deck.id === selectedDeckId) || null;
   const selectedDeckValidation = validateDeckForBattle(selectedDeck, cardsLoading ? undefined : getCardByReference);
-  const selectedOpponentDeck = AI_OPPONENT_DECKS[0];
+  const selectedOpponentDeck = AI_OPPONENT_DECKS.find(deck => deck.id === botDeckProfileId) || AI_OPPONENT_DECKS[0];
 
   useEffect(() => {
     const loadDecks = async () => {
@@ -243,9 +245,24 @@ export const PracticeSetup: React.FC = () => {
               <h2 className="text-sm font-bold uppercase tracking-widest text-zinc-500">人机卡组</h2>
               <span className="text-xs font-bold text-red-300">{selectedOpponentDeck.name}</span>
             </div>
-            <div className="rounded-xl border border-red-500/60 bg-red-600/20 px-4 py-3 text-left text-white">
-              <div className="text-sm font-black">{selectedOpponentDeck.name}</div>
-              <div className="mt-1 text-[10px] font-bold uppercase tracking-widest text-zinc-300">{selectedOpponentDeck.detail}</div>
+            <div className="grid gap-2">
+              {AI_OPPONENT_DECKS.map(deck => {
+                const active = selectedOpponentDeck.id === deck.id;
+                return (
+                  <button
+                    key={deck.id}
+                    type="button"
+                    onClick={() => setBotDeckProfileId(deck.id)}
+                    className={cn(
+                      'rounded-xl border px-4 py-3 text-left transition-colors',
+                      active ? 'border-red-500/60 bg-red-600/20 text-white' : 'border-zinc-800 bg-black/20 text-zinc-400 hover:bg-white/5'
+                    )}
+                  >
+                    <div className="text-sm font-black">{deck.name}</div>
+                    <div className="mt-1 text-[10px] font-bold uppercase tracking-widest text-zinc-500">{deck.detail}</div>
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}

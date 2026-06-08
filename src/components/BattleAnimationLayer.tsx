@@ -33,6 +33,7 @@ export interface BattleAnimationEvent {
   revealTo?: 'owner' | 'all' | 'hidden';
   cardBackUrl?: string;
   durationMs?: number;
+  panelDurationMs?: number;
   effectKind?: 'activated' | 'triggered';
 }
 
@@ -44,7 +45,7 @@ interface BattleAnimationLayerProps {
 
 const DISPLAY_MS: Record<BattleAnimationType, number> = {
   'card-played': 1100,
-  'effect-activated': 2800,
+  'effect-activated': 900,
   damage: 950,
   attack: 1000,
   goddess: 1800,
@@ -52,6 +53,8 @@ const DISPLAY_MS: Record<BattleAnimationType, number> = {
   'erosion-flip': 1500,
   'card-draw': 2000
 };
+
+const EFFECT_ACTIVATION_PANEL_MS = 2800;
 
 const PARALLEL_ANIMATION_TYPES = new Set<BattleAnimationType>(['card-played', 'erosion-flip', 'card-draw']);
 const UI_BLOCKING_ANIMATION_TYPES = new Set<BattleAnimationType>([
@@ -194,6 +197,7 @@ export const BattleAnimationLayer: React.FC<BattleAnimationLayerProps> = ({
   onEventComplete
 }) => {
   const layerRef = useRef<HTMLDivElement>(null);
+  const [panelEvent, setPanelEvent] = useState<BattleAnimationEvent | null>(null);
 
   const parallelEvents = React.useMemo(() => {
     return getBattleAnimationPlaybackGroup(events);
@@ -205,10 +209,25 @@ export const BattleAnimationLayer: React.FC<BattleAnimationLayerProps> = ({
   useEffect(() => {
     if (enabled) return;
     events.forEach(event => onEventComplete(event.id));
+    setPanelEvent(null);
   }, [enabled, events, onEventComplete]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    if (soloEvent?.type === 'effect-activated') {
+      setPanelEvent(current => current?.id === soloEvent.id ? current : soloEvent);
+    }
+  }, [enabled, soloEvent]);
 
   return (
     <div ref={layerRef} className="pointer-events-none absolute inset-0 z-[180] overflow-hidden">
+      {enabled && panelEvent && (
+        <EffectActivationPanel
+          key={panelEvent.id}
+          event={panelEvent}
+          onComplete={() => setPanelEvent(current => current?.id === panelEvent.id ? null : current)}
+        />
+      )}
       {enabled && parallelEvents.map((event, idx) => (
         <ParallelEventPlayer
           key={event.id}
@@ -367,19 +386,66 @@ const cardBackFaceElement = (toneClass: string) => (
   </div>
 );
 
-const EffectActivatedAnimation: React.FC<{ event: BattleAnimationEvent; layerRef: RefObject<HTMLDivElement> }> = ({ event, layerRef }) => {
-  const point = resolveAnchorRect(layerRef.current, event.sourceAnchor, event.sourceCardId, { cardIdFirst: false, excludeActionZone: true }) || zoneFallbackPoint(event.side, layerRef.current, true);
+const EffectActivationPanel: React.FC<{ event: BattleAnimationEvent; onComplete: () => void }> = ({ event, onComplete }) => {
   const isTriggered = event.effectKind === 'triggered';
-  const label = isTriggered ? '诱发效果' : '发动效果';
   const accent = isTriggered ? 'text-cyan-100' : 'text-amber-100';
   const iconTone = isTriggered ? 'text-cyan-200' : 'text-[#f27d26]';
-  const halo = isTriggered ? 'bg-cyan-400/28' : 'bg-[#f27d26]/28';
   const ring = isTriggered
     ? 'border-cyan-200/85 shadow-[0_0_44px_rgba(34,211,238,0.75)]'
     : 'border-amber-100/90 shadow-[0_0_44px_rgba(242,125,38,0.72)]';
   const panel = isTriggered
     ? 'border-cyan-200/35 bg-slate-950/88 shadow-[0_0_46px_rgba(34,211,238,0.32)]'
     : 'border-[#f27d26]/45 bg-zinc-950/88 shadow-[0_0_46px_rgba(242,125,38,0.34)]';
+  const durationMs = event.panelDurationMs || EFFECT_ACTIVATION_PANEL_MS;
+  const durationSeconds = Math.max(0.9, durationMs / 1000);
+  const panelExitStart = Math.max(0.72, 1 - 0.2 / durationSeconds);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(onComplete, durationMs);
+    return () => window.clearTimeout(timeout);
+  }, [event.id, durationMs]);
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-[60]">
+      <motion.div
+        initial={{ opacity: 0, y: 12, scale: 0.96 }}
+        animate={{ opacity: [0, 1, 1, 0], y: [12, 0, 0, -6], scale: [0.96, 1, 1, 0.98] }}
+        transition={{ duration: durationSeconds, times: [0, 0.16, panelExitStart, 1], ease: 'easeOut' }}
+        className={cn('absolute left-1/2 top-[16%] flex w-[min(86vw,30rem)] -translate-x-1/2 items-center gap-3 rounded-xl border px-3 py-2.5 backdrop-blur-md md:top-[18%] md:px-4', panel)}
+      >
+        <div className={cn('relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-black/45 md:h-12 md:w-12', ring)}>
+          {event.cardImageUrl ? (
+            <img
+              src={event.cardImageUrl}
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover opacity-70"
+              draggable={false}
+              referrerPolicy="no-referrer"
+            />
+          ) : null}
+          <div className="absolute inset-0 bg-black/35" />
+          <Zap className={cn('relative h-5 w-5 md:h-6 md:w-6', iconTone)} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className={cn('text-[10px] font-black leading-none md:text-[11px]', accent)}>{event.title}</div>
+          <div className="mt-1 truncate text-sm font-black italic leading-tight text-white md:text-base">{event.cardName || event.title}</div>
+          {event.subtitle && (
+            <div className="mt-1 line-clamp-2 text-[11px] font-bold leading-snug text-white/68 md:line-clamp-3 md:text-xs">{event.subtitle}</div>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
+
+const EffectActivatedAnimation: React.FC<{ event: BattleAnimationEvent; layerRef: RefObject<HTMLDivElement> }> = ({ event, layerRef }) => {
+  const point = resolveAnchorRect(layerRef.current, event.sourceAnchor, event.sourceCardId, { cardIdFirst: false, excludeActionZone: true }) || zoneFallbackPoint(event.side, layerRef.current, true);
+  const isTriggered = event.effectKind === 'triggered';
+  const iconTone = isTriggered ? 'text-cyan-200' : 'text-[#f27d26]';
+  const halo = isTriggered ? 'bg-cyan-400/28' : 'bg-[#f27d26]/28';
+  const ring = isTriggered
+    ? 'border-cyan-200/85 shadow-[0_0_44px_rgba(34,211,238,0.75)]'
+    : 'border-amber-100/90 shadow-[0_0_44px_rgba(242,125,38,0.72)]';
   const glow = isTriggered
     ? 'from-cyan-300/0 via-cyan-200/60 to-fuchsia-300/0'
     : 'from-[#f27d26]/0 via-amber-100/70 to-[#f27d26]/0';
@@ -387,8 +453,6 @@ const EffectActivatedAnimation: React.FC<{ event: BattleAnimationEvent; layerRef
     ? 'border-cyan-200/60 shadow-[0_0_24px_rgba(34,211,238,0.45)]'
     : 'border-amber-100/60 shadow-[0_0_24px_rgba(242,125,38,0.45)]';
   const cardWidth = Math.max(48, Math.min(82, (point.width || 78) * 0.76));
-  const durationSeconds = Math.max(0.9, (event.durationMs || DISPLAY_MS['effect-activated']) / 1000);
-  const panelExitStart = Math.max(0.72, 1 - 0.2 / durationSeconds);
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-50">
@@ -427,33 +491,6 @@ const EffectActivatedAnimation: React.FC<{ event: BattleAnimationEvent; layerRef
             transition={{ duration: 0.72, ease: 'easeOut' }}
             className={cn('absolute inset-y-0 w-1/2 bg-gradient-to-r mix-blend-screen', glow)}
           />
-        </div>
-      </motion.div>
-      <motion.div
-        initial={{ opacity: 0, y: 12, scale: 0.96 }}
-        animate={{ opacity: [0, 1, 1, 0], y: [12, 0, 0, -6], scale: [0.96, 1, 1, 0.98] }}
-        transition={{ duration: durationSeconds, times: [0, 0.16, panelExitStart, 1], ease: 'easeOut' }}
-        className={cn('absolute left-1/2 top-[16%] flex w-[min(86vw,30rem)] -translate-x-1/2 items-center gap-3 rounded-xl border px-3 py-2.5 backdrop-blur-md md:top-[18%] md:px-4', panel)}
-      >
-        <div className={cn('relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-black/45 md:h-12 md:w-12', ring)}>
-          {event.cardImageUrl ? (
-            <img
-              src={event.cardImageUrl}
-              alt=""
-              className="absolute inset-0 h-full w-full object-cover opacity-70"
-              draggable={false}
-              referrerPolicy="no-referrer"
-            />
-          ) : null}
-          <div className="absolute inset-0 bg-black/35" />
-          <Zap className={cn('relative h-5 w-5 md:h-6 md:w-6', iconTone)} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className={cn('text-[10px] font-black leading-none md:text-[11px]', accent)}>{label}</div>
-          <div className="mt-1 truncate text-sm font-black italic leading-tight text-white md:text-base">{event.cardName || event.title}</div>
-          {event.subtitle && (
-            <div className="mt-0.5 truncate text-[11px] font-bold leading-tight text-white/68 md:text-xs">{event.subtitle}</div>
-          )}
         </div>
       </motion.div>
     </motion.div>

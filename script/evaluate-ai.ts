@@ -941,6 +941,135 @@ function buildFailureReasonRows(results: MatchResult[]) {
   return rows.sort((a, b) => Number(b[2]) - Number(a[2]));
 }
 
+const KEY_ISSUE_CODES = [
+  'MISSED_LETHAL',
+  'BAD_ATTACK_INTO_STRONG_DEFENDER',
+  'BAD_ATTACK_LOST_UNIT',
+  'UNDER_PRESSURE_NO_STABILIZE',
+  'BAD_PAYMENT',
+  'HIGH_PAYMENT_RISK',
+  'LOW_DECK_PAYMENT',
+  'QUERY_FAILED',
+  'EFFECT_FAILED',
+  'ACTIVATE_EFFECT_FAILED',
+  'LOW_VALUE_COUNTERING_ACTION',
+] as const;
+
+const KEY_ISSUE_LABELS: Record<string, string> = {
+  MISSED_LETHAL: '漏斩杀',
+  BAD_ATTACK_INTO_STRONG_DEFENDER: '坏攻击',
+  BAD_ATTACK_LOST_UNIT: '坏攻击',
+  UNDER_PRESSURE_NO_STABILIZE: '坏防御',
+  BAD_PAYMENT: '坏支付',
+  HIGH_PAYMENT_RISK: '坏支付',
+  LOW_DECK_PAYMENT: '低牌库风险',
+  QUERY_FAILED: '查询失败',
+  EFFECT_FAILED: '效果发动失败',
+  ACTIVATE_EFFECT_FAILED: '效果发动失败',
+  LOW_VALUE_COUNTERING_ACTION: '低价值对抗窗口动作',
+};
+
+function issueSampleFromLog(log: AiDecisionLog) {
+  return {
+    turn: log.turn,
+    phase: log.phase,
+    action: log.action,
+    subject: log.subject || '',
+    score: log.score === undefined ? undefined : Number(log.score.toFixed(1)),
+    reason: log.reason || '',
+    details: formatDecisionDetails(log),
+  };
+}
+
+function collectRecentDecisionSamples(logs: AiDecisionLog[], code: string) {
+  const matches = logs.filter(log => {
+    if (code === 'QUERY_FAILED') return log.action === 'QUERY_FAILED';
+    if (code === 'ACTIVATE_EFFECT_FAILED' || code === 'EFFECT_FAILED') return log.action === 'ACTIVATE_EFFECT_FAILED';
+    if (code === 'LOW_VALUE_COUNTERING_ACTION') return log.phase === 'COUNTERING' && ['ACTIVATE_EFFECT', 'PLAY_CONFRONTATION_STORY', 'PLAY_BATTLE_STORY'].includes(log.action);
+    if (code === 'BAD_PAYMENT' || code === 'HIGH_PAYMENT_RISK' || code === 'LOW_DECK_PAYMENT') return log.action === 'PAYMENT';
+    if (code === 'BAD_ATTACK_INTO_STRONG_DEFENDER' || code === 'BAD_ATTACK_LOST_UNIT') return log.action === 'ATTACK';
+    if (code === 'MISSED_LETHAL' || code === 'UNDER_PRESSURE_NO_STABILIZE') return log.action === 'TURN_PLAN' || log.action === 'END_TURN' || log.action === 'HOLD_ATTACKERS';
+    return false;
+  });
+  return matches.slice(-3).map(issueSampleFromLog);
+}
+
+function buildKeyIssueSummary(results: MatchResult[]) {
+  const summary = new Map<string, Map<string, { code: string; label: string; count: number; games: Set<string>; samples: ReturnType<typeof issueSampleFromLog>[] }>>();
+
+  const ensure = (deck: string, code: string) => {
+    if (!summary.has(deck)) summary.set(deck, new Map());
+    const deckMap = summary.get(deck)!;
+    if (!deckMap.has(code)) {
+      deckMap.set(code, {
+        code,
+        label: KEY_ISSUE_LABELS[code] || code,
+        count: 0,
+        games: new Set<string>(),
+        samples: [],
+      });
+    }
+    return deckMap.get(code)!;
+  };
+
+  for (const result of results) {
+    for (const [code, rawCount] of Object.entries(result.diagnosis.metrics || {})) {
+      const count = Number(rawCount);
+      if (!Number.isFinite(count) || count <= 0 || !KEY_ISSUE_LABELS[code]) continue;
+      for (const deck of [result.deckA, result.deckB]) {
+        const entry = ensure(deck, code);
+        entry.count += count;
+        entry.games.add(result.gameId);
+        entry.samples = [
+          ...entry.samples,
+          ...collectRecentDecisionSamples(result.aiDecisionLogs || [], code),
+        ].slice(-3);
+      }
+    }
+
+    for (const [deck, stats] of Object.entries(result.deckDecisionStats || {})) {
+      const queryFailures = Number(stats.queryFailures || 0);
+      if (queryFailures > 0) {
+        const entry = ensure(deck, 'QUERY_FAILED');
+        entry.count += queryFailures;
+        entry.games.add(result.gameId);
+        entry.samples = [...entry.samples, ...collectRecentDecisionSamples(result.aiDecisionLogs || [], 'QUERY_FAILED')].slice(-3);
+      }
+
+      const effectFailures = Object.values(stats.effectFailures || {}).reduce((sum, count) => sum + Number(count), 0);
+      if (effectFailures > 0) {
+        const entry = ensure(deck, 'ACTIVATE_EFFECT_FAILED');
+        entry.count += effectFailures;
+        entry.games.add(result.gameId);
+        entry.samples = [...entry.samples, ...collectRecentDecisionSamples(result.aiDecisionLogs || [], 'ACTIVATE_EFFECT_FAILED')].slice(-3);
+      }
+    }
+  }
+
+  return Object.fromEntries(
+    [...summary.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([deck, issues]) => [
+        deck,
+        [...issues.values()]
+          .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code))
+          .map(issue => ({
+            code: issue.code,
+            label: issue.label,
+            count: issue.count,
+            games: issue.games.size,
+            samples: issue.samples,
+          })),
+      ])
+  );
+}
+
+function buildKeyIssueRows(summary: Record<string, Array<{ code: string; label: string; count: number; games: number }>>) {
+  return Object.entries(summary).flatMap(([deck, issues]) =>
+    issues.map(issue => [deck, issue.label, issue.code, issue.count, issue.games])
+  ).sort((a, b) => Number(b[3]) - Number(a[3]) || String(a[0]).localeCompare(String(b[0])));
+}
+
 function buildDecisionDiagnosticRows(results: MatchResult[]) {
   const totals = new Map<string, { count: number; games: number }>();
   for (const result of results) {
@@ -1068,11 +1197,13 @@ function buildTuningSuggestionRows(results: MatchResult[], limits?: EvaluationLi
 }
 
 function buildAiDiagnostics(results: MatchResult[], limits?: EvaluationLimits) {
+  const keyIssues = buildKeyIssueSummary(results);
   return {
     capWarnings: buildCapWarningRows(results, limits),
     diagnosisCounts: buildDiagnosisSummary(results),
     decisionActions: buildDecisionActionSummary(results),
     decisionDiagnostics: buildDecisionDiagnosticRows(results),
+    keyIssues,
     problemLeaderboard: buildProblemLeaderboardRows(results),
     tuningSuggestions: buildTuningSuggestionRows(results, limits),
     deckSummary: buildDeckAiSummaryRows(results),
@@ -1165,6 +1296,43 @@ function buildMarkdownReport(report: any) {
     lines.push(markdownTable(['Code', 'Affected Games', 'Suggestion'], capWarnings));
     lines.push('');
   }
+
+  lines.push('## Key Issue Summary By Deck');
+  lines.push('');
+  const keyIssueRows = buildKeyIssueRows(report.aiDiagnostics?.keyIssues || {});
+  if (keyIssueRows.length === 0) {
+    lines.push('- No key issues detected.');
+  } else {
+    lines.push(markdownTable(['Deck', 'Issue', 'Code', 'Count', 'Games'], keyIssueRows));
+  }
+  lines.push('');
+
+  lines.push('## Recent Decision Samples For Key Issues');
+  lines.push('');
+  const keyIssues = report.aiDiagnostics?.keyIssues || {};
+  const sampleRows: Array<Array<string | number>> = [];
+  for (const [deck, issues] of Object.entries(keyIssues) as Array<[string, any[]]>) {
+    for (const issue of issues.slice(0, 5)) {
+      for (const sample of (issue.samples || []).slice(-3)) {
+        sampleRows.push([
+          deck,
+          issue.code,
+          sample.turn ?? '',
+          sample.phase || '',
+          sample.action || '',
+          sample.subject || '',
+          sample.score ?? '',
+          `${sample.reason || ''} ${sample.details || ''}`.trim(),
+        ]);
+      }
+    }
+  }
+  if (sampleRows.length === 0) {
+    lines.push('- No key issue samples captured.');
+  } else {
+    lines.push(markdownTable(['Deck', 'Code', 'Turn', 'Phase', 'Action', 'Subject', 'Score', 'Decision'], sampleRows.slice(0, 60)));
+  }
+  lines.push('');
 
   lines.push('## AI Problem Leaderboard');
   lines.push('');

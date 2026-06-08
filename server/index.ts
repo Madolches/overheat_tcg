@@ -4805,19 +4805,25 @@ function createInitialPlayer(
         [fullDeck[i], fullDeck[j]] = [fullDeck[j], fullDeck[i]];
     }
 
-    const hand: Card[] = [];
+    const preferredCards: Card[] = [];
     for (const cardId of preferredOpeningCardIds || []) {
-        if (hand.length >= 4) break;
         const cardIndex = fullDeck.findIndex(card => card?.id === cardId);
         if (cardIndex === -1) continue;
         const [card] = fullDeck.splice(cardIndex, 1);
-        if (card) hand.push({ ...card, cardlocation: 'HAND' as any });
+        if (card) preferredCards.push(card);
     }
+
+    const hand: Card[] = preferredCards.slice(0, 4).map(card => ({ ...card, cardlocation: 'HAND' as any }));
 
     while (hand.length < 4) {
         const card = fullDeck.shift();
         if (!card) break;
         hand.push({ ...card, cardlocation: 'HAND' as any });
+    }
+
+    const reservedPreferredCards = preferredCards.slice(4);
+    for (let i = reservedPreferredCards.length - 1; i >= 0; i--) {
+        fullDeck.push({ ...reservedPreferredCards[i], cardlocation: 'DECK' as any });
     }
 
     return {

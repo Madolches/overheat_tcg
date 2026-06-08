@@ -10,10 +10,8 @@ import { getAuthToken } from '../socket';
 import { PlayField } from './PlayField';
 
 const AI_OPPONENT_DECKS = [
-  { id: 'white-temple', name: '纯白殿堂', detail: '稳健防守与场面控制' },
-  { id: 'blue-adventurer', name: '纯蓝冒险家', detail: '节奏展开与灵活交换' },
-  { id: 'red-dikai', name: '纯红迪凯', detail: '高速进攻与连续压制' },
-  { id: 'big-salala', name: '大萨拉拉', detail: '绿白中速压制与高质量战斗' },
+  { id: 'adventurer-guild', name: '冒险家公会', detail: '冒险家换位与协会展开' },
+  { id: 'pure-yellow-steel', name: '纯黄钢兵', detail: '蓝图魔偶展开与钢兵压制' },
 ] as const;
 
 const SANDBOX_PHASES: GamePhase[] = ['START', 'DRAW', 'EROSION', 'MAIN', 'DECLARE_END', 'DISCARD', 'END'];
@@ -110,7 +108,7 @@ export const SandboxSetup: React.FC = () => {
   const [createdRoomCode, setCreatedRoomCode] = useState('');
   const [createdRoomGameId, setCreatedRoomGameId] = useState('');
   const [botDifficulty, setBotDifficulty] = useState<'simple' | 'hard'>('simple');
-  const [botDeckProfileId, setBotDeckProfileId] = useState<(typeof AI_OPPONENT_DECKS)[number]['id']>('white-temple');
+  const [botDeckProfileId, setBotDeckProfileId] = useState<(typeof AI_OPPONENT_DECKS)[number]['id']>('adventurer-guild');
   const [centerPopover, setCenterPopover] = useState<CenterPopover>(null);
   const token = getAuthToken();
   const { cards, cardByReference, loading, error } = useCardCatalog({ includeEffects: false });

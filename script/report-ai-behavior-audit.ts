@@ -18,6 +18,34 @@ type BehaviorFinding = {
   recommendation: string;
 };
 
+type FindingGroup = {
+  key: string;
+  priority: 'P0' | 'P1' | 'P2';
+  severity: Severity;
+  deck: string;
+  code: string;
+  subject: string;
+  count: number;
+  games: string[];
+  firstTurn?: number;
+  latestTurn?: number;
+  recommendation: string;
+  sampleDetail: string;
+};
+
+type SuggestedRegressionScenario = {
+  priority: 'P0' | 'P1' | 'P2';
+  deck: string;
+  code: string;
+  gameId: string;
+  turn?: number;
+  phase?: string;
+  action?: string;
+  subject?: string;
+  failure: string;
+  expectation: string;
+};
+
 const SEVERITY_RANK: Record<Severity, number> = {
   error: 3,
   warning: 2,
@@ -202,6 +230,16 @@ function topEntries(record: Record<string, number>, limit = 20) {
   return Object.entries(record)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, limit);
+}
+
+function priorityFor(severity: Severity, count: number): 'P0' | 'P1' | 'P2' {
+  if (severity === 'error') return 'P0';
+  if (count >= 3 || severity === 'warning') return 'P1';
+  return 'P2';
+}
+
+function normalizeSubject(value: unknown) {
+  return String(value || 'UNKNOWN').slice(0, 120);
 }
 
 function normalizeNumber(value: unknown) {
@@ -609,6 +647,113 @@ function analyzeDecisionLogs(findings: BehaviorFinding[], result: any) {
   }
 }
 
+function buildFixPriorityGroups(findings: BehaviorFinding[]): FindingGroup[] {
+  const groups = new Map<string, FindingGroup & { gameSet: Set<string> }>();
+
+  for (const finding of findings) {
+    const deck = finding.deck || 'UNKNOWN';
+    const subject = normalizeSubject(finding.subject || finding.action || finding.phase || finding.code);
+    const key = `${deck}|${finding.code}|${subject}`;
+    const current = groups.get(key) || {
+      key,
+      priority: 'P2' as const,
+      severity: finding.severity,
+      deck,
+      code: finding.code,
+      subject,
+      count: 0,
+      games: [],
+      gameSet: new Set<string>(),
+      firstTurn: finding.turn,
+      latestTurn: finding.turn,
+      recommendation: finding.recommendation,
+      sampleDetail: finding.detail,
+    };
+
+    current.count++;
+    current.gameSet.add(finding.gameId);
+    if (SEVERITY_RANK[finding.severity] > SEVERITY_RANK[current.severity]) current.severity = finding.severity;
+    if (finding.turn !== undefined) {
+      current.firstTurn = current.firstTurn === undefined ? finding.turn : Math.min(current.firstTurn, finding.turn);
+      current.latestTurn = current.latestTurn === undefined ? finding.turn : Math.max(current.latestTurn, finding.turn);
+    }
+    current.priority = priorityFor(current.severity, current.count);
+    current.recommendation = finding.recommendation || current.recommendation;
+    current.sampleDetail = finding.detail || current.sampleDetail;
+    groups.set(key, current);
+  }
+
+  return [...groups.values()]
+    .map(({ gameSet, ...group }) => ({
+      ...group,
+      games: [...gameSet].slice(0, 5),
+    }))
+    .sort((a, b) =>
+      SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] ||
+      b.count - a.count ||
+      a.deck.localeCompare(b.deck) ||
+      a.code.localeCompare(b.code)
+    );
+}
+
+function expectationForFinding(finding: BehaviorFinding) {
+  if (finding.code === 'QUERY_FAILED') return 'AI should produce a legal selection or skip the effect before opening an unanswerable query.';
+  if (finding.code === 'EFFECT_FAILED' || finding.code === 'REPEATED_EFFECT_FAILURE') return 'AI should not attempt this effect unless costs, timing, and targets are legal.';
+  if (finding.code === 'MISSED_LETHAL') return 'AI should attack or choose the lethal line before ending/developing.';
+  if (finding.code === 'BAD_ATTACK_INTO_STRONG_DEFENDER' || finding.code === 'BAD_ATTACK_LOST_UNIT') return 'AI should hold the attacker unless the attack is lethal, erosion-critical, or trades favorably.';
+  if (finding.code === 'HIGH_PAYMENT_RISK' || finding.code === 'LOW_DECK_PAYMENT' || finding.code === 'BAD_PAYMENT') return 'AI should choose a safer payment or decline the action under defensive/deck pressure.';
+  if (finding.code === 'LOW_VALUE_COUNTERING_ACTION') return 'AI should pass the countering window unless the action has clear tactical payoff.';
+  if (finding.code === 'OVERCOMMIT_BOARD' || finding.code === 'MISSED_ATTACK_WINDOW') return 'AI should enter battle before extra development once the turn plan says to attack.';
+  return 'AI should avoid repeating this finding in a focused hard-AI scenario.';
+}
+
+function buildSuggestedRegressionScenarios(findings: BehaviorFinding[]): SuggestedRegressionScenario[] {
+  const selected: SuggestedRegressionScenario[] = [];
+  const seen = new Set<string>();
+  const ranked = [...findings].sort((a, b) =>
+    SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] ||
+    String(a.deck || '').localeCompare(String(b.deck || '')) ||
+    a.code.localeCompare(b.code)
+  );
+
+  for (const finding of ranked) {
+    if (!finding.deck) continue;
+    if (![
+      'QUERY_FAILED',
+      'EFFECT_FAILED',
+      'REPEATED_EFFECT_FAILURE',
+      'MISSED_LETHAL',
+      'BAD_ATTACK_INTO_STRONG_DEFENDER',
+      'BAD_ATTACK_LOST_UNIT',
+      'HIGH_PAYMENT_RISK',
+      'LOW_DECK_PAYMENT',
+      'BAD_PAYMENT',
+      'LOW_VALUE_COUNTERING_ACTION',
+      'OVERCOMMIT_BOARD',
+      'MISSED_ATTACK_WINDOW',
+    ].includes(finding.code)) continue;
+
+    const key = `${finding.deck}|${finding.code}|${normalizeSubject(finding.subject)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    selected.push({
+      priority: priorityFor(finding.severity, 1),
+      deck: finding.deck,
+      code: finding.code,
+      gameId: finding.gameId,
+      turn: finding.turn,
+      phase: finding.phase,
+      action: finding.action,
+      subject: finding.subject,
+      failure: finding.detail,
+      expectation: expectationForFinding(finding),
+    });
+    if (selected.length >= 20) break;
+  }
+
+  return selected;
+}
+
 function buildBehaviorReport(evalReport: any, sourcePath: string, findings: BehaviorFinding[]) {
   const severityCounts = countBy(findings, finding => finding.severity);
   const codeCounts = countBy(findings, finding => finding.code);
@@ -618,6 +763,9 @@ function buildBehaviorReport(evalReport: any, sourcePath: string, findings: Beha
     a.code.localeCompare(b.code) ||
     a.matchup.localeCompare(b.matchup)
   );
+
+  const fixPriorityGroups = buildFixPriorityGroups(sortedFindings);
+  const suggestedRegressionScenarios = buildSuggestedRegressionScenarios(sortedFindings);
 
   return {
     createdAt: new Date().toISOString(),
@@ -632,6 +780,8 @@ function buildBehaviorReport(evalReport: any, sourcePath: string, findings: Beha
     },
     codeCounts,
     deckCounts,
+    fixPriorityGroups,
+    suggestedRegressionScenarios,
     findings: sortedFindings,
   };
 }
@@ -657,6 +807,52 @@ function buildMarkdown(report: ReturnType<typeof buildBehaviorReport>) {
   lines.push('');
   const deckRows = topEntries(report.deckCounts, 20).map(([deck, count]) => [deck, count]);
   lines.push(deckRows.length ? markdownTable(['Deck', 'Count'], deckRows) : '- No deck-specific anomalies detected.');
+  lines.push('');
+
+  lines.push('## Fix Priority Leaderboard');
+  lines.push('');
+  if (report.fixPriorityGroups.length === 0) {
+    lines.push('- No fix priorities generated.');
+  } else {
+    lines.push(markdownTable(
+      ['Priority', 'Severity', 'Deck', 'Code', 'Subject', 'Count', 'Games', 'Turns', 'Recommendation', 'Sample'],
+      report.fixPriorityGroups.slice(0, 30).map(group => [
+        group.priority,
+        group.severity,
+        group.deck,
+        group.code,
+        group.subject,
+        group.count,
+        group.games.join(', '),
+        group.firstTurn === undefined ? '' : `${group.firstTurn}-${group.latestTurn ?? group.firstTurn}`,
+        group.recommendation,
+        group.sampleDetail,
+      ])
+    ));
+  }
+  lines.push('');
+
+  lines.push('## Suggested Regression Scenarios');
+  lines.push('');
+  if (report.suggestedRegressionScenarios.length === 0) {
+    lines.push('- No regression scenarios suggested.');
+  } else {
+    lines.push(markdownTable(
+      ['Priority', 'Deck', 'Code', 'Game', 'Turn', 'Phase', 'Action', 'Subject', 'Failure', 'Expected'],
+      report.suggestedRegressionScenarios.slice(0, 20).map(scenario => [
+        scenario.priority,
+        scenario.deck,
+        scenario.code,
+        scenario.gameId,
+        scenario.turn ?? '',
+        scenario.phase || '',
+        scenario.action || '',
+        scenario.subject || '',
+        scenario.failure,
+        scenario.expectation,
+      ])
+    ));
+  }
   lines.push('');
 
   lines.push('## Findings');
