@@ -50,8 +50,6 @@ const cardEffects: CardEffect[] = [story('203000093_cliff_rescue', '创痕1：�
     );
     return true;
   },
-  canPayCost: (_gameState, playerState, instance) =>
-    playerState.hand.some(greenHandCards(instance)),
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step !== 'TARGET') return;
     const target = graveUnitTargets(playerState).find((card: Card) => card.gamecardId === selections[0]);

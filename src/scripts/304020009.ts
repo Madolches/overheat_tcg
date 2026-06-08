@@ -1,6 +1,5 @@
 import { Card, GameState, PlayerState, CardEffect } from '../types/game';
 import { AtomicEffectExecutor } from '../services/AtomicEffectExecutor';
-import { canPayAccessCost } from './BaseUtil';
 
 const activate_304020009: CardEffect = {
   id: '304020009_activate',
@@ -35,8 +34,6 @@ const activate_304020009: CardEffect = {
     };
     return true;
   },
-  canPayCost: (gameState: GameState, playerState: PlayerState, instance: Card) =>
-    !instance.isExhausted && canPayAccessCost(gameState, playerState, 1, instance.color, instance),
   onCostResolve: async (instance: Card, gameState: GameState, playerState: PlayerState, _selections: string[], context: any) => {
     if (context?.step !== 'PAY_AND_EXHAUST_COST') return;
     if (instance.isExhausted) {

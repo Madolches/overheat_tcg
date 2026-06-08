@@ -272,7 +272,6 @@ export interface CardEffect {
   continuousPriority?: number; // Higher priority continuous effects are applied first during recalculation.
   condition?: (gameState: GameState, playerState: PlayerState, card: Card, event?: GameEvent) => boolean;
   cost?: (gameState: GameState, playerState: PlayerState, card: Card) => boolean | Promise<boolean>;
-  canPayCost?: (gameState: GameState, playerState: PlayerState, card: Card, context?: any) => boolean | { valid: boolean; reason?: string };
   applyContinuous?: (gameState: GameState, card: Card) => void;
   removeContinuous?: (gameState: GameState, card: Card) => void;
 

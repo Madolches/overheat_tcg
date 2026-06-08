@@ -53,8 +53,6 @@ const cardEffects: CardEffect[] = [{
     );
     return true;
   },
-  canPayCost: (_gameState, playerState, instance) =>
-    playerState.hand.some(greenHandCards(instance)),
   execute: async () => {},
   onQueryResolve: async (instance, gameState, playerState, selections, context) => {
     if (context?.step !== 'TARGET') return;

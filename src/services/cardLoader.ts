@@ -90,7 +90,6 @@ export function hydrateCard(card: Card | null) {
         condition: originalEffect.condition,
         execute: originalEffect.execute,
         cost: originalEffect.cost,
-        canPayCost: originalEffect.canPayCost || (originalEffect.cost as any)?.canPayCost,
         onQueryResolve: originalEffect.onQueryResolve,
         onCostResolve: originalEffect.onCostResolve,
         resolve: originalEffect.resolve,

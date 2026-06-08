@@ -17,8 +17,6 @@ const activate_104020066_1: CardEffect = {
     instance.isExhausted = true;
     return true;
   },
-  canPayCost: (_gameState: GameState, _playerState: PlayerState, instance: Card) =>
-    !instance.isExhausted,
   execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
     const options: any[] = [];
     Object.values(gameState.players).forEach(p => {
@@ -148,8 +146,6 @@ const activate_104020066_2: CardEffect = {
     instance.isExhausted = true;
     return true;
   },
-  canPayCost: (_gameState: GameState, _playerState: PlayerState, instance: Card) =>
-    !instance.isExhausted,
   execute: async (instance: Card, gameState: GameState, playerState: PlayerState) => {
     const options: any[] = [];
     Object.values(gameState.players).forEach(p => {
