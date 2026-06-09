@@ -10,8 +10,8 @@ import { getAuthToken } from '../socket';
 import { PlayField } from './PlayField';
 
 const AI_OPPONENT_DECKS = [
-  { id: 'adventurer-guild', name: '冒险家公会', detail: '冒险家换位与协会展开' },
-  { id: 'pure-yellow-steel', name: '纯黄钢兵', detail: '蓝图魔偶展开与钢兵压制' },
+  { id: 'adventurer-guild', name: '冒险家公会', detail: '换位铺场并持续进攻' },
+  { id: 'pure-yellow-steel', name: '纯黄钢兵', detail: '蓝图展开与钢兵压制' },
 ] as const;
 
 const SANDBOX_PHASES: GamePhase[] = ['START', 'DRAW', 'EROSION', 'MAIN', 'DECLARE_END', 'DISCARD', 'END'];

@@ -10,8 +10,8 @@ import { PageFallback } from './PageFallback';
 import { useCardCatalog } from '../hooks/useCardCatalog';
 
 const AI_OPPONENT_DECKS = [
-  { id: 'adventurer-guild', name: '冒险家公会', detail: '新困难人机测试卡组' },
-  { id: 'pure-yellow-steel', name: '纯黄钢兵', detail: '蓝图魔偶展开与钢兵压制' },
+  { id: 'adventurer-guild', name: '冒险家公会', detail: '换位铺场并持续进攻' },
+  { id: 'pure-yellow-steel', name: '纯黄钢兵', detail: '蓝图展开与钢兵压制' },
 ] as const;
 
 export const PracticeSetup: React.FC = () => {
