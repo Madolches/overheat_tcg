@@ -36,8 +36,9 @@ import {
   scorePlayableCard,
   scorePaymentSacrificeValue
 } from './ai/hardStrategy';
-import { ADVENTURER_GUILD_PROFILE_ID, describeAdventurerGuildAttack, describeAdventurerGuildDefense, describeAdventurerGuildPlayableCard, describeAdventurerGuildQueryOption, getAdventurerGuildRouteAdvice, scoreAdventurerGuildDevelopmentPriority } from './ai/decks/adventurerGuildStrategy';
+import { ADVENTURER_GUILD_PROFILE_ID, canAdventurerGuildBatraAttackIntoReadyDefender, describeAdventurerGuildAttack, describeAdventurerGuildDefense, describeAdventurerGuildPlayableCard, describeAdventurerGuildQueryOption, getAdventurerGuildRouteAdvice, scoreAdventurerGuildDevelopmentPriority } from './ai/decks/adventurerGuildStrategy';
 import { chooseHardAiForcedFirstTurnPlay, getHardAiOpeningCardIds, markHardAiForcedOpeningPlayed, scoreHardAiOpeningQueryCard } from './ai/decks/openingProfiles';
+import { PURE_YELLOW_STEEL_PROFILE_ID } from './ai/decks/pureYellowSteel';
 
 export { getHardAiOpeningCardIds } from './ai/decks/openingProfiles';
 
@@ -8582,6 +8583,40 @@ export const ServerGameService = {
 
     const profile = ServerGameService.getBotProfile(gameState, playerUid);
     const incomingThreat = estimateIncomingThreat(gameState, player, profile);
+    const latestTurnPlan = [...(gameState.aiDecisionLogs || [])]
+      .reverse()
+      .find(log =>
+        log.playerUid === playerUid &&
+        log.turn === gameState.turnCount &&
+        log.action === 'TURN_PLAN'
+      );
+    const turnPlanDetails = latestTurnPlan?.details || {};
+    const numericPlanDetail = (key: string) => {
+      const value = Number(turnPlanDetails[key]);
+      return Number.isFinite(value) ? value : 0;
+    };
+    const truthyPlanDetail = (key: string) => {
+      const value = turnPlanDetails[key];
+      return value === true || value === 'true' || value === 1 || value === '1';
+    };
+    const planDefendersNeeded = numericPlanDetail('defendersNeededNextTurn');
+    const planReserveDefenders = numericPlanDetail('reserveDefenders');
+    const planIncomingLethal = truthyPlanDetail('incomingLethal');
+    const planMode = String(latestTurnPlan?.subject || turnPlanDetails.planMode || '');
+    const planTacticalLine = String(turnPlanDetails.tacticalLine || '');
+    const planIsClosing =
+      planMode === 'lethal' ||
+      planTacticalLine === 'lethal' ||
+      planTacticalLine === 'erosion-lethal';
+    const turnPlanDefensePressure =
+      !planIsClosing &&
+      (
+        planIncomingLethal ||
+        planDefendersNeeded > 0 ||
+        planReserveDefenders > 0 ||
+        planMode === 'defense' ||
+        planMode === 'stabilize'
+      );
     const ownErosion = countErosion(player);
     const lowDeck = profile.riskThresholds?.lowDeck ?? 10;
     const reserveDeck = profile.riskThresholds?.reserveDefendersAtDeck ?? lowDeck;
@@ -8592,7 +8627,8 @@ export const ServerGameService = {
         player.deck.length <= reserveDeck ||
         incomingThreat.defendersNeeded > 0 ||
         incomingThreat.lethalWithoutBlocks ||
-        incomingThreat.totalDamage >= Math.max(4, 10 - ownErosion)
+        incomingThreat.totalDamage >= Math.max(4, 10 - ownErosion) ||
+        turnPlanDefensePressure
       );
     const preserveBoardForPlan =
       profile.gamePlan?.mode === 'engine' ||
@@ -8637,7 +8673,19 @@ export const ServerGameService = {
         if (preserveBoardForPlan && (unit.damage || 0) > 0) penalty += (unit.damage || 0) * 6;
       }
       if (exhaustedUnits.length >= 2) penalty += (exhaustedUnits.length - 1) * 12;
-      const missingDefenders = Math.max(0, incomingThreat.defendersNeeded - readyDefendersAfter);
+      const requiredDefenders = Math.max(
+        incomingThreat.defendersNeeded,
+        planDefendersNeeded,
+        planReserveDefenders
+      );
+      const missingDefenders = Math.max(0, requiredDefenders - readyDefendersAfter);
+      if (turnPlanDefensePressure && exhaustedReadyDefenders > 0) {
+        const planPenalty =
+          exhaustedReadyDefenders * (planIncomingLethal ? 95 : 54) +
+          missingDefenders * (planIncomingLethal ? 55 : 36);
+        penalty += planPenalty;
+        notes.push(`turn-plan defender payment risk ${Math.round(planPenalty)}`);
+      }
       if (missingDefenders > 0) penalty += missingDefenders * (incomingThreat.lethalWithoutBlocks ? 44 : 30);
       if (incomingThreat.lethalThroughOneBlock && readyDefendersAfter < 2) penalty += 28;
       if (incomingThreat.totalDamage >= Math.max(4, 10 - ownErosion) && readyDefendersAfter === 0) penalty += 36;
@@ -9993,6 +10041,7 @@ export const ServerGameService = {
             damageAfterTwoBlocks: turnPlan.opponentDamageAfterTwoBlocks,
             incomingLethal: turnPlan.opponentLethalWithoutBlocks,
             desperationAttack: turnPlan.desperationAttack,
+            lastChanceAttack: turnPlan.lastChanceAttack,
             attackBeforeDeveloping: turnPlan.attackBeforeDeveloping,
             minMainEffectScore: Number(turnPlan.minMainEffectScore.toFixed(1)),
             minBattleEffectScore: Number(turnPlan.minBattleEffectScore.toFixed(1)),
@@ -10168,6 +10217,8 @@ export const ServerGameService = {
       let selectedErosionCard: Card | undefined;
       let selectedErosionScore: number | undefined;
       let erosionReason = 'clear erosion cards to grave';
+      let erosionIncomingDamageAfterReadyBlocks: number | undefined;
+      let erosionProjectedDeckAfterChoiceC: number | undefined;
 
       if (difficulty === 'hard' && erosionCards.length > 0) {
         const recoveryValue = (card: Card) => {
@@ -10218,10 +10269,16 @@ export const ServerGameService = {
           !((unit as any).data?.cannotDefendTurn === gameState.turnCount) &&
           !((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount)
         ).length;
+        const backErosion = bot.erosionBack.filter(Boolean).length;
         const opponentUid = gameState.playerIds.find(uid => uid !== playerUid);
         const opponent = opponentUid ? gameState.players[opponentUid] : undefined;
         const opponentUnits = opponent?.unitZone.filter(Boolean).length || 0;
         const incomingThreat = estimateIncomingThreat(gameState, bot, profile);
+        const blockableIncomingDamage = incomingThreat.attackDamages
+          .slice(0, Math.min(readyDefenders, incomingThreat.attackDamages.length))
+          .reduce((sum, damage) => sum + damage, 0);
+        const incomingDamageAfterReadyBlocks = Math.max(0, incomingThreat.totalDamage - blockableIncomingDamage);
+        erosionIncomingDamageAfterReadyBlocks = incomingDamageAfterReadyBlocks;
         const affordableHandUnits = bot.hand.filter(card => {
           if (card.type !== 'UNIT') return false;
           const effectiveCost = ServerGameService.getEffectivePlayCost(bot, card, gameState);
@@ -10261,6 +10318,13 @@ export const ServerGameService = {
           return ServerGameService.canBotPayPositiveCost(gameState, bot, effectiveCost, card.color, card);
         })();
         const boardBehind = ownUnits <= Math.max(1, opponentUnits);
+        const projectedDeckAfterChoiceC = bot.deck.length - 1;
+        erosionProjectedDeckAfterChoiceC = projectedDeckAfterChoiceC;
+        const projectedBackErosionAfterChoiceC = backErosion + 1;
+        const lowDeckRecoveryMustAffectBoard =
+          incomingThreat.lethalWithoutBlocks ||
+          incomingDamageAfterReadyBlocks > 0 ||
+          projectedDeckAfterChoiceC <= criticalDeck + 1;
         const highValueLowDeckRecovery =
           canUseHighValueChoiceC &&
           deckDanger &&
@@ -10270,17 +10334,43 @@ export const ServerGameService = {
             selectedScore >= 50 ||
             (selectedErosionCard.godMark && (selectedRecoveryValue >= 45 || selectedScore >= 30))
           ) &&
+          (!lowDeckRecoveryMustAffectBoard || selectedPlayableNow) &&
           (
-            handPressure ||
+            (!lowDeckRecoveryMustAffectBoard && handPressure) ||
             (needsTempoRecovery && selectedPlayableNow) ||
             (boardBehind && selectedPlayableNow) ||
             (selectedErosionCard.godMark && selectedPlayableNow)
           );
+        const choiceCResourcePressure =
+          canUseChoiceC &&
+          !!selectedErosionCard &&
+          bot.deck.length <= lowDeck + 2 &&
+          incomingThreat.attackers > 0 &&
+          (
+            projectedDeckAfterChoiceC <= lowDeck ||
+            incomingDamageAfterReadyBlocks >= Math.max(2, 10 - projectedBackErosionAfterChoiceC) ||
+            incomingThreat.totalDamage >= 4
+          );
+        const pureYellowSteelSustainedPressure =
+          profile.id === PURE_YELLOW_STEEL_PROFILE_ID &&
+          canUseChoiceC &&
+          !!selectedErosionCard &&
+          bot.deck.length <= lowDeck + 3 &&
+          incomingThreat.attackers >= 3 &&
+          (
+            incomingDamageAfterReadyBlocks >= 3 ||
+            incomingThreat.totalDamage >= Math.max(7, 10 - backErosion)
+          ) &&
+          !needsEmergencyRecovery;
 
         if (needsEmergencyRecovery) {
           selectedErosionCard = emergencyRecoveryCard;
           erosionChoice = 'C';
           erosionReason = 'emergency defense: recover a high-value playable unit from erosion despite low deck pressure';
+        } else if (choiceCResourcePressure || pureYellowSteelSustainedPressure) {
+          erosionChoice = 'A';
+          selectedErosionCard = undefined;
+          erosionReason = 'preserve deck and back erosion under incoming attack pressure';
         } else if (highValueLowDeckRecovery) {
           erosionChoice = 'C';
           erosionReason = 'low deck but high-value recovery: take the erosion card because the current board or hand needs it';
@@ -10310,6 +10400,8 @@ export const ServerGameService = {
           handSize: bot.hand.length,
           erosionReason,
           selectedScore: selectedErosionScore !== undefined ? Number(selectedErosionScore.toFixed(1)) : undefined,
+          incomingDamageAfterReadyBlocks: erosionIncomingDamageAfterReadyBlocks,
+          projectedDeckAfterChoiceC: erosionProjectedDeckAfterChoiceC,
         },
       });
       await ServerGameService.handleErosionChoice(gameState, playerUid, erosionChoice, selectedErosionCard?.gamecardId);
@@ -10318,6 +10410,29 @@ export const ServerGameService = {
 
     // Main Phase Logic
     if (gameState.phase === 'MAIN') {
+      const batraReadyDefenderAttackCandidates = difficulty === 'hard' && gameState.turnCount > 1
+        ? bot.unitZone.filter((unit): unit is Card =>
+          !!unit &&
+          canUnitAttack(gameState, unit) &&
+          canAdventurerGuildBatraAttackIntoReadyDefender(gameState, bot, unit)
+        )
+        : [];
+      if (batraReadyDefenderAttackCandidates.length > 0 && (bot as any).botReservedAttackTurn === gameState.turnCount) {
+        const batraAttackIds = new Set(batraReadyDefenderAttackCandidates.map(card => card.gamecardId));
+        delete (bot as any).botReservedAttackTurn;
+        delete (bot as any).botHeldUnfavorableAttackTurn;
+        if ((bot as any).botReservedDefenderTurn === gameState.turnCount && Array.isArray((bot as any).botReservedDefenderIds)) {
+          const remainingReservedIds = ((bot as any).botReservedDefenderIds as string[])
+            .filter(id => !batraAttackIds.has(id));
+          if (remainingReservedIds.length > 0) {
+            (bot as any).botReservedDefenderIds = remainingReservedIds;
+          } else {
+            delete (bot as any).botReservedDefenderTurn;
+            delete (bot as any).botReservedDefenderIds;
+          }
+        }
+      }
+
       const forcedAttackUnit = ServerGameService.getForcedAttackUnit(gameState, playerUid);
       if (forcedAttackUnit) {
         ServerGameService.recordAiDecision(gameState, playerUid, {
@@ -10432,7 +10547,10 @@ export const ServerGameService = {
         !turnPlan.attackBeforeDeveloping &&
         gameState.turnCount > 1 &&
         (bot as any).botClosingAttackStartedTurn === gameState.turnCount &&
-        (isClosingTurnPlan(turnPlan) || turnPlan.totalAvailableDamage >= Math.max(1, turnPlan.damageToCritical))
+        (
+          isClosingTurnPlan(turnPlan) ||
+          turnPlan.damageThroughLikelyDefenders >= Math.max(1, turnPlan.damageToCritical)
+        )
       ) {
         const attackCandidates = bot.unitZone.filter(unit => canUnitAttack(gameState, unit)) as Card[];
         if (attackCandidates.length > 0) {
@@ -10446,6 +10564,7 @@ export const ServerGameService = {
               pressureAttackAlreadyStarted: true,
               opponentErosion: turnPlan.opponentErosion,
               totalAvailableDamage: attackCandidates.reduce((sum, unit) => sum + Math.max(0, unit.damage || 0), 0),
+              damageThroughLikelyDefenders: turnPlan.damageThroughLikelyDefenders,
               damageToCritical: turnPlan.damageToCritical,
               ownDeck: bot.deck.length,
             },
@@ -10465,9 +10584,6 @@ export const ServerGameService = {
         const shouldAttackBeforeDeveloping = turnPlan.attackBeforeDeveloping;
 
         if (shouldAttackBeforeDeveloping) {
-          if (await ServerGameService.tryActivateBotEffect(gameState, playerUid, 'MAIN_PRE_ATTACK_SETUP', Math.max(42, turnPlan?.minBattleEffectScore ?? 9.5), onUpdate)) {
-            return;
-          }
           ServerGameService.markBotClosingAttackCommitment(gameState, playerUid, turnPlan);
           ServerGameService.recordAiDecision(gameState, playerUid, {
             action: 'ENTER_BATTLE',
@@ -10535,6 +10651,23 @@ export const ServerGameService = {
         return;
       }
 
+      const incomingThreatForPlayPayments = difficulty === 'hard' && turnPlan
+        ? estimateIncomingThreat(gameState, bot, profile)
+        : undefined;
+      const incomingDamageAfterBlocks = (blockers: number) => {
+        if (!incomingThreatForPlayPayments) return 0;
+        const blockCount = Math.max(0, Math.min(
+          Math.floor(blockers),
+          incomingThreatForPlayPayments.attackDamages.length
+        ));
+        const blockedDamage = incomingThreatForPlayPayments.attackDamages
+          .slice(0, blockCount)
+          .reduce((sum, damage) => sum + damage, 0);
+        return Math.max(0, incomingThreatForPlayPayments.totalDamage - blockedDamage);
+      };
+      const mainOpponentUid = gameState.playerIds.find(uid => uid !== playerUid);
+      const mainOpponent = mainOpponentUid ? gameState.players[mainOpponentUid] : undefined;
+
       const buildPlayOption = (card: Card) => {
         const rawScore = difficulty === 'hard'
           ? scorePlayableCard(gameState, bot, card, profile)
@@ -10564,6 +10697,8 @@ export const ServerGameService = {
           exhaustedPaymentUnits.length === 0 &&
           !((initialPaymentSelection as any).erosionFrontIds || []).length;
         const estimatedDeckPayment = paysWithDeck ? effectiveCost : 0;
+        const deckAfterPayment = estimatedDeckPayment > 0 ? bot.deck.length - estimatedDeckPayment : bot.deck.length;
+        const erosionAfterPayment = estimatedDeckPayment > 0 ? countErosion(bot) + estimatedDeckPayment : countErosion(bot);
         const defensePaymentPressure = difficulty === 'hard' && !!turnPlan && (
           turnPlan.mode === 'defense' ||
           turnPlan.defendersNeededNextTurn > 0 ||
@@ -10577,6 +10712,7 @@ export const ServerGameService = {
         );
         const netReadyDefenders = (card.type === 'UNIT' ? 1 : 0) - exhaustedPaymentUnits.length;
         const projectedReadyDefenders = Math.max(0, readyDefendersBefore + netReadyDefenders);
+        const incomingDamageAfterProjectedBlocks = incomingDamageAfterBlocks(projectedReadyDefenders);
         let defenseDevelopmentBonus = 0;
         if (defensePaymentPressure && card.type === 'UNIT') {
           const neededDefenders = turnPlan?.defendersNeededNextTurn || 0;
@@ -10596,20 +10732,54 @@ export const ServerGameService = {
           defensivePaymentPenalty += exhaustedPaymentUnits.length * (turnPlan?.opponentLethalWithoutBlocks ? 22 : 12);
           if (netReadyDefenders < 0) defensivePaymentPenalty += Math.abs(netReadyDefenders) * 34;
           if ((turnPlan?.defendersNeededNextTurn || 0) > 0 && netReadyDefenders < 1) defensivePaymentPenalty += 12;
+          const requiredDefenders = Math.max(
+            turnPlan?.defendersNeededNextTurn || 0,
+            turnPlan?.reserveDefenders || 0,
+            turnPlan?.opponentLethalWithoutBlocks ? 1 : 0
+          );
+          const missingDefendersAfter = Math.max(0, requiredDefenders - projectedReadyDefenders);
+          const missingDefendersBefore = Math.max(0, requiredDefenders - readyDefendersBefore);
+          const newlyMissingDefenders = Math.max(0, missingDefendersAfter - missingDefendersBefore);
+          if (missingDefendersAfter > 0) {
+            defensivePaymentPenalty += missingDefendersAfter * (turnPlan?.opponentLethalWithoutBlocks ? 90 : 46);
+          }
+          if (newlyMissingDefenders > 0) {
+            defensivePaymentPenalty += newlyMissingDefenders * (turnPlan?.opponentLethalWithoutBlocks ? 72 : 36);
+          }
         }
+        const stopDeckPaymentAt =
+          turnPlan?.stopSelfDrawAtDeck ??
+          profile.riskThresholds?.stopSelfDrawAtDeck ??
+          (profile.riskThresholds?.lowDeck ?? 10);
+        const criticalDeck = profile.riskThresholds?.criticalDeck ?? 3;
         if ((defensePaymentPressure || lowDeckPaymentPressure) && estimatedDeckPayment > 0) {
-          const deckAfterPayment = bot.deck.length - estimatedDeckPayment;
-          const erosionAfterPayment = countErosion(bot) + estimatedDeckPayment;
           const unsafeDeckPayment = deckAfterPayment <= 0 || erosionAfterPayment >= 10;
-          const stopDeckPaymentAt = profile.riskThresholds?.stopSelfDrawAtDeck ?? (profile.riskThresholds?.lowDeck ?? 10);
-          const criticalDeck = profile.riskThresholds?.criticalDeck ?? 3;
-          if (unsafeDeckPayment) defensivePaymentPenalty += 90 + estimatedDeckPayment * 12;
+          const highErosion = profile.riskThresholds?.highErosion ?? 7;
+          const criticalErosion = profile.riskThresholds?.criticalErosion ?? 9;
+          if (unsafeDeckPayment) defensivePaymentPenalty += 190 + estimatedDeckPayment * 24;
           else if (defensePaymentPressure && deckAfterPayment <= Math.max(2, turnPlan?.opponentDamageAfterOneBlock || 0)) defensivePaymentPenalty += 24 + estimatedDeckPayment * 8;
+          if (!unsafeDeckPayment && defensePaymentPressure && erosionAfterPayment >= highErosion) {
+            const criticalPayment = erosionAfterPayment >= criticalErosion;
+            defensivePaymentPenalty +=
+              (criticalPayment ? 78 : 32) +
+              estimatedDeckPayment * (criticalPayment ? 16 : 8) +
+              Math.max(0, erosionAfterPayment - highErosion + 1) * 12;
+          }
           if (!unsafeDeckPayment && lowDeckPaymentPressure && deckAfterPayment <= stopDeckPaymentAt) {
             const nearCriticalDeck = deckAfterPayment <= criticalDeck + 2;
             defensivePaymentPenalty += (nearCriticalDeck ? 34 : 12) + estimatedDeckPayment * (nearCriticalDeck ? 10 : 5);
             if (card.type !== 'UNIT') defensivePaymentPenalty += 8;
             if (card.type === 'UNIT' && (card.damage || 0) <= 1 && nearCriticalDeck) defensivePaymentPenalty += 8;
+          }
+          if (!unsafeDeckPayment && lowDeckPaymentPressure && incomingThreatForPlayPayments && incomingThreatForPlayPayments.totalDamage > 0) {
+            const survivalMarginAfterPayment = deckAfterPayment - incomingDamageAfterProjectedBlocks;
+            if (survivalMarginAfterPayment <= 0) {
+              defensivePaymentPenalty += 130 + estimatedDeckPayment * 18 + Math.abs(survivalMarginAfterPayment) * 28;
+            } else if (survivalMarginAfterPayment <= 1 || deckAfterPayment <= criticalDeck) {
+              defensivePaymentPenalty += 58 + estimatedDeckPayment * 16;
+            } else if (deckAfterPayment <= Math.max(criticalDeck + 2, incomingDamageAfterProjectedBlocks + 2)) {
+              defensivePaymentPenalty += 24 + estimatedDeckPayment * 8;
+            }
           }
           if (card.type === 'UNIT' && (turnPlan?.defendersNeededNextTurn || 0) > 1 && netReadyDefenders < (turnPlan?.defendersNeededNextTurn || 0)) {
             defensivePaymentPenalty += 18;
@@ -10617,6 +10787,117 @@ export const ServerGameService = {
         }
         const scadiErosionPaymentBonus = 0;
         let closingDevelopmentPenalty = 0;
+        const sequencingValue = difficulty === 'hard'
+          ? scoreMainPhaseCardSequencingValue(gameState, bot, card, profile)
+          : 0;
+        const addedImmediateDamage = card.type === 'UNIT' && card.isrush && bot.unitZone.some(slot => slot === null)
+          ? Math.max(0, card.damage || 0)
+          : 0;
+        const immediateDamageCanClose = !!turnPlan && addedImmediateDamage > 0 && (
+          turnPlan.damageThroughLikelyDefenders + addedImmediateDamage >= Math.max(1, turnPlan.damageToCritical) ||
+          (
+            !!mainOpponent &&
+            battleDamageWouldDeckOut(turnPlan.totalAvailableDamage + addedImmediateDamage, mainOpponent)
+          )
+        );
+        let matchupHighErosionPaymentPenalty = 0;
+        if (
+          difficulty === 'hard' &&
+          turnPlan &&
+          profile.id === PURE_YELLOW_STEEL_PROFILE_ID &&
+          turnPlan.opponentProfileId === ADVENTURER_GUILD_PROFILE_ID &&
+          gameState.turnCount > 2 &&
+          estimatedDeckPayment > 0 &&
+          !turnPlan.lethalWindow &&
+          !turnPlan.desperationAttack &&
+          !immediateDamageCanClose
+        ) {
+          const highErosion = profile.riskThresholds?.highErosion ?? 7;
+          const projectedIncomingDamage = Math.max(
+            incomingThreatForPlayPayments?.totalDamage || 0,
+            turnPlan.opponentPotentialDamage || 0
+          );
+          const projectedIncomingAttackers = incomingThreatForPlayPayments?.attackers || 0;
+          const wideAdventurerPressure =
+            projectedIncomingAttackers >= 3 ||
+            projectedIncomingDamage >= 7 ||
+            turnPlan.opponentDamageAfterOneBlock >= 4;
+          if (wideAdventurerPressure && erosionAfterPayment >= highErosion) {
+            matchupHighErosionPaymentPenalty +=
+              92 +
+              estimatedDeckPayment * 18 +
+              Math.max(0, erosionAfterPayment - highErosion + 1) * 24;
+            if (card.type === 'UNIT' && !card.isrush) matchupHighErosionPaymentPenalty += 28;
+          }
+        }
+        let selfDeckOutPlayPenalty = 0;
+        if (difficulty === 'hard' && !!turnPlan && estimatedDeckPayment > 0) {
+          const unsafeDeckPayment = deckAfterPayment <= 0 || erosionAfterPayment >= 10;
+          const tacticalSupportCanMatterImmediately =
+            card.type !== 'UNIT' &&
+            sequencingValue >= 40 &&
+            (
+              turnPlan.damageThroughLikelyDefenders >= Math.max(1, turnPlan.damageToCritical - 1) ||
+              turnPlan.lethalWindow ||
+              turnPlan.tacticalLine === 'lethal' ||
+              turnPlan.tacticalLine === 'erosion-lethal'
+            );
+          const emergencyBlockerDevelopment =
+            defensePaymentPressure &&
+            defenseDevelopmentBonus >= 24 &&
+            incomingDamageAfterProjectedBlocks <= Math.max(1, deckAfterPayment - 2);
+          if (
+            !unsafeDeckPayment &&
+            !immediateDamageCanClose &&
+            !tacticalSupportCanMatterImmediately &&
+            !emergencyBlockerDevelopment &&
+            turnPlan.avoidSelfDraw &&
+            bot.deck.length <= stopDeckPaymentAt &&
+            deckAfterPayment <= stopDeckPaymentAt
+          ) {
+            selfDeckOutPlayPenalty += 90 + estimatedDeckPayment * 22;
+            if (card.type !== 'UNIT' || !card.isrush) selfDeckOutPlayPenalty += 35;
+          }
+          if (unsafeDeckPayment && !immediateDamageCanClose && !tacticalSupportCanMatterImmediately) {
+            selfDeckOutPlayPenalty += 280 + estimatedDeckPayment * 32;
+            if (card.type === 'UNIT' && !card.isrush) selfDeckOutPlayPenalty += 90;
+          } else if (
+            !immediateDamageCanClose &&
+            deckAfterPayment <= Math.min(criticalDeck, stopDeckPaymentAt) &&
+            (
+              turnPlan.avoidSelfDraw ||
+              isClosingTurnPlan(turnPlan) ||
+              turnPlan.desperationAttack ||
+              bot.deck.length <= stopDeckPaymentAt
+            )
+          ) {
+            selfDeckOutPlayPenalty += 64 + estimatedDeckPayment * 14;
+            if (card.type === 'UNIT' && !card.isrush) selfDeckOutPlayPenalty += 28;
+          }
+          if (
+            !immediateDamageCanClose &&
+            incomingThreatForPlayPayments &&
+            incomingThreatForPlayPayments.totalDamage > 0 &&
+            deckAfterPayment <= Math.max(stopDeckPaymentAt, criticalDeck + 2) &&
+            (
+              turnPlan.avoidSelfDraw ||
+              turnPlan.desperationAttack ||
+              turnPlan.lastChanceAttack ||
+              turnPlan.mode === 'defense' ||
+              turnPlan.mode === 'stabilize' ||
+              bot.deck.length <= stopDeckPaymentAt
+            )
+          ) {
+            const survivalMarginAfterPayment = deckAfterPayment - incomingDamageAfterProjectedBlocks;
+            if (survivalMarginAfterPayment <= 0) {
+              selfDeckOutPlayPenalty += 150 + estimatedDeckPayment * 24 + Math.abs(survivalMarginAfterPayment) * 36;
+              if (card.type === 'UNIT' && !card.isrush) selfDeckOutPlayPenalty += 36;
+            } else if (survivalMarginAfterPayment <= 1 && deckAfterPayment <= criticalDeck + 2) {
+              selfDeckOutPlayPenalty += 58 + estimatedDeckPayment * 16;
+              if (card.type === 'UNIT' && !card.isrush) selfDeckOutPlayPenalty += 18;
+            }
+          }
+        }
         if (
           difficulty === 'hard' &&
           turnPlan &&
@@ -10624,7 +10905,6 @@ export const ServerGameService = {
           gameState.turnCount > 1 &&
           !turnPlan.attackBeforeDeveloping
         ) {
-          const sequencingValue = scoreMainPhaseCardSequencingValue(gameState, bot, card, profile);
           const addsImmediateAttacker = card.type === 'UNIT' && card.isrush && bot.unitZone.some(slot => slot === null);
           const tacticalSupport =
             sequencingValue >= 36 ||
@@ -10642,9 +10922,6 @@ export const ServerGameService = {
           .map(id => bot.unitZone.find(unit => unit?.gamecardId === id))
           .filter((unit): unit is Card => !!unit && canUnitAttack(gameState, unit));
         const exhaustedClosingDamage = exhaustedClosingAttackers.reduce((sum, unit) => sum + Math.max(0, unit.damage || 0), 0);
-        const addedImmediateDamage = card.type === 'UNIT' && card.isrush && bot.unitZone.some(slot => slot === null)
-          ? Math.max(0, card.damage || 0)
-          : 0;
         let closingPaymentPenalty = 0;
         if (
           difficulty === 'hard' &&
@@ -10666,16 +10943,21 @@ export const ServerGameService = {
         return {
           card,
           rawScore,
-          score: rawScore + defenseDevelopmentBonus + scadiErosionPaymentBonus - defensivePaymentPenalty - closingPaymentPenalty - closingDevelopmentPenalty,
+          score: rawScore + defenseDevelopmentBonus + scadiErosionPaymentBonus - defensivePaymentPenalty - matchupHighErosionPaymentPenalty - selfDeckOutPlayPenalty - closingPaymentPenalty - closingDevelopmentPenalty,
           effectiveCost,
           initialPaymentSelection,
           defensivePaymentPenalty,
+          matchupHighErosionPaymentPenalty,
+          selfDeckOutPlayPenalty,
           defenseDevelopmentBonus,
           scadiErosionPaymentBonus,
           closingPaymentPenalty,
           closingDevelopmentPenalty,
           exhaustedPaymentUnits,
           estimatedDeckPayment,
+          deckAfterPayment,
+          stopDeckPaymentAt,
+          incomingDamageAfterProjectedBlocks,
           netReadyDefenders,
           projectedReadyDefenders,
         };
@@ -10693,6 +10975,22 @@ export const ServerGameService = {
             bot.deck.length - option.estimatedDeckPayment <= 0 ||
             countErosion(bot) + option.estimatedDeckPayment >= 10
           )) return false;
+          if (option.estimatedDeckPayment > 0 && option.deckAfterPayment <= option.incomingDamageAfterProjectedBlocks + 1) return false;
+          if (option.score <= 0) {
+            if (option.score < -25) return false;
+            const fullyCoversIncomingDamage = option.incomingDamageAfterProjectedBlocks <= 0;
+            const tolerableDeckRisk =
+              option.selfDeckOutPlayPenalty < 80 &&
+              option.deckAfterPayment > option.incomingDamageAfterProjectedBlocks + 2;
+            if (
+              option.defenseDevelopmentBonus < 12 ||
+              !turnPlan.opponentLethalWithoutBlocks ||
+              !fullyCoversIncomingDamage ||
+              !tolerableDeckRisk
+            ) {
+              return false;
+            }
+          }
           return option.defenseDevelopmentBonus > 0;
         })
         : undefined;
@@ -10720,14 +11018,20 @@ export const ServerGameService = {
             openUnitSlots: bot.unitZone.filter(slot => slot === null).length,
             cost: effectiveCost,
             type: cardToPlay.type,
+            ownDeck: bot.deck.length,
             initialPayment: ServerGameService.describeAiPaymentSelection(gameState, initialPaymentSelection),
             rawScore: Number(chosenPlayOption.rawScore.toFixed(1)),
             defensivePaymentPenalty: Number(chosenPlayOption.defensivePaymentPenalty.toFixed(1)),
+            matchupHighErosionPaymentPenalty: Number(chosenPlayOption.matchupHighErosionPaymentPenalty.toFixed(1)),
+            selfDeckOutPlayPenalty: Number(chosenPlayOption.selfDeckOutPlayPenalty.toFixed(1)),
             defenseDevelopmentBonus: Number(chosenPlayOption.defenseDevelopmentBonus.toFixed(1)),
             closingPaymentPenalty: Number(chosenPlayOption.closingPaymentPenalty.toFixed(1)),
             closingDevelopmentPenalty: Number(chosenPlayOption.closingDevelopmentPenalty.toFixed(1)),
             paymentExhaustsUnits: chosenPlayOption.exhaustedPaymentUnits.length,
             estimatedDeckPayment: chosenPlayOption.estimatedDeckPayment,
+            deckAfterPayment: chosenPlayOption.deckAfterPayment,
+            stopDeckPaymentAt: chosenPlayOption.stopDeckPaymentAt,
+            incomingDamageAfterProjectedBlocks: chosenPlayOption.incomingDamageAfterProjectedBlocks,
             netReadyDefenders: chosenPlayOption.netReadyDefenders,
             projectedReadyDefenders: chosenPlayOption.projectedReadyDefenders,
             developmentTier: chosenDevelopment.tier,
@@ -10791,10 +11095,15 @@ export const ServerGameService = {
               initialPayment: ServerGameService.describeAiPaymentSelection(gameState, initialPaymentSelection),
               rawScore: Number(chosenPlayOption.rawScore.toFixed(1)),
               defensivePaymentPenalty: Number(chosenPlayOption.defensivePaymentPenalty.toFixed(1)),
+              matchupHighErosionPaymentPenalty: Number(chosenPlayOption.matchupHighErosionPaymentPenalty.toFixed(1)),
+              selfDeckOutPlayPenalty: Number(chosenPlayOption.selfDeckOutPlayPenalty.toFixed(1)),
               defenseDevelopmentBonus: Number(chosenPlayOption.defenseDevelopmentBonus.toFixed(1)),
               closingPaymentPenalty: Number(chosenPlayOption.closingPaymentPenalty.toFixed(1)),
               closingDevelopmentPenalty: Number(chosenPlayOption.closingDevelopmentPenalty.toFixed(1)),
               estimatedDeckPayment: chosenPlayOption.estimatedDeckPayment,
+              deckAfterPayment: chosenPlayOption.deckAfterPayment,
+              stopDeckPaymentAt: chosenPlayOption.stopDeckPaymentAt,
+              incomingDamageAfterProjectedBlocks: chosenPlayOption.incomingDamageAfterProjectedBlocks,
             },
           });
         }
@@ -10889,50 +11198,172 @@ export const ServerGameService = {
       const damageToCritical = damageToErosionCritical(opponent);
       const erosionPressureWindow = !!opponent && !opponent.isGoddessMode && damageThroughLikelyDefenders >= damageToCritical;
       const lethalWindow = opponent ? battleDamageWouldDeckOut(totalAvailableDamage, opponent) : false;
-      const ownErosion = turnPlan?.ownErosion ?? countErosion(bot);
-      const opponentPotentialDamage = turnPlan?.opponentPotentialDamage ?? (opponent
+      const effectiveLethalWindow = opponent
+        ? battleDamageWouldDeckOut(damageThroughLikelyDefenders, opponent)
+        : false;
+      const singleAttackForcesDefense = !!opponent && attackDamages.some(damage =>
+        battleDamageWouldBeFatal(damage, opponent)
+      );
+      const currentIncomingThreat = difficulty === 'hard'
+        ? estimateIncomingThreat(gameState, bot, profile)
+        : undefined;
+      const ownErosion = countErosion(bot);
+      const plannedOpponentPotentialDamage = turnPlan?.opponentPotentialDamage ?? (opponent
         ? opponent.unitZone.filter(Boolean).reduce((sum, unit) => sum + (unit?.damage || 0), 0)
         : 0);
+      const opponentPotentialDamage = Math.max(
+        plannedOpponentPotentialDamage,
+        currentIncomingThreat?.totalDamage || 0
+      );
+      const currentReserveDefenders = Math.max(
+        turnPlan?.reserveDefenders || 0,
+        currentIncomingThreat?.defendersNeeded || 0
+      );
+      const currentOpponentLethalWithoutBlocks =
+        !!turnPlan?.opponentLethalWithoutBlocks ||
+        !!currentIncomingThreat?.lethalWithoutBlocks;
+      const currentOpponentLethalThroughOneBlock =
+        !!turnPlan?.opponentLethalThroughOneBlock ||
+        !!currentIncomingThreat?.lethalThroughOneBlock;
       const dynamicCounterPressure =
         opponentPotentialDamage > 0 ||
-        !!turnPlan?.opponentLethalWithoutBlocks ||
-        !!turnPlan?.opponentLethalThroughOneBlock;
+        currentOpponentLethalWithoutBlocks ||
+        currentOpponentLethalThroughOneBlock;
+      const closingAttackCommitted =
+        difficulty === 'hard' &&
+        ServerGameService.hasBotClosingAttackCommitment(gameState, playerUid);
+      const batraReadyDefenderAttackerIds = new Set(attackCandidates
+        .filter(card => canAdventurerGuildBatraAttackIntoReadyDefender(gameState, bot, card))
+        .map(card => card.gamecardId));
+      const batraReadyDefenderAttackWindow =
+        difficulty === 'hard' &&
+        batraReadyDefenderAttackerIds.size > 0;
+      const blockableDeckPressureWindow =
+        difficulty === 'hard' &&
+        lethalWindow &&
+        !effectiveLethalWindow &&
+        !turnPlan?.opponentLethalWithoutBlocks &&
+        !turnPlan?.opponentLethalThroughOneBlock &&
+        (turnPlan?.defendersNeededNextTurn || 0) === 0 &&
+        (turnPlan?.reserveDefenders || 0) === 0;
+      const closingAttackStillForcing =
+        closingAttackCommitted &&
+        (
+          effectiveLethalWindow ||
+          blockableDeckPressureWindow ||
+          erosionPressureWindow ||
+          singleAttackForcesDefense ||
+          (likelyDefenders === 0 && totalAvailableDamage >= Math.max(1, damageToCritical))
+        );
       const forcingAttackWindow = difficulty === 'hard' && !!turnPlan && (
+        closingAttackStillForcing ||
+        batraReadyDefenderAttackWindow ||
         isClosingTurnPlan(turnPlan) ||
         turnPlan.tacticalLine === 'lethal' ||
         turnPlan.tacticalLine === 'erosion-lethal' ||
-        turnPlan.lethalWindow ||
+        effectiveLethalWindow ||
+        blockableDeckPressureWindow ||
         turnPlan.damageThroughLikelyDefenders >= Math.max(1, turnPlan.damageToCritical)
       );
+      const pressureAttackWindow =
+        difficulty === 'hard' &&
+        !!turnPlan &&
+        !forcedAttackUnit &&
+        !forcingAttackWindow &&
+        !turnPlan.desperationAttack &&
+        !effectiveLethalWindow &&
+        !erosionPressureWindow &&
+        singleAttackForcesDefense &&
+        attackCandidates.length > 1;
+      const lastChanceFullyBlocked =
+        !!turnPlan?.lastChanceAttack &&
+        damageThroughLikelyDefenders <= 0 &&
+        likelyDefenders >= attackCandidates.length;
+      const defenseCannotCoverAttackWindow =
+        difficulty === 'hard' &&
+        !forcedAttackUnit &&
+        !lastChanceFullyBlocked &&
+        dynamicCounterPressure &&
+        damageThroughLikelyDefenders > 0 &&
+        currentReserveDefenders > attackCandidates.length &&
+        bot.deck.length <= Math.max(3, opponentPotentialDamage) &&
+        (
+          currentOpponentLethalWithoutBlocks ||
+          currentOpponentLethalThroughOneBlock ||
+          (currentIncomingThreat?.defendersNeeded || 0) > attackCandidates.length
+        );
+      const lastChanceDefenseCannotCover =
+        !!turnPlan?.lastChanceAttack &&
+        defenseCannotCoverAttackWindow;
+      const mustPreservePlannedDefenders =
+        difficulty === 'hard' &&
+        !!turnPlan &&
+        !forcedAttackUnit &&
+        !forcingAttackWindow &&
+        !defenseCannotCoverAttackWindow &&
+        !turnPlan.lastChanceAttack &&
+        dynamicCounterPressure &&
+        !effectiveLethalWindow &&
+        !erosionPressureWindow &&
+        damageThroughLikelyDefenders <= 0 &&
+        currentReserveDefenders >= attackCandidates.length &&
+        bot.deck.length <= Math.max(4, opponentPotentialDamage + 2) &&
+        (
+          turnPlan.mode === 'defense' ||
+          turnPlan.mode === 'stabilize' ||
+          currentOpponentLethalWithoutBlocks ||
+          currentOpponentLethalThroughOneBlock
+        );
+      const defensiveDesperationReserve =
+        !!turnPlan?.desperationAttack &&
+        dynamicCounterPressure &&
+        (
+          turnPlan.mode === 'defense' ||
+          turnPlan.mode === 'stabilize' ||
+          currentOpponentLethalWithoutBlocks ||
+          currentOpponentLethalThroughOneBlock
+        );
       const shouldReserveDefenders =
         difficulty === 'hard' &&
         !forcedAttackUnit &&
         !forcingAttackWindow &&
-        !turnPlan?.desperationAttack &&
+        !defenseCannotCoverAttackWindow &&
+        !turnPlan?.lastChanceAttack &&
+        (!turnPlan?.desperationAttack || defensiveDesperationReserve) &&
         dynamicCounterPressure &&
-        !lethalWindow &&
+        !effectiveLethalWindow &&
         !erosionPressureWindow &&
         attackCandidates.length > 0 &&
-        (turnPlan?.reserveDefenders || 0) > 0;
-      const reserveCount = shouldReserveDefenders ? Math.min(turnPlan?.reserveDefenders || 0, attackCandidates.length) : 0;
-      const previousReservedIds = (bot as any).botReservedDefenderTurn === gameState.turnCount
-        ? new Set<string>((bot as any).botReservedDefenderIds || [])
+        currentReserveDefenders > 0;
+      const maxReserveCount = pressureAttackWindow && !mustPreservePlannedDefenders ? Math.max(0, attackCandidates.length - 1) : attackCandidates.length;
+      const reserveCount = shouldReserveDefenders ? Math.min(currentReserveDefenders, maxReserveCount) : 0;
+      const shouldCarryPreviousReserve =
+        shouldReserveDefenders &&
+        currentReserveDefenders > 0;
+      const previousReservedIds = shouldCarryPreviousReserve && (bot as any).botReservedDefenderTurn === gameState.turnCount
+        ? new Set<string>(turnPlan?.lastChanceAttack ? [] : ((bot as any).botReservedDefenderIds || []))
         : new Set<string>();
       const reservedDefenderIds = new Set([...attackCandidates]
-        .filter(card => dynamicCounterPressure && previousReservedIds.has(card.gamecardId))
+        .filter(card =>
+          dynamicCounterPressure &&
+          previousReservedIds.has(card.gamecardId) &&
+          !batraReadyDefenderAttackerIds.has(card.gamecardId)
+        )
         .map(card => card.gamecardId));
       const shouldHoldOnlyAttacker =
         difficulty === 'hard' &&
         !forcedAttackUnit &&
         !forcingAttackWindow &&
-        !turnPlan?.desperationAttack &&
+        !defenseCannotCoverAttackWindow &&
+        !turnPlan?.lastChanceAttack &&
+        (!turnPlan?.desperationAttack || defensiveDesperationReserve) &&
         dynamicCounterPressure &&
-        !lethalWindow &&
+        !effectiveLethalWindow &&
         !erosionPressureWindow &&
         attackCandidates.length === 1 &&
         (
           previousReservedIds.has(attackCandidates[0].gamecardId) ||
-          (turnPlan?.reserveDefenders || 0) >= attackCandidates.length ||
+          currentReserveDefenders >= attackCandidates.length ||
           (turnPlan?.mode === 'defense' && opponentPotentialDamage >= Math.max(4, 10 - ownErosion)) ||
           bot.deck.length <= Math.max(4, opponentPotentialDamage + 2)
         );
@@ -10947,13 +11378,18 @@ export const ServerGameService = {
             (scoreCardValue(b, profile) + (b.power || 0) / 500 + (b.damage || 0) * 2) -
             (scoreCardValue(a, profile) + (a.power || 0) / 500 + (a.damage || 0) * 2)
           )
+          .filter(card => !batraReadyDefenderAttackerIds.has(card.gamecardId))
           .slice(0, reserveCount)
           .forEach(card => reservedDefenderIds.add(card.gamecardId));
       }
       if (reservedDefenderIds.size > 0) {
         (bot as any).botReservedDefenderTurn = gameState.turnCount;
         (bot as any).botReservedDefenderIds = [...reservedDefenderIds];
-      } else if ((bot as any).botReservedDefenderTurn === gameState.turnCount && (!dynamicCounterPressure || attackCandidates.length === 0)) {
+      } else if ((bot as any).botReservedDefenderTurn === gameState.turnCount && (!shouldReserveDefenders || !dynamicCounterPressure || attackCandidates.length === 0)) {
+        delete (bot as any).botReservedDefenderTurn;
+        delete (bot as any).botReservedDefenderIds;
+      } else if (turnPlan?.lastChanceAttack) {
+        delete (bot as any).botReservedDefenderTurn;
         delete (bot as any).botReservedDefenderIds;
       }
       const attackPool = reservedDefenderIds.size > 0
@@ -10968,13 +11404,20 @@ export const ServerGameService = {
       const relaxedAttackThreshold =
         forcingAttackWindow ||
         isClosingTurnPlan(turnPlan) ||
-        lethalWindow ||
+        effectiveLethalWindow ||
         erosionPressureWindow ||
-        (!!turnPlan?.desperationAttack && (lethalWindow || erosionPressureWindow));
+        turnPlan?.lastChanceAttack ||
+        (!!turnPlan?.desperationAttack && (effectiveLethalWindow || erosionPressureWindow));
       const minimumAttackScore =
         difficulty === 'hard' && !forcedAttackUnit
-          ? relaxedAttackThreshold
+          ? lastChanceFullyBlocked
             ? 0
+            : forcingAttackWindow || defenseCannotCoverAttackWindow
+            ? -999
+            : relaxedAttackThreshold
+            ? 0
+            : pressureAttackWindow
+            ? 12
             : (turnPlan?.mode === 'defense' || turnPlan?.mode === 'stabilize' || turnPlan?.desperationAttack ? 30 : 14)
           : 0;
       const attacker = difficulty === 'hard'
@@ -10994,7 +11437,7 @@ export const ServerGameService = {
           (
             isClosingTurnPlan(turnPlan) ||
             erosionPressureWindow ||
-            lethalWindow ||
+            effectiveLethalWindow ||
             totalAvailableDamage >= Math.max(1, damageToCritical)
           )
         ) {
@@ -11024,11 +11467,27 @@ export const ServerGameService = {
             damageThroughLikelyDefenders,
             damageToCritical,
             lethalWindow,
+            effectiveLethalWindow,
             erosionPressureWindow,
+            singleAttackForcesDefense,
+            closingAttackCommitted,
+            closingAttackStillForcing,
+            lastChanceAttack: turnPlan?.lastChanceAttack || false,
+            lastChanceFullyBlocked,
+            defenseCannotCoverAttackWindow,
+            lastChanceDefenseCannotCover,
+            batraReadyDefenderAttackWindow,
+            batraReadyDefenderAttacker: batraReadyDefenderAttackerIds.has(attacker.gamecardId),
+            blockableDeckPressureWindow,
+            pressureAttackWindow,
             reservedDefenders: reservedDefenderIds.size,
+            currentReserveDefenders,
+            currentDefendersNeededNextTurn: currentIncomingThreat?.defendersNeeded,
+            currentIncomingDamage: currentIncomingThreat?.totalDamage,
             opponentPotentialDamage,
             dynamicCounterPressure,
             ownErosion,
+            ownDeck: bot.deck.length,
             planMode: turnPlan?.mode,
             minimumAttackScore,
           },
@@ -11066,7 +11525,21 @@ export const ServerGameService = {
             bestAttackScore: scoredAvailableAttackers[0]?.score,
             minimumAttackScore,
             damageThroughLikelyDefenders,
+            effectiveLethalWindow,
+            singleAttackForcesDefense,
+            closingAttackCommitted,
+            closingAttackStillForcing,
+            lastChanceAttack: turnPlan?.lastChanceAttack || false,
+            lastChanceFullyBlocked,
+            defenseCannotCoverAttackWindow,
+            lastChanceDefenseCannotCover,
+            batraReadyDefenderAttackWindow,
+            blockableDeckPressureWindow,
+            pressureAttackWindow,
             opponentPotentialDamage,
+            currentReserveDefenders,
+            currentDefendersNeededNextTurn: currentIncomingThreat?.defendersNeeded,
+            currentIncomingDamage: currentIncomingThreat?.totalDamage,
             dynamicCounterPressure,
             ownErosion,
             ownDeck: bot.deck.length,
@@ -11170,6 +11643,21 @@ export const ServerGameService = {
     });
   },
 
+  prepareHardAiOpeningHand(player: PlayerState, profileId?: string | null, count = 4) {
+    const preferredCardIds = getHardAiOpeningCardIds(profileId);
+    if (!preferredCardIds?.length) return false;
+
+    const currentHand = player.hand.splice(0, player.hand.length);
+    currentHand.forEach(card => {
+      card.cardlocation = 'DECK';
+      card.displayState = 'FRONT_FACEDOWN';
+      player.deck.push(card);
+    });
+
+    ServerGameService.drawInitialHand(player, count, preferredCardIds);
+    return true;
+  },
+
   async createPracticeGameState(
     deck: Card[],
     playerUid: string | number,
@@ -11269,11 +11757,9 @@ export const ServerGameService = {
     };
 
     ServerGameService.drawInitialHand(myState, 4);
-    ServerGameService.drawInitialHand(
-      botState,
-      4,
-      botDifficulty === 'hard' ? getHardAiOpeningCardIds(botDeckProfileId) : undefined
-    );
+    if (botDifficulty !== 'hard' || !ServerGameService.prepareHardAiOpeningHand(botState, botDeckProfileId, 4)) {
+      ServerGameService.drawInitialHand(botState, 4);
+    }
 
     const gameState: GameState = {
       gameId: "temp",

@@ -433,6 +433,14 @@ function countErosion(player: PlayerState) {
   return player.erosionFront.filter(Boolean).length + player.erosionBack.filter(Boolean).length;
 }
 
+function isDefensiveBattleWindow(gameState: GameState, player: PlayerState, phase: GamePhase, battleAttackers: number) {
+  const turnPlayerUid = gameState.playerIds[gameState.currentTurnPlayer] ||
+    gameState.playerIds.find(uid => gameState.players[uid]?.isTurn);
+  const isDefender = !!turnPlayerUid && turnPlayerUid !== player.uid;
+  return phase === 'DEFENSE_DECLARATION' ||
+    (isDefender && battleAttackers > 0 && ['BATTLE_FREE', 'COUNTERING', 'DAMAGE_CALCULATION'].includes(phase));
+}
+
 export function scoreEffectTimingWindow(
   gameState: GameState,
   player: PlayerState,
@@ -459,6 +467,9 @@ export function scoreEffectTimingWindow(
   const ownErosion = countErosion(player);
   const targetCount = context.targetCount || 0;
   const hasTarget = !context.hasTargetSpec || targetCount > 0;
+  const albertDefensiveBattleWindow =
+    effect.id === '104030415_cycle_adventurer_through_erosion' &&
+    isDefensiveBattleWindow(gameState, player, phase, battleAttackers);
   const hasBattleContext =
     battleAttackers > 0 ||
     phase === 'BATTLE_DECLARATION' ||
@@ -470,6 +481,12 @@ export function scoreEffectTimingWindow(
   const notes: string[] = [];
 
   let score = timing.phaseBias[phase] || 0;
+
+  if (albertDefensiveBattleWindow) {
+    score += 22;
+    tags.add('protection');
+    tags.add('tempo');
+  }
 
   if (phase === 'MAIN' && isOwnTurn && tags.has('setup')) {
     score += 2.5;
@@ -500,7 +517,7 @@ export function scoreEffectTimingWindow(
 
   if (phase === 'COUNTERING') {
     if (tags.has('counter') || tags.has('protection') || tags.has('tempo')) score += 6;
-    if (tags.has('setup') && !tags.has('counter')) score -= 10;
+    if (tags.has('setup') && !tags.has('counter') && !albertDefensiveBattleWindow) score -= 10;
   }
 
   if (tags.has('counter')) {
@@ -521,7 +538,8 @@ export function scoreEffectTimingWindow(
     !tags.has('combo') &&
     !tags.has('counter') &&
     !tags.has('combat') &&
-    !tags.has('protection')
+    !tags.has('protection') &&
+    !albertDefensiveBattleWindow
   ) {
     score -= phase === 'COUNTERING' ? 14 : 8;
   }

@@ -3,6 +3,7 @@ import { inferPlayerDeckProfile } from '../playerDeckProfile';
 import { DeckAiProfile } from '../types';
 
 export const ADVENTURER_GUILD_PROFILE_ID = 'adventurer-guild';
+const PURE_YELLOW_STEEL_PROFILE_ID = 'pure-yellow-steel';
 
 export const ADVENTURER_GUILD_CARD_IDS = {
   albert: '104030415',
@@ -166,6 +167,15 @@ function getOpponent(gameState: GameState, player: PlayerState) {
   return opponentUid ? gameState.players[opponentUid] : undefined;
 }
 
+function opponentLooksPureYellowSteel(gameState: GameState, player: PlayerState) {
+  const opponentUid = gameState.playerIds.find(uid => uid !== player.uid);
+  if (!opponentUid) return false;
+  const explicitProfile = (gameState as any).botDeckProfiles?.[opponentUid] ||
+    (gameState.players[opponentUid] as any)?.botDeckProfileId;
+  if (explicitProfile === PURE_YELLOW_STEEL_PROFILE_ID) return true;
+  return inferPlayerDeckProfile(gameState, opponentUid)?.knownProfileId === PURE_YELLOW_STEEL_PROFILE_ID;
+}
+
 function getTurnPlayerUid(gameState: GameState) {
   return gameState.playerIds[gameState.currentTurnPlayer] ||
     gameState.playerIds.find(uid => gameState.players[uid]?.isTurn);
@@ -191,6 +201,13 @@ function opponentUnits(gameState: GameState, player: PlayerState) {
   return getOpponent(gameState, player)?.unitZone.filter((card): card is Card => !!card) || [];
 }
 
+function opponentFieldCards(gameState: GameState, player: PlayerState) {
+  const opponent = getOpponent(gameState, player);
+  return opponent
+    ? [...opponent.unitZone, ...opponent.itemZone].filter((card): card is Card => !!card)
+    : [];
+}
+
 function countReadyOpponentNonGodUnits(gameState: GameState, player: PlayerState, minPower = 0) {
   return opponentUnits(gameState, player).filter(unit =>
     !unit.godMark &&
@@ -207,6 +224,46 @@ function strongestReadyOpponentDefenderPower(gameState: GameState, player: Playe
   return Math.max(0, ...opponentUnits(gameState, player)
     .filter(unit => !unit.isExhausted)
     .map(unit => unit.power || 0));
+}
+
+function opponentHasReadyDefenderAtLeast(gameState: GameState, player: PlayerState, minPower: number) {
+  return opponentUnits(gameState, player).some(unit => !unit.isExhausted && (unit.power || 0) >= minPower);
+}
+
+export function canAdventurerGuildBatraAttackIntoReadyDefender(gameState: GameState, player: PlayerState, card: Card) {
+  return card.id === ADVENTURER_GUILD_CARD_IDS.batra &&
+    player.isTurn &&
+    opponentHasReadyDefenderAtLeast(gameState, player, 3000);
+}
+
+function hasDestroyProtectionForAdventurerAttack(player: PlayerState, card: Card) {
+  const data = (card as any).data || {};
+  if (
+    data.preventNextDestroy ||
+    data.preventNextBattleDestroy ||
+    data.preventBattleDestroyForBattleTurn !== undefined ||
+    data.preventFirstAnyDestroyEachTurnSourceName ||
+    data.preventFirstBattleDestroyEachTurnSourceName ||
+    data.preventFirstDestroyEachTurnSourceName
+  ) {
+    return true;
+  }
+
+  if ((card.influencingEffects || []).some(effect => /防止.*破坏|不会被.*破坏/.test(effect.description || ''))) {
+    return true;
+  }
+
+  const ids = ADVENTURER_GUILD_CARD_IDS;
+  return hasFieldCard(player, ids.hammo) && hasFieldCard(player, ids.amy) || hasFieldCard(player, ids.soup);
+}
+
+export function canAdventurerGuildBatraBaitDefense(gameState: GameState, player: PlayerState, card: Card) {
+  const erosionTotal = player.erosionFront.filter(Boolean).length + player.erosionBack.filter(Boolean).length;
+  return canAdventurerGuildBatraAttackIntoReadyDefender(gameState, player, card) &&
+    erosionTotal >= 3 &&
+    erosionTotal <= 7 &&
+    hasSwapTargetForSource(player, card) &&
+    hasDestroyProtectionForAdventurerAttack(player, card);
 }
 
 function canBeBlockedDead(gameState: GameState, player: PlayerState, card: Card) {
@@ -335,6 +392,10 @@ function keyCardPriority(card: Card) {
     Math.max(0, card.power || card.basePower || 0) / 120 +
     (isKeyCard(card) ? 22 : 0)
   );
+}
+
+function aketiBounceTargetPriority(card: Card) {
+  return 82 + keyCardPriority(card);
 }
 
 function isAdventurerGuildFactionCard(card: Card) {
@@ -527,6 +588,12 @@ function bestSwapChainTargetNotes(gameState: GameState, player: PlayerState) {
     }))
     .sort((a, b) => b.priority - a.priority)[0];
   return bestTarget && bestTarget.priority > 0 ? swapChainTargetNotes(gameState, player, bestTarget.card) : ['换位目标：没有高价值进场目标'];
+}
+
+function bestSwapChainTargetPriorityValue(gameState: GameState, player: PlayerState) {
+  return Math.max(0, ...player.erosionFront
+    .filter((card): card is Card => !!card && card.displayState === 'FRONT_UPRIGHT')
+    .map(card => swapChainTargetPriority(gameState, player, card)));
 }
 
 function swapChainTargetPriority(gameState: GameState, player: PlayerState, card: Card) {
@@ -761,6 +828,7 @@ function canRouteAttack(gameState: GameState, player: PlayerState, cardId: strin
 function routeAttackLooksSafe(gameState: GameState, player: PlayerState, cardId: string) {
   const card = fieldCard(player, cardId);
   if (!card) return false;
+  if (card.id === ADVENTURER_GUILD_CARD_IDS.batra) return true;
   const opponent = getOpponent(gameState, player);
   const strongestReadyDefender = Math.max(0, ...(opponent?.unitZone || [])
     .filter((unit): unit is Card => !!unit && !unit.isExhausted)
@@ -847,9 +915,19 @@ function buildAdventurerGuildRouteAdvice(
   const xId = xCard?.id;
   const kathyRouteStarted = !!(fieldCard(player, ids.kathy) || erosionCard(player, ids.kathy) || optionUsed(gameState, player, 'c'));
   const hasAmyRoutePiece = !!(fieldCard(player, ids.amy) || erosionCard(player, ids.amy));
+  const batraReadyDefenderAttackWindow =
+    !!batra &&
+    canRouteAttack(gameState, player, ids.batra) &&
+    canAdventurerGuildBatraAttackIntoReadyDefender(gameState, player, batra);
 
   const routeAReady = hasAlbert && hasAssociationCard && hasXiaoting && hasHammo && hasAmyRoutePiece;
   if (routeAReady) {
+    if (!kathyRouteStarted && batraReadyDefenderAttackWindow) {
+      return routeAdvice('ROUTE_A_AMY_KATHY_BATRA', 'A_BATRA_BAIT_READY_DEFENDER', 'ATTACK', '路线A：巴特拉先攻击骗3000+竖置防守', {
+        preferredCardIds: [ids.batra],
+        scoreBonus: 135,
+      });
+    }
     if (!kathyRouteStarted && canRouteAttack(gameState, player, ids.amy) && routeAttackLooksSafe(gameState, player, ids.amy)) {
       return routeAdvice('ROUTE_A_AMY_KATHY_BATRA', 'A_AMY_ATTACK', 'ATTACK', '路线A：艾咪先攻击', {
         preferredCardIds: [ids.amy],
@@ -1169,6 +1247,12 @@ function scalesOpponentNotes(gameState: GameState, player: PlayerState) {
     : ['天秤：对手目标低优先'];
 }
 
+function shouldAvoidScalesSelfDraw(gameState: GameState, player: PlayerState) {
+  if (!opponentLooksPureYellowSteel(gameState, player)) return false;
+  if (damageMayOverflow(getOpponent(gameState, player))) return false;
+  return player.deck.length <= 14;
+}
+
 function canPullContinuousAmy(player: PlayerState) {
   const ids = ADVENTURER_GUILD_CARD_IDS;
   return hasFieldCard(player, ids.hammo) &&
@@ -1413,6 +1497,12 @@ export function scoreAdventurerGuildEffect(
       }
       break;
     case 'dragon_wing_receptionist_activate':
+      if (gameState.phase !== 'MAIN' && !defensiveWindow) {
+        return {
+          score: -120,
+          notes: ['Xiaoting swap held outside main phase without a defensive or combo-route window'],
+        };
+      }
       priority = bestXiaotingFieldSwapPriority(player);
       notes.push(...bestXiaotingFieldSwapNotes(player));
       break;
@@ -1422,6 +1512,24 @@ export function scoreAdventurerGuildEffect(
     case 'wen_swap_activate':
     case '104030452_swap':
     case '104030450_swap':
+      if (gameState.phase !== 'MAIN' && !defensiveWindow && !routeMatchesAdvice(route, 'ACTIVATE_EFFECT', card, effect.id)) {
+        return {
+          score: -120,
+          notes: ['Switch swap held outside main phase without a defensive or combo-route window'],
+        };
+      }
+      if (
+        gameState.phase === 'MAIN' &&
+        !routeMatchesAdvice(route, 'ACTIVATE_EFFECT', card, effect.id) &&
+        player.deck.length <= 16 &&
+        opponentLooksPureYellowSteel(gameState, player) &&
+        bestSwapChainTargetPriorityValue(gameState, player) <= 0
+      ) {
+        return {
+          score: -95,
+          notes: ['Switch swap held at low deck without a high-value target against pure-yellow-steel'],
+        };
+      }
       priority = 4;
       notes.push(...bestSwapChainTargetNotes(gameState, player));
       break;
@@ -1444,7 +1552,18 @@ export function scoreAdventurerGuildEffect(
       notes.push(defensiveWindow ? '阿克蒂诱发：防御时处理对手神蚀/高力量单位' : '阿克蒂诱发：重置高价值目标');
       break;
     case 'aketi_goddess_bounce':
-      priority = defensiveWindow ? 5.5 : 3.5;
+      {
+        const bestOpponentTarget = opponentFieldCards(gameState, player)
+          .map(target => ({ target, priority: aketiBounceTargetPriority(target) }))
+          .sort((a, b) => b.priority - a.priority)[0];
+        if (!bestOpponentTarget) {
+          return {
+            score: -120,
+            notes: ['Aketi bounce held without an opponent battlefield target'],
+          };
+        }
+        priority = defensiveWindow ? 5.5 : 3.5 + Math.min(2.5, bestOpponentTarget.priority / 80);
+      }
       notes.push(defensiveWindow ? '阿克蒂启效果：防御时回手对手关键单位' : '阿克蒂启效果：回手关键单位');
       break;
     case '104030306_enter_from_erosion':
@@ -1474,6 +1593,12 @@ export function scoreAdventurerGuildEffect(
       }
       break;
     case 'sodo_to_erosion':
+      if (gameState.phase !== 'MAIN' && !routeMatchesAdvice(route, 'ACTIVATE_EFFECT', card, effect.id)) {
+        return {
+          score: -120,
+          notes: ['Sodo setup held outside main phase without a route window'],
+        };
+      }
       priority = 0;
       if (hasHighCostOpponentUnit(gameState, player)) {
         priority += 4;
@@ -1499,12 +1624,20 @@ export function scoreAdventurerGuildEffect(
       break;
     case '304020009_activate':
       {
+        const avoidSelfDraw = shouldAvoidScalesSelfDraw(gameState, player);
         const selfPriority = scalesSelfPriority(player);
         const opponentPriority = scalesOpponentPriority(gameState, player);
+        if (avoidSelfDraw && opponentPriority <= 0) {
+          return {
+            score: -120,
+            notes: ['Scales self draw held at low deck against pure-yellow-steel'],
+          };
+        }
         priority = Math.max(selfPriority, opponentPriority);
-        notes.push(...(selfPriority >= opponentPriority
+        notes.push(...(!avoidSelfDraw && selfPriority >= opponentPriority
           ? scalesSelfNotes(player)
           : scalesOpponentNotes(gameState, player)));
+        if (avoidSelfDraw) notes.push('Scales avoids self draw in pure-yellow-steel deck race');
       }
       break;
     case '204000091_meditation':
@@ -1604,6 +1737,14 @@ export function describeAdventurerGuildAttack(
   if (switchEffectUnavailable && onlySwitcher && blockedDead) {
     priority -= 1;
     notes.push('换位冒险家攻击：效果不可用、会被挡死且是唯一换位，降权');
+  }
+  if (card.id === ids.batra && canAdventurerGuildBatraAttackIntoReadyDefender(gameState, player, card)) {
+    priority += 4;
+    notes.push('巴特拉遇到3000+竖置防守单位：默认优先进攻');
+    if (canAdventurerGuildBatraBaitDefense(gameState, player, card)) {
+      priority += 3;
+      notes.push('巴特拉有防破坏和换位资源：优先骗对手防御');
+    }
   }
   if (priority <= 0) {
     return { score: NO_ATTACK_PRIORITY_PENALTY, priority, notes };
@@ -1908,8 +2049,8 @@ function scoreAdventurerGuildCardSelection(gameState: GameState, player: PlayerS
 
   if (effectId === 'aketi_goddess_bounce') {
     if (routeTargetBonus > 0) return routeTargetBonus;
-    if (option.isMine) return -80;
-    return 82 + keyCardPriority(card);
+    if (option.isMine) return undefined;
+    return aketiBounceTargetPriority(card);
   }
 
   if (effectId === '104010447_activate') {
@@ -2129,6 +2270,9 @@ function scorePlayerChoice(gameState: GameState, player: PlayerState, query: Eff
     return isSelf ? selfScore : opponentScore;
   }
   if (effectId === '304020009_activate') {
+    if (shouldAvoidScalesSelfDraw(gameState, player)) {
+      return isSelf ? -200 : scalesOpponentPriority(gameState, player) * 10;
+    }
     const selfScore = scalesSelfPriority(player) * 10;
     const opponentScore = scalesOpponentPriority(gameState, player) * 10;
     return isSelf ? selfScore : opponentScore;
@@ -2205,8 +2349,13 @@ export function chooseAdventurerGuildQuerySelections(
   if (scoredCards.length > 0) {
     const minSelections = query.minSelections ?? 1;
     const maxSelections = query.maxSelections ?? minSelections;
-    const count = Math.max(0, Math.min(maxSelections, Math.max(minSelections, 1), scoredCards.length));
-    return scoredCards.slice(0, count)
+    const effectId = String(query.context?.effectId || '');
+    const positiveCards = effectId === 'aketi_goddess_bounce'
+      ? scoredCards.filter(entry => entry.score > 0)
+      : scoredCards;
+    const desiredSelections = minSelections > 0 ? minSelections : positiveCards.length;
+    const count = Math.max(0, Math.min(maxSelections, desiredSelections, positiveCards.length));
+    return positiveCards.slice(0, count)
       .map(({ option }) => option.card?.gamecardId || option.id)
       .filter(Boolean);
   }

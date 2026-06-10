@@ -102,6 +102,7 @@ const activate_104030459_swap: CardEffect = {
   limitCount: 1,
   limitNameType: true,
   erosionTotalLimit: [3, 7],
+  playCost: 1,
   description: '【启动】【卡名一回合一次】侵蚀区数量在3-7时，在你的回合中发动：支付1费，将这个单位放置到侵蚀区，之后选择你的侵蚀区正面1张【凯茜】以外的「冒险家公会」单位卡，放置到战场上。',
   condition: (_gameState: GameState, playerState: PlayerState, instance: Card) => {
     if (!playerState.isTurn || instance.cardlocation !== 'UNIT') return false;

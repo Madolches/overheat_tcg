@@ -62,6 +62,10 @@ export function chooseHardAiForcedFirstTurnPlay(
   const playedKey = `${stateKey}PlayedCardIds`;
 
   if ((player as any)[turnKey] === undefined) {
+    if (gameState.turnCount > 2) {
+      (player as any)[completeKey] = true;
+      return undefined;
+    }
     (player as any)[turnKey] = gameState.turnCount;
   }
   if ((player as any)[completeKey]) return undefined;

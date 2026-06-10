@@ -60,6 +60,10 @@ export const pureYellowSteelProfile: DeckAiProfile = {
       '305000055_end_blueprint': 24,
       '305110061_end_fortress_blueprint': 22,
     },
+    lowDeckAvoidEffectIds: {
+      '105110381_hand_enter_search_blueprint_item': 32,
+      '105110383_creation_scar_put_top_blueprint_or_puppet': 52,
+    },
     tagBias: {
       engine: 1.4,
       search: 1.35,
@@ -80,13 +84,24 @@ export const pureYellowSteelProfile: DeckAiProfile = {
     closeGameBias: 0.75,
     notes: ['优先建立蓝图与魔偶资源轴，再通过钢兵单位和要塞蓝图扩大场面。'],
   },
+  matchupPlans: {
+    'adventurer-guild': {
+      defenseBias: 0.75,
+      developmentBias: -0.35,
+      effectBias: -0.2,
+      defenderReserveBias: 0.65,
+      stopSelfDrawAtDeck: 16,
+      stopSearchAtDeck: 14,
+      notes: ['对冒险家提前进入保守牌库线，优先保留防守和牌库。'],
+    },
+  },
   riskThresholds: {
-    lowDeck: 10,
-    criticalDeck: 3,
-    stopSelfDrawAtDeck: 6,
-    stopSearchAtDeck: 5,
+    lowDeck: 12,
+    criticalDeck: 4,
+    stopSelfDrawAtDeck: 12,
+    stopSearchAtDeck: 10,
     highErosion: 7,
     criticalErosion: 9,
-    reserveDefendersAtDeck: 10,
+    reserveDefendersAtDeck: 12,
   },
 };

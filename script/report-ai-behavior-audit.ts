@@ -281,7 +281,7 @@ function decisionText(log: any, extraDetailKeys: string[] = []) {
 }
 
 function hasClearTacticalPayoff(text: string) {
-  return /lethal|closing|close|threat|save|saves|protect|prevent|counter|combat|battle|attack|defend|defender|damage|destroy|remove|removal|bounce|stun|silence|cannot defend|combo|alliance|reset|boost|tempo|pressure|race/i.test(text);
+  return /lethal|closing|close|threat|save|saves|protect|prevent|counter|combat|battle|attack|defend|defender|damage|destroy|remove|removal|bounce|stun|silence|cannot defend|combo|alliance|reset|boost|tempo|pressure|race|防御|挡|救场|拉汉莫|拉艾咪|拉凯茜|缺一补一/i.test(text);
 }
 
 function looksLikeSetupOnly(text: string) {
@@ -351,6 +351,7 @@ function analyzeBattleLogText(findings: BehaviorFinding[], result: any) {
   for (const text of logs) {
     const line = String(text || '');
     if (!highValueName(line)) continue;
+    if (/link\d+|description|选择以下效果|若你/.test(line)) continue;
     if (!/破坏|同归于尽|被破坏|destroy/i.test(line)) continue;
     addFinding(findings, result, 'HIGH_VALUE_BATTLE_LOSS', {
       severity: 'warning',
@@ -414,8 +415,11 @@ function analyzeTurnWindows(findings: BehaviorFinding[], result: any) {
     const hasLikelyDefenders = plan.details?.likelyDefenders !== undefined && plan.details?.likelyDefenders !== null;
     const likelyDefenders = hasLikelyDefenders ? numericDetail(plan, 'likelyDefenders') : Number.POSITIVE_INFINITY;
     const damageThroughLikelyDefenders = numericDetail(plan, 'damageThroughLikelyDefenders');
+    const tacticalLine = detail(plan, 'tacticalLine');
     const lethalWindow =
-      booleanDetail(plan, 'lethalWindow') ||
+      tacticalLine === 'lethal' ||
+      tacticalLine === 'erosion-lethal' ||
+      (booleanDetail(plan, 'lethalWindow') && (!hasLikelyDefenders || likelyDefenders === 0)) ||
       (likelyDefenders === 0 && damageToCritical > 0 && totalDamage >= damageToCritical && totalDamage > 0) ||
       (damageThroughLikelyDefenders > 0 && damageToCritical > 0 && damageThroughLikelyDefenders >= damageToCritical);
     const attackBeforeDeveloping = booleanDetail(plan, 'attackBeforeDeveloping');
@@ -519,10 +523,15 @@ function analyzeDecisionLogs(findings: BehaviorFinding[], result: any) {
       const lethalWindow = booleanDetail(log, 'lethalWindow');
       const erosionPressureWindow = booleanDetail(log, 'erosionPressureWindow');
       const reservedDefenders = numericDetail(log, 'reservedDefenders');
+      const batraReadyDefenderAttacker = booleanDetail(log, 'batraReadyDefenderAttacker');
+      const defenseCannotCoverAttackWindow = booleanDetail(log, 'defenseCannotCoverAttackWindow') ||
+        booleanDetail(log, 'lastChanceDefenseCannotCover');
       if (
         likelyDefenders > 0 &&
         !lethalWindow &&
         !erosionPressureWindow &&
+        !batraReadyDefenderAttacker &&
+        !defenseCannotCoverAttackWindow &&
         score !== undefined &&
         score < 12
       ) {
@@ -538,6 +547,8 @@ function analyzeDecisionLogs(findings: BehaviorFinding[], result: any) {
       if (
         likelyDefenders > 0 &&
         !lethalWindow &&
+        !batraReadyDefenderAttacker &&
+        !defenseCannotCoverAttackWindow &&
         score !== undefined &&
         score < 24 &&
         highValueName(`${log.subject || ''} ${candidateText(log)}`)
@@ -592,8 +603,9 @@ function analyzeDecisionLogs(findings: BehaviorFinding[], result: any) {
 
     if (action === 'ACTIVATE_EFFECT') {
       const notes = `${detail(log, 'notes')} ${log.reason || ''}`;
+      const hasTacticalPayoff = hasClearTacticalPayoff(notes);
       const hasClearPayoff = /lethal|close|closing|saves|beats|threat|alliance|reset|斩杀|保|威胁/i.test(notes);
-      if (hasTimingWarningText(notes) && !(hasClearPayoff && score !== undefined && score >= 18)) {
+      if (hasTimingWarningText(notes) && !((hasClearPayoff || hasTacticalPayoff) && score !== undefined && score >= 18)) {
         addFinding(findings, result, 'BAD_EFFECT_TIMING', {
           deck,
           turn: log.turn,

@@ -12,6 +12,9 @@ import { getCardKnowledge, getCardKnowledgeValue } from './cardKnowledge';
 import { buildDynamicMatchupPlan, inferPlayerDeckProfile, mergeMatchupPlans } from './playerDeckProfile';
 import { scoreEffectTimingWindow } from './effectTimingKnowledge';
 import {
+  ADVENTURER_GUILD_PROFILE_ID,
+  canAdventurerGuildBatraAttackIntoReadyDefender,
+  canAdventurerGuildBatraBaitDefense,
   chooseAdventurerGuildQuerySelections,
   scoreAdventurerGuildAttack,
   scoreAdventurerGuildDefense,
@@ -20,10 +23,18 @@ import {
   scoreAdventurerGuildMulliganKeep,
   scoreAdventurerGuildPlayableCard,
 } from './decks/adventurerGuildStrategy';
-import { scoreHardAiOpeningQueryCard } from './decks/openingProfiles';
+import { getHardAiOpeningProfile, scoreHardAiOpeningQueryCard } from './decks/openingProfiles';
+import {
+  choosePureYellowSteelQuerySelections,
+  scorePureYellowSteelChoiceOption,
+  scorePureYellowSteelQueryCardOption,
+} from './decks/pureYellowSteelStrategy';
 
 const getCardCost = (card: Card) => Math.max(0, card.baseAcValue ?? card.acValue ?? 0);
 const HARD_AI_HIGH_VALUE_BOARD_THRESHOLD = 58;
+const PURE_YELLOW_STEEL_PROFILE_ID = 'pure-yellow-steel';
+const PURE_YELLOW_STEEL_DEFENSE_MECHANISM_ID = '105110386';
+const PURE_YELLOW_STEEL_ACADEMY_PUPPET_MASTER_EFFECT_ID = '105110383_creation_scar_put_top_blueprint_or_puppet';
 
 export const countErosion = (player: PlayerState) =>
   player.erosionFront.filter(Boolean).length + player.erosionBack.filter(Boolean).length;
@@ -173,10 +184,13 @@ export interface HardAiTurnPlan {
   opponentLethalWithoutBlocks: boolean;
   opponentLethalThroughOneBlock: boolean;
   desperationAttack: boolean;
+  lastChanceAttack: boolean;
   attackBeforeDeveloping: boolean;
   reserveDefenders: number;
   minMainEffectScore: number;
   minBattleEffectScore: number;
+  stopSelfDrawAtDeck: number;
+  stopSearchAtDeck: number;
   avoidSelfDraw: boolean;
   avoidSearch: boolean;
   tacticalLine?: string;
@@ -208,10 +222,12 @@ export interface CheatDrawScore {
 export function isClosingTurnPlan(plan: Pick<HardAiTurnPlan, 'mode' | 'lethalWindow' | 'tacticalLine' | 'totalAvailableDamage' | 'damageToCritical'> | undefined) {
   if (!plan) return false;
   if (plan.mode === 'defense' || plan.mode === 'stabilize' || plan.tacticalLine === 'stabilize') return false;
-  const likelyDefenders = Number((plan as any).likelyDefenders || 0);
+  const hasLikelyDefenders = (plan as any).likelyDefenders !== undefined && (plan as any).likelyDefenders !== null;
+  const likelyDefenders = hasLikelyDefenders ? Number((plan as any).likelyDefenders || 0) : 0;
   const damageThroughLikelyDefenders = Math.max(0, Number((plan as any).damageThroughLikelyDefenders || 0));
-  return plan.lethalWindow ||
-    plan.mode === 'lethal' ||
+  const rawLethalCanConnect = plan.lethalWindow && (!hasLikelyDefenders || likelyDefenders === 0);
+  return rawLethalCanConnect ||
+    (plan.mode === 'lethal' && !hasLikelyDefenders) ||
     plan.tacticalLine === 'lethal' ||
     plan.tacticalLine === 'erosion-lethal' ||
     (likelyDefenders === 0 && plan.totalAvailableDamage >= Math.max(1, plan.damageToCritical)) ||
@@ -237,6 +253,28 @@ export function battleDamageWouldBeFatal(damage: number, defender: PlayerState |
   if (!defender || damage <= 0) return false;
   if (battleDamageWouldDeckOut(damage, defender)) return true;
   return !defender.isGoddessMode && damage >= damageToErosionCritical(defender);
+}
+
+function battleDamageSequenceWouldDeckOut(damages: number[], defender: PlayerState | null | undefined) {
+  if (!defender) return false;
+  let deckRemaining = defender.deck.length;
+  let goddessMode = !!defender.isGoddessMode;
+  let erosion = countErosion(defender);
+
+  for (const rawDamage of damages) {
+    const damage = Math.max(0, rawDamage);
+    if (damage <= 0) continue;
+    const effectiveDamage = goddessMode ? damage * 2 : damage;
+    if (deckRemaining < effectiveDamage) return true;
+    deckRemaining -= effectiveDamage;
+
+    if (!goddessMode) {
+      erosion = Math.min(10, erosion + damage);
+      if (erosion >= 10) goddessMode = true;
+    }
+  }
+
+  return false;
 }
 
 function battleDamageCreatesErosionPressure(damage: number, defender: PlayerState | null | undefined, margin = 0) {
@@ -271,12 +309,13 @@ export function estimateIncomingThreat(gameState: GameState, defender: PlayerSta
   const lethalThroughOneBlock = battleDamageWouldBeFatal(damageAfterOneBlock, defender);
   let defendersNeeded = 0;
 
-  for (let blocks = 0; blocks <= Math.min(3, attackDamages.length); blocks++) {
+  const maxBlocksToConsider = Math.min(attackDamages.length, 6);
+  for (let blocks = 0; blocks <= maxBlocksToConsider; blocks++) {
     if (!battleDamageWouldBeFatal(damageAfterBlocks(blocks), defender)) {
       defendersNeeded = blocks;
       break;
     }
-    defendersNeeded = Math.min(3, blocks + 1);
+    defendersNeeded = Math.min(maxBlocksToConsider, blocks + 1);
   }
 
   const deckOutRisk =
@@ -400,17 +439,39 @@ export function analyzeOneTurnTactics(
   const opponentErosion = opponent ? countErosion(opponent) : 0;
   const damageToCritical = damageToErosionCritical(opponent);
   const likelyDefenders = countLikelyDefenders(gameState, opponent);
+  const unblockedDamageThroughLikelyDefenders = attackerDamage.slice(likelyDefenders);
   const damageThroughLikelyDefenders = Math.max(
     0,
-    totalDamage - attackerDamage.slice(0, likelyDefenders).reduce((sum, damage) => sum + damage, 0)
+    unblockedDamageThroughLikelyDefenders.reduce((sum, damage) => sum + damage, 0)
   );
   const incomingThreat = estimateIncomingThreat(gameState, player, profile);
   const notes: string[] = [];
+  const reserveCap = Math.min(6, attackers.length);
 
-  const forcesDeckLethal = opponent && battleDamageWouldDeckOut(damageThroughLikelyDefenders, opponent);
-  const threatensDeckLethal = opponent && battleDamageWouldDeckOut(totalDamage, opponent);
+  const forcesDeckLethal = opponent && battleDamageSequenceWouldDeckOut(unblockedDamageThroughLikelyDefenders, opponent);
+  const threatensDeckLethal = opponent && battleDamageSequenceWouldDeckOut(attackerDamage, opponent);
   const forcesErosionLethal = battleDamageCreatesErosionPressure(damageThroughLikelyDefenders, opponent);
   const threatensErosionLethal = battleDamageCreatesErosionPressure(totalDamage, opponent);
+  const forcedErosionLethalThroughDefense =
+    profile.id === PURE_YELLOW_STEEL_PROFILE_ID &&
+    opponentProfileId(gameState, opponent?.uid) === ADVENTURER_GUILD_PROFILE_ID &&
+    forcesErosionLethal &&
+    damageThroughLikelyDefenders >= damageToCritical;
+  const lowDeckAttackNow =
+    player.deck.length <= riskValue(profile, 'stopSelfDrawAtDeck', riskValue(profile, 'lowDeck', 10)) &&
+    incomingThreat.defendersNeeded <= 1;
+  const decisiveErosionAttack =
+    forcesErosionLethal &&
+    (
+      forcedErosionLethalThroughDefense ||
+      (
+        incomingThreat.defendersNeeded <= 1 &&
+        (
+          damageThroughLikelyDefenders >= damageToCritical + 2 ||
+          lowDeckAttackNow
+        )
+      )
+    );
 
   if (forcesDeckLethal) {
     notes.push(`deck lethal damage=${battleDamageDeckImpact(totalDamage, opponent)}/${opponent.deck.length}`);
@@ -426,33 +487,38 @@ export function analyzeOneTurnTactics(
     };
   }
 
-  if (forcesErosionLethal) {
-    notes.push(`erosion lethal damage=${totalDamage}/${damageToCritical}`);
-    if (likelyDefenders > 0) notes.push(`through defenders=${damageThroughLikelyDefenders}`);
-    return {
-      line: 'erosion-lethal',
-      score: 112 + totalDamage * 4 - likelyDefenders * 5,
-      forceAttackBeforeDeveloping: true,
-      reserveDefenders: 0,
-      minMainEffectScoreDelta: -1.5,
-      minBattleEffectScoreDelta: -2.5,
-      notes,
-    };
-  }
-
-  if ((threatensDeckLethal || threatensErosionLethal) && incomingThreat.lethalWithoutBlocks) {
+  if ((threatensDeckLethal || forcesErosionLethal || threatensErosionLethal) && incomingThreat.lethalWithoutBlocks && !decisiveErosionAttack) {
     notes.push(threatensDeckLethal
       ? `blocked deck pressure=${totalDamage}/${opponent?.deck.length || 0}`
+      : forcesErosionLethal
+      ? `goddess pressure through defenders=${damageThroughLikelyDefenders}/${damageToCritical}`
       : `blocked erosion pressure=${totalDamage}/${damageToCritical}`);
     if (likelyDefenders > 0) notes.push(`through defenders=${damageThroughLikelyDefenders}`);
     notes.push(`incoming lethal=${incomingThreat.lethalWithoutBlocks}`);
     notes.push(`need blockers=${incomingThreat.defendersNeeded}`);
     return {
       line: 'stabilize',
-      score: 92 + incomingThreat.defendersNeeded * 14,
+      score: 96 + incomingThreat.defendersNeeded * 16,
       forceAttackBeforeDeveloping: false,
-      reserveDefenders: Math.min(3, Math.max(incomingThreat.defendersNeeded, 1)),
+      reserveDefenders: Math.min(reserveCap, Math.max(incomingThreat.defendersNeeded, 1)),
       minMainEffectScoreDelta: -1,
+      notes,
+    };
+  }
+
+  if (forcesErosionLethal) {
+    notes.push(decisiveErosionAttack
+      ? `decisive goddess pressure damage=${damageThroughLikelyDefenders}/${damageToCritical}`
+      : `goddess pressure damage=${totalDamage}/${damageToCritical}`);
+    if (likelyDefenders > 0) notes.push(`through defenders=${damageThroughLikelyDefenders}`);
+    return {
+      line: decisiveErosionAttack ? 'erosion-lethal' : 'pressure',
+      score: (decisiveErosionAttack ? 112 : 82) + totalDamage * 3 - likelyDefenders * 4,
+      forceAttackBeforeDeveloping: true,
+      reserveDefenders: decisiveErosionAttack
+        ? 0
+        : incomingThreat.defendersNeeded > 0 ? Math.min(1, incomingThreat.defendersNeeded) : 0,
+      minBattleEffectScoreDelta: -1.5,
       notes,
     };
   }
@@ -464,7 +530,7 @@ export function analyzeOneTurnTactics(
       line: 'stabilize',
       score: 85 + incomingThreat.defendersNeeded * 12,
       forceAttackBeforeDeveloping: false,
-      reserveDefenders: Math.min(3, Math.max(incomingThreat.defendersNeeded, 1)),
+      reserveDefenders: Math.min(reserveCap, Math.max(incomingThreat.defendersNeeded, 1)),
       minMainEffectScoreDelta: -1,
       notes,
     };
@@ -648,6 +714,10 @@ export function buildTurnPlan(gameState: GameState, player: PlayerState, profile
   const matchup = getActiveMatchupPlan(gameState, player, profile, opponentDeckProfile);
   const gamePlan = profile.gamePlan;
   const attackers = player.unitZone.filter(unit => canUnitAttack(gameState, unit)) as Card[];
+  const batraReadyDefenderAttackers = attackers.filter(unit =>
+    canAdventurerGuildBatraAttackIntoReadyDefender(gameState, player, unit)
+  );
+  const hasBatraReadyDefenderAttackWindow = batraReadyDefenderAttackers.length > 0;
   const ownErosion = countErosion(player);
   const opponentErosion = opponent ? countErosion(opponent) : 0;
   const totalAvailableDamage = attackers.reduce((sum, unit) => sum + (unit.damage || 0), 0);
@@ -674,6 +744,7 @@ export function buildTurnPlan(gameState: GameState, player: PlayerState, profile
   const effectPriority = (gamePlan?.effectPriority ?? 0) + (matchup?.effectBias ?? 0);
   const closeGameBias = (gamePlan?.closeGameBias ?? 0) + (matchup?.closeGameBias ?? 0);
   const reserveBias = (gamePlan?.defenderReserveBias ?? 0) + (matchup?.defenderReserveBias ?? 0);
+  const maxReserveDefenders = Math.min(6, attackers.length);
   const pressureLine = Math.max(5, 8 - Math.round(closeGameBias));
   const ownDeckDanger = player.deck.length <= lowDeck;
   const ownCritical = player.deck.length <= criticalDeck || (!player.isGoddessMode && ownErosion >= criticalErosion);
@@ -756,7 +827,7 @@ export function buildTurnPlan(gameState: GameState, player: PlayerState, profile
       Math.min(reserveDefenders, likelyDefenders > 0 ? 1 : 0)
     );
   }
-  reserveDefenders = Math.max(0, Math.min(3, attackers.length, reserveDefenders));
+  reserveDefenders = Math.max(0, Math.min(maxReserveDefenders, reserveDefenders));
 
   let minMainEffectScore = Math.max(5.5, 8.5 - effectPriority * 0.6 + (ownDeckDanger ? 0.8 : 0));
   let minBattleEffectScore = Math.max(7, 9.5 - effectPriority * 0.55 - (lethalWindow ? 0.8 : 0));
@@ -789,7 +860,7 @@ export function buildTurnPlan(gameState: GameState, player: PlayerState, profile
     attackBeforeDeveloping = tactical.forceAttackBeforeDeveloping;
   }
   if (typeof tactical.reserveDefenders === 'number') {
-    reserveDefenders = Math.max(0, Math.min(3, attackers.length, tactical.reserveDefenders));
+    reserveDefenders = Math.max(0, Math.min(maxReserveDefenders, tactical.reserveDefenders));
   }
   if (typeof tactical.minMainEffectScoreDelta === 'number') {
     minMainEffectScore = Math.max(4, minMainEffectScore + tactical.minMainEffectScoreDelta);
@@ -798,16 +869,26 @@ export function buildTurnPlan(gameState: GameState, player: PlayerState, profile
     minBattleEffectScore = Math.max(4.5, minBattleEffectScore + tactical.minBattleEffectScoreDelta);
   }
 
+  const hasForcingTacticalClose = tactical.line === 'lethal' || tactical.line === 'erosion-lethal';
   const sequencing = analyzeMainPhaseSequencing(gameState, player, profile);
-  if (sequencing.shouldDevelopBeforeAttack && attackBeforeDeveloping) {
-    attackBeforeDeveloping = false;
-    minMainEffectScore = Math.min(minMainEffectScore, 5.5);
-    notes.push(...sequencing.notes.map(note => `sequence ${note}`));
-  }
-
   const finalDamageThroughLikelyDefenders = Math.max(0, totalAvailableDamage -
     attackerDamage.slice(0, likelyDefenders).reduce((sum, damage) => sum + damage, 0));
-  if (sequencing.shouldDevelopBeforeAttack && attackBeforeDeveloping) {
+  if (
+    !hasForcingTacticalClose &&
+    attackBeforeDeveloping &&
+    attackers.length > 0 &&
+    likelyDefenders >= attackers.length &&
+    finalDamageThroughLikelyDefenders <= 0 &&
+    reserveDefenders < attackers.length &&
+    !lethalWindow &&
+    !desperationAttack &&
+    incomingThreat.defendersNeeded <= 0 &&
+    !incomingThreat.lethalWithoutBlocks
+  ) {
+    attackBeforeDeveloping = false;
+    notes.push('fully blockable pressure waits for development');
+  }
+  if (!hasForcingTacticalClose && sequencing.shouldDevelopBeforeAttack && attackBeforeDeveloping) {
     attackBeforeDeveloping = false;
     minMainEffectScore = Math.min(minMainEffectScore, 5.5);
     const sequencingNotes = sequencing.notes.map(note => `sequence ${note}`);
@@ -816,15 +897,116 @@ export function buildTurnPlan(gameState: GameState, player: PlayerState, profile
     }
   }
 
-  const hasForcingTacticalClose = tactical.line === 'lethal' || tactical.line === 'erosion-lethal';
   if (!hasForcingTacticalClose && (incomingThreat.lethalWithoutBlocks || incomingThreat.defendersNeeded >= 2)) {
     mode = incomingThreat.lethalWithoutBlocks ? 'defense' : 'stabilize';
     attackBeforeDeveloping = false;
     reserveDefenders = Math.max(
       reserveDefenders,
-      Math.min(3, attackers.length, Math.max(incomingThreat.defendersNeeded, 1))
+      Math.min(maxReserveDefenders, Math.max(incomingThreat.defendersNeeded, 1))
     );
     notes.push('incoming lethal overrides non-forcing pressure');
+  }
+
+  let lastChanceAttack = false;
+  const pureYellowSteelLastChance =
+    profile.id === PURE_YELLOW_STEEL_PROFILE_ID &&
+    gameState.turnCount > 1 &&
+    attackers.length >= 2 &&
+    player.deck.length <= 2 &&
+    !!opponent &&
+    !hasForcingTacticalClose &&
+    (
+      (!opponent.isGoddessMode && opponentErosion >= highErosion) ||
+      opponent.deck.length <= lowDeck ||
+      battleDamageDeckImpact(totalAvailableDamage, opponent) >= Math.max(1, opponent.deck.length - 1)
+    );
+  const pureYellowSteelDeckRaceClose =
+    profile.id === PURE_YELLOW_STEEL_PROFILE_ID &&
+    gameState.turnCount > 1 &&
+    attackers.length >= 4 &&
+    player.deck.length <= criticalDeck + 1 &&
+    !!opponent &&
+    !hasForcingTacticalClose &&
+    lethalWindow &&
+    opponent.deck.length <= Math.max(player.deck.length, criticalDeck + 1) &&
+    (
+      finalDamageThroughLikelyDefenders > 0 ||
+      attackers.length > likelyDefenders
+    );
+  if (
+    profile.id === PURE_YELLOW_STEEL_PROFILE_ID &&
+    opponentDeckProfileId === ADVENTURER_GUILD_PROFILE_ID &&
+    player.deck.length <= stopSelfDrawAtDeck &&
+    incomingThreat.attackers >= 4 &&
+    attackers.length >= 3 &&
+    !hasForcingTacticalClose &&
+    !pureYellowSteelDeckRaceClose
+  ) {
+    const widePressureReserve = Math.min(
+      maxReserveDefenders,
+      Math.max(
+        incomingThreat.defendersNeeded + 2,
+        Math.min(attackers.length, Math.max(1, incomingThreat.attackers - 1))
+      )
+    );
+    reserveDefenders = Math.max(reserveDefenders, widePressureReserve);
+    attackBeforeDeveloping = false;
+    notes.push('pure yellow steel reserves extra blockers against adventurer wide pressure');
+  }
+  const readyDefenders = player.unitZone.filter(unit => canDefendSoon(gameState, unit)).length;
+  const incomingDamageAfterAllReadyBlocks = estimateRemainingDamageAfterBlocks(incomingThreat.attackDamages, readyDefenders);
+  const defenseCannotCoverNextTurn =
+    incomingThreat.lethalWithoutBlocks &&
+    (
+      incomingThreat.defendersNeeded > readyDefenders ||
+      battleDamageWouldBeFatal(incomingDamageAfterAllReadyBlocks, player)
+    );
+  const adventurerGuildLastChance =
+    profile.id === ADVENTURER_GUILD_PROFILE_ID &&
+    gameState.turnCount > 1 &&
+    attackers.length >= 2 &&
+    player.deck.length <= 2 &&
+    !!opponent &&
+    !hasForcingTacticalClose &&
+    defenseCannotCoverNextTurn &&
+    (
+      (!opponent.isGoddessMode && opponentErosion >= highErosion) ||
+      opponent.deck.length <= lowDeck ||
+      battleDamageDeckImpact(totalAvailableDamage, opponent) >= Math.max(1, opponent.deck.length - 1)
+    );
+  if (pureYellowSteelLastChance || pureYellowSteelDeckRaceClose || adventurerGuildLastChance) {
+    lastChanceAttack = true;
+    mode = 'pressure';
+    attackBeforeDeveloping = true;
+    reserveDefenders = 0;
+    minBattleEffectScore = Math.max(4.5, minBattleEffectScore - 2);
+    notes.push(pureYellowSteelLastChance || pureYellowSteelDeckRaceClose
+      ? (pureYellowSteelDeckRaceClose
+        ? 'pure yellow steel deck-race attack before adventurer stabilizes'
+        : 'pure yellow steel last-chance attack before deck-out')
+      : 'adventurer guild last-chance attack when defense cannot cover');
+  }
+
+  if (hasBatraReadyDefenderAttackWindow && gameState.turnCount > 1) {
+    attackBeforeDeveloping = true;
+    reserveDefenders = Math.min(
+      reserveDefenders,
+      Math.max(0, attackers.length - batraReadyDefenderAttackers.length)
+    );
+    notes.push('batra attacks into 3000+ ready defender');
+  }
+
+  if (
+    !hasForcingTacticalClose &&
+    attackBeforeDeveloping &&
+    attackers.length > 0 &&
+    reserveDefenders >= attackers.length &&
+    !lethalWindow &&
+    !desperationAttack &&
+    !hasBatraReadyDefenderAttackWindow
+  ) {
+    attackBeforeDeveloping = false;
+    notes.push('all ready attackers reserved for defense');
   }
 
   return {
@@ -849,10 +1031,13 @@ export function buildTurnPlan(gameState: GameState, player: PlayerState, profile
     opponentLethalWithoutBlocks: incomingThreat.lethalWithoutBlocks,
     opponentLethalThroughOneBlock: incomingThreat.lethalThroughOneBlock,
     desperationAttack,
+    lastChanceAttack,
     attackBeforeDeveloping,
     reserveDefenders,
     minMainEffectScore,
     minBattleEffectScore,
+    stopSelfDrawAtDeck,
+    stopSearchAtDeck,
     avoidSelfDraw,
     avoidSearch,
     tacticalLine: tactical.line,
@@ -957,6 +1142,29 @@ function canEventuallyPlayDrawnCard(gameState: GameState, player: PlayerState, c
   return getColorRequirementResult(player, colorReq, gameState).valid;
 }
 
+function canImmediatelyPlayDrawnUnit(gameState: GameState, player: PlayerState, card: Card) {
+  if (card.type !== 'UNIT') return false;
+  if (!player.unitZone.some(slot => slot === null)) return false;
+  if (!canEventuallyPlayDrawnCard(gameState, player, card)) return false;
+  const cost = getCardCost(card);
+  if (cost <= 0) return true;
+
+  const normalizedColor = card.color === 'NONE' ? undefined : card.color;
+  const readyUnitPayment = player.unitZone
+    .filter((unit): unit is Card => !!unit && !unit.isExhausted && !(unit as any).data?.cannotExhaustByEffect)
+    .reduce((total, unit) => {
+      const data = (unit as any).data || {};
+      const accessMin = Math.max(1, Number(data.accessTapMinValue || 1));
+      const accessMax = data.accessTapColor && data.accessTapColor !== normalizedColor
+        ? 1
+        : Math.max(accessMin, Number(data.accessTapValue || 1));
+      return total + accessMax;
+    }, 0);
+  const remainingCost = Math.max(0, cost - readyUnitPayment);
+  if (remainingCost <= 0) return true;
+  return player.deck.length > remainingCost && countErosion(player) + remainingCost < 10;
+}
+
 export function scoreCheatDrawCard(
   gameState: GameState,
   player: PlayerState,
@@ -977,6 +1185,22 @@ export function scoreCheatDrawCard(
   const playableValue = scorePlayableCard(gameState, player, card, profile);
   const baseValue = scoreCardValue(card, profile);
   const adventurerDevelopment = scoreAdventurerGuildDevelopmentPriority(gameState, player, card, profile);
+  const immediatelyPlayableUnit = canImmediatelyPlayDrawnUnit(gameState, player, card);
+  const adventurerLowDeckDefense =
+    profile.id === ADVENTURER_GUILD_PROFILE_ID &&
+    (turnPlan.mode === 'defense' || turnPlan.mode === 'stabilize') &&
+    turnPlan.defendersNeededNextTurn > 0 &&
+    player.deck.length <= turnPlan.stopSelfDrawAtDeck;
+  const urgentBlockerNeed =
+    profile.id === ADVENTURER_GUILD_PROFILE_ID &&
+    card.type === 'UNIT' &&
+    turnPlan.defendersNeededNextTurn > 0 &&
+    (
+      readyUnits === 0 ||
+      handPlayableUnits === 0 ||
+      turnPlan.opponentLethalWithoutBlocks ||
+      turnPlan.opponentLethalThroughOneBlock
+    );
   let score = baseValue + Math.max(0, playableValue) * 0.85 + (knowledge?.playPriority || 0) * 0.45;
   if (adventurerDevelopment.score > 0) {
     const multiplier = turnPlan.mode === 'defense' || turnPlan.mode === 'stabilize' ? 7.5 : 9.5;
@@ -1003,6 +1227,15 @@ export function scoreCheatDrawCard(
       score += 18;
       notes.push('needs first defender');
     }
+    if (urgentBlockerNeed) {
+      if (immediatelyPlayableUnit) {
+        score += 24 + Math.min(18, turnPlan.defendersNeededNextTurn * 6);
+        notes.push('covers urgent blocker need');
+      } else {
+        score -= 125 + Math.max(0, getCardCost(card) - 1) * 14;
+        notes.push('cannot cover urgent blocker need');
+      }
+    }
     if (card.isrush) {
       score += turnPlan.lethalWindow || turnPlan.mode === 'pressure' || turnPlan.mode === 'lethal' ? 18 : 8;
       notes.push('rush pressure');
@@ -1011,6 +1244,14 @@ export function scoreCheatDrawCard(
     if ((card.power || 0) >= 5000 && (turnPlan.mode === 'defense' || turnPlan.mode === 'stabilize')) {
       score += 9;
       notes.push('large defender');
+    }
+    if (
+      profile.id === PURE_YELLOW_STEEL_PROFILE_ID &&
+      card.id === PURE_YELLOW_STEEL_DEFENSE_MECHANISM_ID &&
+      !immediatelyPlayableUnit
+    ) {
+      score -= 140;
+      notes.push('keep defense mechanism in deck for fortress blueprint');
     }
   } else if (card.type === 'ITEM') {
     score += roles.has('engine') || roles.has('resource') ? 13 : 4;
@@ -1052,10 +1293,24 @@ export function scoreCheatDrawCard(
   if (roles.has('resource')) score += 6;
   if (roles.has('tempo') && (turnPlan.mode === 'pressure' || intel.opponentThreats > 0)) score += 9;
 
+  if (card.id === '204020023' && !player.isGoddessMode && adventurerLowDeckDefense) {
+    score -= 90 + Math.max(0, turnPlan.defendersNeededNextTurn - 1) * 12;
+    notes.push('fair trade held at low deck defense');
+  }
+
   if (turnPlan.mode === 'defense' || turnPlan.mode === 'stabilize') {
     if (card.type === 'UNIT') score += 9 + Math.max(0, card.power || 0) / 1000;
     if (roles.has('removal') || roles.has('protection')) score += 13;
     if (roles.has('draw') && !roles.has('removal') && !roles.has('protection')) score -= 6;
+    if (turnPlan.defendersNeededNextTurn > 0 && card.type === 'UNIT') {
+      if (immediatelyPlayableUnit) {
+        score += 30 + Math.min(24, turnPlan.defendersNeededNextTurn * 8);
+        notes.push('immediate blocker');
+      } else {
+        score -= 24 + Math.max(0, getCardCost(card) - 2) * 8;
+        notes.push('not immediately playable as blocker');
+      }
+    }
   }
 
   if (turnPlan.mode === 'lethal' || turnPlan.lethalWindow) {
@@ -1093,7 +1348,7 @@ export function chooseCheatDrawCard(
   return {
     selected: scored[0]?.card,
     selectedScore: scored[0]?.score,
-    candidates: scored.slice(0, 3),
+    candidates: scored.slice(0, 5),
     turnPlan,
     intel,
   };
@@ -1203,7 +1458,9 @@ const PREVENT_NEXT_DESTROY_EFFECT_IDS = new Set([
 const PREVENT_BATTLE_DESTROY_EFFECT_IDS = new Set([
   '101150208_prevent_battle_destroy',
 ]);
+const ADVENTURER_ALBERT_CYCLE_EFFECT_ID = '104030415_cycle_adventurer_through_erosion';
 const WHITE_TIGER_BATTLE_EXILE_RETURN_EFFECT_ID = '101000501_battle_exile_return';
+const STEEL_VALKYRIE_BOOST_EFFECT_ID = '105110351_destroy_boost';
 const PREVENT_NEXT_DESTROY_HIGH_VALUE_THRESHOLD = 65;
 
 function isPreventNextDestroyEffect(effect: CardEffect | undefined) {
@@ -1676,6 +1933,7 @@ export function chooseMulliganCards(player: PlayerState, profile: DeckAiProfile,
   if (difficulty !== 'hard') return [] as Card[];
   const hand = player.hand;
   if (hand.length === 0) return [];
+  const openingProfile = getHardAiOpeningProfile(profile);
 
   const mode = profile.gamePlan?.mode;
   const requiredEarlyUnits = mode === 'aggro' ? 2 : mode === 'control' ? 1 : 1;
@@ -1708,7 +1966,7 @@ export function chooseMulliganCards(player: PlayerState, profile: DeckAiProfile,
     scored.slice(0, Math.min(2, hand.length)).forEach(entry => returning.add(entry.card));
   }
 
-  return [...returning];
+  return [...returning].filter(card => !openingProfile?.defaultOpeningCardIds.includes(card.id));
 }
 
 export function canUnitAttack(gameState: GameState, unit: Card | null | undefined) {
@@ -1730,6 +1988,15 @@ export function canUnitAttack(gameState: GameState, unit: Card | null | undefine
 function getOpponent(gameState: GameState, player: PlayerState) {
   const opponentUid = gameState.playerIds.find(uid => uid !== player.uid);
   return opponentUid ? gameState.players[opponentUid] : undefined;
+}
+
+function isDefensiveBattleWindowForPlayer(gameState: GameState, player: PlayerState) {
+  const turnPlayerUid = gameState.playerIds[gameState.currentTurnPlayer] ||
+    gameState.playerIds.find(uid => gameState.players[uid]?.isTurn);
+  const isDefender = !!turnPlayerUid && turnPlayerUid !== player.uid;
+  const hasAttackers = (gameState.battleState?.attackers || []).length > 0;
+  return gameState.phase === 'DEFENSE_DECLARATION' ||
+    (isDefender && hasAttackers && ['BATTLE_FREE', 'COUNTERING', 'DAMAGE_CALCULATION'].includes(gameState.phase));
 }
 
 function findCardInState(gameState: GameState, gamecardId?: string) {
@@ -1872,25 +2139,106 @@ function countLikelyDefenders(gameState: GameState, defender: PlayerState | unde
   return Array.isArray(defenders) ? defenders.length : 0;
 }
 
-function estimateRemainingDamageAfterCurrentBlock(gameState: GameState, defender: PlayerState, currentBattleDamage: number) {
-  if (!gameState.battleState?.attackers?.length) return 0;
+function remainingAttackDamagesAfterCurrentBattle(gameState: GameState, defender: PlayerState) {
+  if (!gameState.battleState?.attackers?.length) return [] as number[];
   const attackerUid = gameState.playerIds.find(uid => uid !== defender.uid);
   const attacker = attackerUid ? gameState.players[attackerUid] : undefined;
-  if (!attacker) return 0;
+  if (!attacker) return [] as number[];
   const currentAttackers = new Set(gameState.battleState?.attackers || []);
   return attacker.unitZone
     .filter(unit => unit && !currentAttackers.has(unit.gamecardId) && canUnitAttack(gameState, unit))
-    .reduce((sum, unit) => sum + Math.max(0, unit?.damage || 0), 0);
+    .map(unit => Math.max(0, unit?.damage || 0))
+    .sort((a, b) => b - a);
 }
 
-function battleBlockStopsCurrentHitButStillDies(
+function estimateRemainingDamageAfterBlocks(damages: number[], blocks: number) {
+  const blockCount = Math.max(0, Math.min(Math.floor(blocks), damages.length));
+  const totalDamage = damages.reduce((sum, damage) => sum + damage, 0);
+  const blockedDamage = damages.slice(0, blockCount).reduce((sum, damage) => sum + damage, 0);
+  return Math.max(0, totalDamage - blockedDamage);
+}
+
+function estimateRemainingDamageAfterCurrentBlock(gameState: GameState, defender: PlayerState, remainingBlocks = 0) {
+  return estimateRemainingDamageAfterBlocks(
+    remainingAttackDamagesAfterCurrentBattle(gameState, defender),
+    remainingBlocks
+  );
+}
+
+function battleBlockDelaysNonFatalHitButStillDies(
   gameState: GameState,
   defender: PlayerState,
-  currentBattleDamage: number
+  currentBattleDamage: number,
+  remainingBlocks = 0
 ) {
-  if (!battleDamageWouldBeFatal(currentBattleDamage, defender)) return false;
-  const remainingDamage = estimateRemainingDamageAfterCurrentBlock(gameState, defender, currentBattleDamage);
+  if (battleDamageWouldBeFatal(currentBattleDamage, defender)) return false;
+  const remainingDamage = estimateRemainingDamageAfterCurrentBlock(gameState, defender, remainingBlocks);
   return remainingDamage > 0 && battleDamageWouldBeFatal(remainingDamage, defender);
+}
+
+function scoreSteelValkyrieBoostTiming(gameState: GameState, player: PlayerState, card: Card, opponent: PlayerState | undefined) {
+  if (gameState.phase === 'COUNTERING') {
+    return { score: -90, note: 'steel valkyrie boost held during generic countering window' };
+  }
+
+  const likelyDefenders = getLikelyDefenderCards(gameState, opponent);
+  const currentPower = Math.max(0, card.power || 0);
+  const boostedPower = currentPower + 1000;
+  const damage = Math.max(0, card.damage || 0);
+  const isCurrentBattleAttacker = gameState.phase === 'BATTLE_FREE' && !!gameState.battleState?.attackers?.includes(card.gamecardId);
+  const currentBattleDefender = gameState.battleState?.defender
+    ? likelyDefenders.find(defender => defender.gamecardId === gameState.battleState?.defender)
+    : undefined;
+  const improvesCurrentBattle =
+    isCurrentBattleAttacker &&
+    !!currentBattleDefender &&
+    currentPower <= Math.max(0, currentBattleDefender.power || 0) &&
+    boostedPower > Math.max(0, currentBattleDefender.power || 0);
+  if (isCurrentBattleAttacker) {
+    return { score: improvesCurrentBattle ? 12 : -10, note: improvesCurrentBattle ? 'steel valkyrie boost improves current battle' : 'steel valkyrie boost has low current-battle payoff' };
+  }
+
+  if (!canUnitAttack(gameState, card)) {
+    return { score: -90, note: 'steel valkyrie boost waits until valkyrie can attack this turn' };
+  }
+
+  const otherAttackers = player.unitZone.filter(unit =>
+    unit &&
+    unit.gamecardId !== card.gamecardId &&
+    canUnitAttack(gameState, unit)
+  ) as Card[];
+  const currentDamage = otherAttackers.reduce((sum, unit) => sum + Math.max(0, unit.damage || 0), damage);
+  const boostedDamage = currentDamage + damage;
+  const beatsNewDefender = likelyDefenders.some(defender =>
+    currentPower <= Math.max(0, defender.power || 0) &&
+    boostedPower > Math.max(0, defender.power || 0)
+  );
+  const annihilationPressure =
+    !!opponent &&
+    likelyDefenders.length > 0 &&
+    beatsNewDefender &&
+    (
+      battleDamageWouldBeFatal(boostedDamage, opponent) ||
+      battleDamageCreatesErosionPressure(boostedDamage, opponent, 1) ||
+      battleDamageDeckImpact(boostedDamage, opponent) >= Math.max(1, opponent.deck.length - 1)
+    );
+  const closingWindow =
+    !!opponent &&
+    (
+      battleDamageWouldBeFatal(currentDamage, opponent) ||
+      battleDamageWouldBeFatal(boostedDamage, opponent) ||
+      battleDamageCreatesErosionPressure(currentDamage, opponent, 1) ||
+      battleDamageCreatesErosionPressure(boostedDamage, opponent, 1)
+    );
+
+  if (annihilationPressure) {
+    return { score: 24, note: 'steel valkyrie boost creates annihilation pressure through a defender' };
+  }
+  if (beatsNewDefender && closingWindow) {
+    return { score: 16, note: 'steel valkyrie boost improves a closing attack' };
+  }
+
+  return { score: -28, note: 'steel valkyrie boost held without immediate combat payoff' };
 }
 
 export function scoreAttackCandidate(gameState: GameState, player: PlayerState, card: Card, profile: DeckAiProfile) {
@@ -1946,8 +2294,14 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
     battleDamageWouldBeFatal(otherAttackDamage, opponent) ||
     battleDamageCreatesErosionPressure(otherAttackDamage, opponent)
   );
+  const batraReadyDefenderPlan = canAdventurerGuildBatraAttackIntoReadyDefender(gameState, player, card);
+  const batraProtectedBait = canAdventurerGuildBatraBaitDefense(gameState, player, card);
+  const defenderTradeRiskMultiplier = batraProtectedBait ? 0.18 : batraReadyDefenderPlan ? 0.25 : 1;
   let score = ((damage * 10 + power / 1000 + cardValue * 0.25) * profile.weights.attackBias);
   score += damage * attackPriority * 1.6;
+  if (batraReadyDefenderPlan) {
+    score += 72 + (batraProtectedBait ? 48 : 0);
+  }
   if (gamePlan?.primaryGoal === 'damage') score += damage * 2.2;
   if (gamePlan?.primaryGoal === 'deckPressure' && opponent && opponent.deck.length <= riskValue(profile, 'lowDeck', 10)) {
     score += damage * 2.5;
@@ -1997,7 +2351,7 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
     if (opponent?.isGoddessMode && !attackWouldBeFatal && !singleAttackThreat) {
       badAttackPenalty += 12 + damage * 3;
     }
-    score -= badAttackPenalty * pressureDiscount;
+    score -= badAttackPenalty * pressureDiscount * defenderTradeRiskMultiplier;
   } else if (expendableBait) {
     score += 12;
   }
@@ -2018,17 +2372,17 @@ export function scoreAttackCandidate(gameState: GameState, player: PlayerState, 
     if (otherAttackersKeepClosing) highValueRiskPenalty += 14;
     if (strongestDefenderPower > power) highValueRiskPenalty += 10;
     if (damage <= 1) highValueRiskPenalty += 6;
-    score -= highValueRiskPenalty * keepsSamePressure;
+    score -= highValueRiskPenalty * keepsSamePressure * defenderTradeRiskMultiplier;
   }
 
   if (defenderCount > 0 && !clearClosingPurpose && !expendableBait) {
     const narrowOrLosingIntoBlock = strongestDefenderPower + 800 >= power;
     if (narrowOrLosingIntoBlock) {
-      score -= 12 + Math.min(22, strongestDefenderValue * 0.12);
-      if (damage <= 1) score -= 8;
+      score -= (12 + Math.min(22, strongestDefenderValue * 0.12)) * defenderTradeRiskMultiplier;
+      if (damage <= 1) score -= 8 * defenderTradeRiskMultiplier;
     }
     if (highValueAttacker) {
-      score -= 18 + Math.min(24, preserveValue * 0.28);
+      score -= (18 + Math.min(24, preserveValue * 0.28)) * defenderTradeRiskMultiplier;
     }
   }
 
@@ -2313,6 +2667,9 @@ export function scoreActivatableEffect(
     battleAttackers > 0 ||
     gameState.phase === 'DEFENSE_DECLARATION' ||
     gameState.phase === 'DAMAGE_CALCULATION';
+  const albertDefensiveBattleWindow =
+    effect.id === ADVENTURER_ALBERT_CYCLE_EFFECT_ID &&
+    isDefensiveBattleWindowForPlayer(gameState, player);
 
   if (isPreventNextDestroyEffect(effect)) {
     const threat = getPreventNextDestroyThreatContext(gameState, player, profile);
@@ -2368,6 +2725,12 @@ export function scoreActivatableEffect(
     }
   }
 
+  if (effect.id === STEEL_VALKYRIE_BOOST_EFFECT_ID) {
+    const valkyrieTiming = scoreSteelValkyrieBoostTiming(gameState, player, card, opponent);
+    score += valkyrieTiming.score;
+    notes.push(valkyrieTiming.note);
+  }
+
   if (timingTags.has('counter') && !validCounterWindow) {
     score -= 22;
     notes.push('counter held for chain/battle window');
@@ -2394,9 +2757,10 @@ export function scoreActivatableEffect(
     !timingTags.has('combo') &&
     !timingTags.has('counter') &&
     !timingTags.has('combat') &&
-    !timingTags.has('protection')
+    !timingTags.has('protection') &&
+    !albertDefensiveBattleWindow
   ) {
-    score -= gameState.phase === 'COUNTERING' ? 18 : 10;
+    score -= gameState.phase === 'COUNTERING' ? 36 : 10;
     notes.push('setup effect held outside main phase');
   }
 
@@ -2444,10 +2808,43 @@ export function scoreActivatableEffect(
     }
   }
 
+  if (
+    profile.id === PURE_YELLOW_STEEL_PROFILE_ID &&
+    effect.id === PURE_YELLOW_STEEL_ACADEMY_PUPPET_MASTER_EFFECT_ID
+  ) {
+    const stopSelfDrawAtDeck = matchupRiskValue(gameState, player, profile, 'stopSelfDrawAtDeck', riskValue(profile, 'lowDeck', 10));
+    const incomingThreat = estimateIncomingThreat(gameState, player, profile);
+    const opponentIsAdventurerGuild =
+      opponentProfileId(gameState, opponentUid) === ADVENTURER_GUILD_PROFILE_ID ||
+      opponentDeckProfile?.knownProfileId === ADVENTURER_GUILD_PROFILE_ID;
+    const defensivePressure =
+      incomingThreat.lethalWithoutBlocks ||
+      incomingThreat.damageAfterOneBlock >= 3 ||
+      incomingThreat.totalDamage >= 7;
+    if (player.deck.length <= stopSelfDrawAtDeck + 4 && defensivePressure) {
+      const pressurePenalty =
+        42 +
+        Math.max(0, stopSelfDrawAtDeck + 4 - player.deck.length) * 4 +
+        (incomingThreat.lethalWithoutBlocks ? 18 : 0) +
+        (opponentIsAdventurerGuild ? 8 : 0);
+      score -= pressurePenalty;
+      notes.push(`pure yellow steel holds academy puppet engine under defense pressure-${pressurePenalty.toFixed(1)}`);
+    }
+  }
+
   const adventurerGuildEffect = scoreAdventurerGuildEffect(gameState, player, card, effect, profile);
   if (adventurerGuildEffect.score !== 0) {
     score += adventurerGuildEffect.score;
     notes.push(...adventurerGuildEffect.notes);
+  }
+
+  if (
+    effect.id === ADVENTURER_ALBERT_CYCLE_EFFECT_ID &&
+    gameState.phase !== 'MAIN' &&
+    !isDefensiveBattleWindowForPlayer(gameState, player)
+  ) {
+    score -= 120;
+    notes.push('Albert cycle held outside main or defensive battle window');
   }
 
   if (card.isExhausted) score -= 1.5;
@@ -2542,7 +2939,12 @@ export function chooseDefender(
   const deckPressure = defender.deck.length <= Math.max(deckImpact + 5, lowDeck);
   const incomingThreat = estimateIncomingThreat(gameState, defender, profile);
   const currentHitFatal = battleDamageWouldBeFatal(totalAttackerDamage, defender);
-  const doomedAfterCurrentBlock = battleBlockStopsCurrentHitButStillDies(gameState, defender, totalAttackerDamage);
+  const remainingAttackDamages = remainingAttackDamagesAfterCurrentBattle(gameState, defender);
+  const unblockedRemainingDamage = estimateRemainingDamageAfterBlocks(remainingAttackDamages, 0);
+  const remainingDamageIsFatalWithoutMoreBlocks =
+    !currentHitFatal &&
+    unblockedRemainingDamage > 0 &&
+    battleDamageWouldBeFatal(unblockedRemainingDamage, defender);
   const highImpactHit = currentHitFatal || deckCritical || critical || danger || deckPressure || totalAttackerDamage >= 3;
   const attackerCombatValues = attackingUnits.map(unit => {
     const knowledge = getCardKnowledge(unit);
@@ -2595,6 +2997,20 @@ export function chooseDefender(
     const sacrifice = power < totalAttackerPower;
     const nonFatalHit = !critical && !deckCritical && !incomingThreat.lethalWithoutBlocks && !incomingThreat.lethalThroughOneBlock;
     const remainingUnits = defender.unitZone.filter(unit => unit && unit.gamecardId !== card.gamecardId);
+    const remainingReadyDefenders = remainingUnits.filter(unit =>
+      unit &&
+      !unit.isExhausted &&
+      !(unit as any).battleForbiddenByEffect &&
+      !((unit as any).data?.cannotDefendTurn === gameState.turnCount) &&
+      !((unit as any).data?.cannotAttackOrDefendUntilTurn && (unit as any).data.cannotAttackOrDefendUntilTurn >= gameState.turnCount)
+    ).length;
+    const remainingDamageAfterFutureBlocks = estimateRemainingDamageAfterBlocks(remainingAttackDamages, remainingReadyDefenders);
+    const currentBlockCreatesSurvivalPath =
+      remainingDamageIsFatalWithoutMoreBlocks &&
+      !battleDamageWouldBeFatal(remainingDamageAfterFutureBlocks, defender);
+    const doomedAfterCurrentBlock =
+      !currentBlockCreatesSurvivalPath &&
+      battleBlockDelaysNonFatalHitButStillDies(gameState, defender, totalAttackerDamage, remainingReadyDefenders);
     const remainingCounterDamage = remainingUnits
       .filter(unit => canThreatenNextTurn(gameState, unit))
       .reduce((sum, unit) => sum + (unit?.damage || 0), 0);
@@ -2648,6 +3064,7 @@ export function chooseDefender(
     else if (deckPressure) score += 18 + totalAttackerDamage * 5;
     if (incomingThreat.lethalWithoutBlocks) score += 16 + incomingThreat.defendersNeeded * 8;
     if (incomingThreat.lethalThroughOneBlock) score += 10;
+    if (currentBlockCreatesSurvivalPath) score += 120 + totalAttackerDamage * 14 + Math.max(0, unblockedRemainingDamage - remainingDamageAfterFutureBlocks) * 5;
     if (mustSaveForLargerHit) score -= 24 + (largestIncomingDamage - totalAttackerDamage) * 6;
     if (critical) score += 30 + totalAttackerDamage * 10;
     else if (danger) score += 18 + totalAttackerDamage * 7;
@@ -3125,6 +3542,8 @@ function scoreChoiceOption(gameState: GameState, playerUid: string, query: Effec
 
   const elementInstructorScore = scoreElementMagicInstructorModeChoice(gameState, playerUid, query, option, profile);
   if (elementInstructorScore !== undefined) return elementInstructorScore;
+  const pureYellowSteelScore = scorePureYellowSteelChoiceOption(gameState, playerUid, query, option, profile);
+  if (pureYellowSteelScore !== undefined) return pureYellowSteelScore;
 
   if (/DECLARE_NAME/i.test(queryText(query)) && player) {
     const declaredName = String(option.id || option.label || '');
@@ -3172,6 +3591,8 @@ function scoreQueryCardOption(
   const effectId = String(query.context?.effectId || '');
   const openingQueryScore = scoreHardAiOpeningQueryCard(profile, effectId, card);
   if (openingQueryScore) return openingQueryScore.score;
+  const pureYellowSteelScore = scorePureYellowSteelQueryCardOption(gameState, playerUid, query, option, profile);
+  if (pureYellowSteelScore !== undefined) return pureYellowSteelScore;
 
   const isMine = optionIsMine(gameState, playerUid, option);
   const cardValue = scoreCardValue(card, profile);
@@ -3333,6 +3754,8 @@ export function chooseQuerySelections(
   if (difficulty === 'hard') {
     const adventurerGuildSelections = chooseAdventurerGuildQuerySelections(gameState, playerUid, query, profile);
     if (adventurerGuildSelections) return adventurerGuildSelections;
+    const pureYellowSteelSelections = choosePureYellowSteelQuerySelections(gameState, playerUid, query, profile);
+    if (pureYellowSteelSelections) return pureYellowSteelSelections;
   }
 
   if (query.callbackKey === 'TRIGGER_CHOICE') return ['YES'];

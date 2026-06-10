@@ -196,6 +196,8 @@ const effect_104020068_activate_play: CardEffect = {
   }
 };
 
+(effect_104020068_activate_play.cost as any).paymentCost = 3;
+
 const card: Card = {
   id: '104020068',
   gamecardId: null as any,

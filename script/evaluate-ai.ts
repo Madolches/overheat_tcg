@@ -140,6 +140,7 @@ async function createSelfPlayGame(
     player.confrontationStrategy = 'AUTO';
     player.botDifficulty = 'hard';
     player.botDeckProfileId = profile.id;
+    ServerGameService.prepareHardAiOpeningHand(player, profile.id, 4);
   }
 
   for (const [uid, profile] of [[uidA, profileA], [uidB, profileB]] as const) {
@@ -212,6 +213,10 @@ function logToText(log: any) {
 function hasTimingWarningText(text: string) {
   if (/\bprefers\s+(?:MAIN|BATTLE|BATTLE_FREE|COUNTERING|DEFENSE_DECLARATION|DAMAGE_CALCULATION)\b/i.test(text)) return true;
   return text.split(/[、,|]/).some(part => /timing\s+[^、,|]*-[0-9]/i.test(part));
+}
+
+function hasClearTacticalPayoff(text: string) {
+  return /lethal|closing|close|threat|save|saves|protect|prevent|counter|combat|battle|attack|defend|defender|damage|destroy|remove|removal|bounce|stun|silence|cannot defend|combo|alliance|reset|boost|tempo|pressure|race|防御|挡|救场|拉汉莫|拉艾咪|拉凯茜|缺一补一/i.test(text);
 }
 
 function describeCard(card: Card | null | undefined) {
@@ -338,7 +343,7 @@ function collectDecisionDiagnostics(logs: AiDecisionLog[]) {
     if (log.action === 'ACTIVATE_EFFECT_FAILED') metrics.EFFECT_FAILED++;
     if (log.action === 'ACTIVATE_EFFECT') {
       const notes = rawLogDetail(log, 'notes');
-      if (hasTimingWarningText(notes)) metrics.BAD_EFFECT_TIMING++;
+      if (hasTimingWarningText(notes) && !hasClearTacticalPayoff(notes)) metrics.BAD_EFFECT_TIMING++;
     }
   }
 
@@ -350,24 +355,34 @@ function collectDecisionDiagnostics(logs: AiDecisionLog[]) {
     const hasLikelyDefenders = plan.details?.likelyDefenders !== undefined && plan.details?.likelyDefenders !== null;
     const likelyDefenders = hasLikelyDefenders ? numericLogDetail(plan, 'likelyDefenders') : Number.POSITIVE_INFINITY;
     const damageThroughLikelyDefenders = numericLogDetail(plan, 'damageThroughLikelyDefenders');
+    const tacticalLine = rawLogDetail(plan, 'tacticalLine');
+    const rawLethalCanConnect = truthyLogDetail(plan, 'lethalWindow') && (!hasLikelyDefenders || likelyDefenders === 0);
     const lethalPotential =
-      truthyLogDetail(plan, 'lethalWindow') ||
-      rawLogDetail(plan, 'tacticalLine') === 'lethal' ||
-      rawLogDetail(plan, 'tacticalLine') === 'erosion-lethal' ||
+      rawLethalCanConnect ||
+      tacticalLine === 'lethal' ||
+      tacticalLine === 'erosion-lethal' ||
       (likelyDefenders === 0 && totalDamage >= damageToCritical) ||
       (damageThroughLikelyDefenders > 0 && damageThroughLikelyDefenders >= damageToCritical);
     const forcingLethalPotential =
-      rawLogDetail(plan, 'tacticalLine') === 'lethal' ||
-      rawLogDetail(plan, 'tacticalLine') === 'erosion-lethal' ||
+      rawLethalCanConnect ||
+      tacticalLine === 'lethal' ||
+      tacticalLine === 'erosion-lethal' ||
       (likelyDefenders === 0 && totalDamage >= damageToCritical) ||
       (damageThroughLikelyDefenders > 0 && damageThroughLikelyDefenders >= damageToCritical);
     const incomingLethal = truthyLogDetail(plan, 'incomingLethal');
     const reserveDefenders = numericLogDetail(plan, 'reserveDefenders');
     const defendersNeeded = numericLogDetail(plan, 'defendersNeededNextTurn');
+    const lastChanceAttack = truthyLogDetail(plan, 'lastChanceAttack');
+    const desperationAttack = truthyLogDetail(plan, 'desperationAttack');
+    const attackBeforeDeveloping = truthyLogDetail(plan, 'attackBeforeDeveloping');
+    const intentionalRacePlan =
+      attackBeforeDeveloping &&
+      (lastChanceAttack || desperationAttack) &&
+      (reserveDefenders <= 0 || defendersNeeded > reserveDefenders);
     const mode = String(plan.subject || '');
 
     if (lethalPotential && trace.attacks === 0 && trace.ended) metrics.MISSED_LETHAL++;
-    if (incomingLethal && !lethalPotential && !/defense|stabilize/i.test(mode)) metrics.UNDER_PRESSURE_NO_STABILIZE++;
+    if (incomingLethal && !lethalPotential && !intentionalRacePlan && !/defense|stabilize/i.test(mode)) metrics.UNDER_PRESSURE_NO_STABILIZE++;
     if (trace.exhaustedPayments > 0 && (incomingLethal || reserveDefenders > 0 || defendersNeeded > 0)) {
       metrics.BAD_PAYMENT += trace.exhaustedPayments;
     }
@@ -590,7 +605,7 @@ function buildMatchResult(
     steps,
     finalPhase: state.phase,
     activePlayer: getActiveBotUid(state),
-    pendingQuery: describePendingQuery(state),
+    pendingQuery: state.gameStatus === 2 ? undefined : describePendingQuery(state),
     finalBoard: describeBoard(state),
     lastLogs: (state.logs || []).slice(-20).map(logToText),
     aiDecisionLogs: (state.aiDecisionLogs || []).slice(-decisionLogLimit),

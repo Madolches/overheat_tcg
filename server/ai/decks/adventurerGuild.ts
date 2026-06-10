@@ -22,6 +22,21 @@ export const adventurerGuildProfile: DeckAiProfile = {
     closeGameBias: 0.8,
     notes: ['以通用节奏型策略运行，等待新困难人机重构时细化。'],
   },
+  effectPreferences: {
+    lowDeckAvoidEffectIds: {
+      sodo_to_erosion: 48,
+    },
+  },
+  matchupPlans: {
+    'pure-yellow-steel': {
+      attackBias: 0.25,
+      closeGameBias: 0.35,
+      defenderReserveBias: 0.25,
+      stopSelfDrawAtDeck: 14,
+      stopSearchAtDeck: 10,
+      notes: ['对纯黄钢兵进入牌库竞速后提前停止索德等自抽资源转换。'],
+    },
+  },
   riskThresholds: {
     lowDeck: 10,
     criticalDeck: 3,
