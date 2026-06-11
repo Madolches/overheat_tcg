@@ -178,13 +178,16 @@ async function testFlameBombDrawRevealMainStartDamage(): Promise<ScenarioResult>
 
   await ServerGameService.executeDrawPhase(state, state.players.BOT);
   const drewBomb = state.players.BOT.hand.some((card: Card) => card.gamecardId === bomb.gamecardId);
-  const reachedMain = state.phase === 'MAIN';
+  const pausedForDrawTrigger = state.phase === 'DRAW' &&
+    state.pendingQuery?.callbackKey === 'TRIGGER_CHOICE' &&
+    state.pendingQuery.context?.effectId === '202000147_draw_reveal';
 
   await acceptOptionalTrigger(state, 'BOT');
   if (state.pendingQuery?.context?.step !== 'REVEAL') {
     return fail(name, `expected reveal choice, got ${state.pendingQuery?.callbackKey || 'none'}`);
   }
   await answerPendingQuery(state, 'BOT', ['YES']);
+  const reachedMain = state.phase === 'MAIN';
 
   const revealed = (bomb as any).data?.flameBombRevealedTurn === state.turnCount &&
     state.players.BOT.revealedHandCardIds?.includes(bomb.gamecardId);
@@ -199,9 +202,43 @@ async function testFlameBombDrawRevealMainStartDamage(): Promise<ScenarioResult>
     state.players.P1.erosionFront.filter(Boolean).length === expectedDamage;
   const usedGlobal = state.effectUsage?.[`game_BOT_name_${bomb.id}_202000147_main_start_damage`] === 1;
 
-  return drewBomb && reachedMain && revealed && damaged && usedGlobal
+  return drewBomb && pausedForDrawTrigger && reachedMain && revealed && damaged && usedGlobal
     ? pass(name, `damage=${expectedDamage}, p1Erosion=${state.players.P1.erosionFront.filter(Boolean).length}`)
-    : fail(name, `drew=${drewBomb}, main=${reachedMain}, revealed=${revealed}, damaged=${damaged}, used=${usedGlobal}, query=${state.pendingQuery?.callbackKey || 'none'}`);
+    : fail(name, `drew=${drewBomb}, paused=${pausedForDrawTrigger}, main=${reachedMain}, revealed=${revealed}, damaged=${damaged}, used=${usedGlobal}, query=${state.pendingQuery?.callbackKey || 'none'}`);
+}
+
+async function testFlameBombDeclineDrawRevealResumesTurn(): Promise<ScenarioResult> {
+  const name = 'SP01-R02 declining draw reveal resumes the turn';
+  const bomb = cloneScriptCard(flameBomb as Card, 'DECK', { gamecardId: 'FLAME_BOMB_DECLINE' });
+  const redUnits = deckCards(3, 'BOT_DECLINE_RED_SOURCE', 'RED').map(card => ({
+    ...card,
+    cardlocation: 'UNIT' as TriggerLocation,
+  }));
+  const state = game(
+    {
+      deck: [...deckCards(3, 'BOT_DECLINE_FILL'), bomb],
+      unitZone: [redUnits[0], redUnits[1], redUnits[2], null, null, null],
+    },
+    {},
+    {
+      phase: 'DRAW',
+      turnCount: 2,
+    }
+  );
+
+  await ServerGameService.executeDrawPhase(state, state.players.BOT);
+  const pausedForDrawTrigger = state.phase === 'DRAW' &&
+    state.pendingQuery?.callbackKey === 'TRIGGER_CHOICE' &&
+    state.pendingQuery.context?.effectId === '202000147_draw_reveal';
+  await answerPendingQuery(state, 'BOT', ['NO']);
+
+  const reachedMain = state.phase === 'MAIN';
+  const noDamageTrigger = state.pendingQuery?.context?.effectId !== '202000147_main_start_damage' &&
+    !(state.triggeredEffectsQueue || []).some((record: any) => record.effect?.id === '202000147_main_start_damage');
+
+  return pausedForDrawTrigger && reachedMain && noDamageTrigger
+    ? pass(name, 'turn resumed without revealing Flame Bomb')
+    : fail(name, `paused=${pausedForDrawTrigger}, main=${reachedMain}, pending=${state.pendingQuery?.context?.effectId || state.pendingQuery?.callbackKey || 'none'}`);
 }
 
 async function testFlameBombRequiresThreeRed(): Promise<ScenarioResult> {
@@ -236,6 +273,7 @@ async function testFlameBombRequiresThreeRed(): Promise<ScenarioResult> {
 
 const scenarios: { name: string; run: ScenarioRun }[] = [
   { name: 'SP01-R02 reveals from draw and damages at main start', run: testFlameBombDrawRevealMainStartDamage },
+  { name: 'SP01-R02 declining draw reveal resumes the turn', run: testFlameBombDeclineDrawRevealResumesTurn },
   { name: 'SP01-R02 requires three red sources for main start damage', run: testFlameBombRequiresThreeRed },
 ];
 

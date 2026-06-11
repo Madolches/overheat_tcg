@@ -18,6 +18,7 @@
     "scripts:test-bt07": "tsx script/test-bt07-scenarios.ts",
     "scripts:test-bt08": "tsx script/test-bt08-scenarios.ts",
     "scripts:test-pr": "tsx script/test-pr-audit.ts",
+    "ui:test-direct-target-selection": "tsx script/test-direct-target-selection.ts",
     "ai:evaluate": "tsx script/evaluate-ai.ts",
     "ai:audit-effects": "tsx script/audit-hard-ai-effects.ts",
     "ai:behavior-audit": "tsx script/report-ai-behavior-audit.ts",

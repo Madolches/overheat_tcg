@@ -3957,6 +3957,23 @@ export const ServerGameService = {
     });
   },
 
+  async resumeDrawPhaseAfterPendingQuery(gameState: GameState) {
+    if (gameState.phase !== 'DRAW') return false;
+    if (gameState.pendingQuery || gameState.drawAnimationResume) return false;
+    if (gameState.isResolvingStack || gameState.isCountering || gameState.currentProcessingItem) return false;
+    if (gameState.gameStatus === 2) return false;
+
+    const currentPlayerUid = gameState.playerIds[gameState.currentTurnPlayer];
+    const player = currentPlayerUid ? gameState.players[currentPlayerUid] : undefined;
+    if (!player) return false;
+
+    delete gameState.animationHint;
+    delete gameState.animationUntil;
+    gameState.phase = 'EROSION';
+    await ServerGameService.executeErosionPhase(gameState, player);
+    return true;
+  },
+
   async handleQueryChoice(gameState: GameState, playerUid: string, queryId: string, selections: string[], onUpdate?: (state: GameState) => Promise<void>) {
     // console.log(`[Server] handleQueryChoice: player=${playerUid}, queryId=${queryId}, selections=`, selections);
 
@@ -4152,6 +4169,7 @@ export const ServerGameService = {
             declaredModeId: query.context?.modeId
           }, onUpdate);
           await ServerGameService.finalizeBattleAfterPendingQuery(gameState, onUpdate);
+          await ServerGameService.resumeDrawPhaseAfterPendingQuery(gameState);
           return gameState;
         }
 
@@ -4226,6 +4244,7 @@ export const ServerGameService = {
             declaredModeId: modeId
           }, onUpdate);
           await ServerGameService.finalizeBattleAfterPendingQuery(gameState, onUpdate);
+          await ServerGameService.resumeDrawPhaseAfterPendingQuery(gameState);
           return gameState;
         }
       }
@@ -4486,6 +4505,7 @@ export const ServerGameService = {
             });
             if (!opened) {
               await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
+              await ServerGameService.resumeDrawPhaseAfterPendingQuery(gameState);
               return gameState;
             }
             return gameState;
@@ -4508,6 +4528,7 @@ export const ServerGameService = {
             });
             if (!opened) {
               await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
+              await ServerGameService.resumeDrawPhaseAfterPendingQuery(gameState);
               return gameState;
             }
             return gameState;
@@ -4542,6 +4563,7 @@ export const ServerGameService = {
         await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
       }
       await ServerGameService.finalizeBattleAfterPendingQuery(gameState, onUpdate);
+      await ServerGameService.resumeDrawPhaseAfterPendingQuery(gameState);
       return gameState;
     }
 
@@ -4555,6 +4577,7 @@ export const ServerGameService = {
         await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
       }
       await ServerGameService.finalizeBattleAfterPendingQuery(gameState, onUpdate);
+      await ServerGameService.resumeDrawPhaseAfterPendingQuery(gameState);
       return gameState;
     }
 
@@ -4571,6 +4594,7 @@ export const ServerGameService = {
         } else if (!gameState.isCountering) {
           await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
         }
+        await ServerGameService.resumeDrawPhaseAfterPendingQuery(gameState);
         return gameState;
       }
 
@@ -4632,6 +4656,7 @@ export const ServerGameService = {
           await ServerGameService.checkTriggeredEffects(gameState, onUpdate);
         }
         await ServerGameService.finalizeBattleAfterPendingQuery(gameState, onUpdate);
+        await ServerGameService.resumeDrawPhaseAfterPendingQuery(gameState);
         return gameState;
       } else {
         gameState.logs.push(`[错误] EFFECT_RESOLVE 找不到有效回调 (index: ${effectIndex}, id: ${effectId})`);
@@ -5121,6 +5146,7 @@ export const ServerGameService = {
       await ServerGameService.resolveCounterStack(gameState, onUpdate);
     }
 
+    await ServerGameService.resumeDrawPhaseAfterPendingQuery(gameState);
     return gameState;
   },
 

@@ -21,6 +21,7 @@ import { KeywordBadges } from './KeywordBadges';
 import { CardEffectList } from './CardEffectList';
 import { BattleLogPanel } from './BattleLogPanel';
 import { battleLogText } from '../lib/battleLog';
+import { resolveDirectTargetSelectionClick } from '../lib/directTargetSelection';
 import { getCardSkinUrl } from '../data/cardSkins';
 import { useCardSkinSettings } from '../hooks/useCardSkinSettings';
 import { BattleAnimationLayer, battleAnimationGroupDuration, getBattleAnimationPlaybackGroup } from './BattleAnimationLayer';
@@ -2110,6 +2111,7 @@ export const BattleField: React.FC = () => {
     const selectedOptionId = getPendingOptionId(option);
     if (!selectedOptionId) return false;
     const maxSelections = displayedPendingQuery?.maxSelections ?? 1;
+    const minSelections = displayedPendingQuery?.minSelections ?? 0;
 
     setCardMenu(null);
     if (maxSelections <= 1) {
@@ -2119,11 +2121,18 @@ export const BattleField: React.FC = () => {
       return true;
     }
 
-    setSelectedQueryIds(prev => {
-      if (prev.includes(selectedOptionId)) return prev.filter(id => id !== selectedOptionId);
-      if (prev.length >= maxSelections) return prev;
-      return [...prev, selectedOptionId];
-    });
+    const next = resolveDirectTargetSelectionClick(
+      selectedQueryIds,
+      selectedOptionId,
+      minSelections,
+      maxSelections,
+      displayedPendingQuery?.callbackKey
+    );
+    setSelectedQueryIds(next.selectionIds);
+    if (next.shouldSubmit) {
+      closeViewingZoneForCardAction(zone);
+      submitPendingQuerySelections(next.selectionIds);
+    }
     return true;
   };
 
